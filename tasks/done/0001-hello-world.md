@@ -2,7 +2,7 @@
 
 This milestone exists only to verify the task workflow.
 
-## [ ] T001 Move milestone to done
+## [X] T001 Move milestone to done
 
 ### Description
 
