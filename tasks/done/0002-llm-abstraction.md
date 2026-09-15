@@ -2,7 +2,7 @@
 
 Build the vendor-agnostic LLM layer in `src/pico/llm/`. Application core and TUI must never depend on a specific vendor, only on the types and protocol defined here. All generation is streaming only; there is no non-streaming call path.
 
-## [ ] T001 Core message and content types
+## [X] T001 Core message and content types
 
 ### Description
 
@@ -22,7 +22,7 @@ Use frozen dataclasses or `NamedTuple`s, whichever keeps the module simplest. No
 * All types are fully annotated and pass strict Pyright.
 * `tests/llm/test_types.py` covers construction and equality of each type.
 
-## [ ] T002 Streaming event types
+## [X] T002 Streaming event types
 
 ### Description
 
@@ -40,7 +40,7 @@ Model this as a single discriminated union type, e.g. `StreamEvent = TextDelta |
 * `StreamEvent` is a closed union that Pyright can exhaustively narrow with `match`.
 * `tests/llm/test_types.py` (or a new `test_events.py`) covers construction of each event variant.
 
-## [ ] T003 LLMClient protocol
+## [X] T003 LLMClient protocol
 
 ### Description
 
@@ -57,7 +57,7 @@ This is a structural protocol, not a base class — implementations do not inher
 * Fully annotated, passes strict Pyright.
 * A test using a minimal fake client confirms the protocol shape is usable (e.g. a fake satisfies it structurally and can be passed where `LLMClient` is expected).
 
-## [ ] T004 Ollama client implementation
+## [X] T004 Ollama client implementation
 
 ### Description
 
@@ -74,7 +74,7 @@ In `src/pico/llm/ollama.py`, implement `OllamaClient` satisfying `LLMClient` aga
 * Tests in `tests/llm/test_ollama.py` mock the HTTP layer (no real network access, no dependency on a running Ollama server) and cover: plain text streaming, tool call streaming, and an HTTP error path raising `LLMError`.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T005 Verify and finalize
+## [X] T005 Verify and finalize
 
 ### Description
 
