@@ -36,15 +36,12 @@ for ((step = 1; step <= MAX_STEPS; step++)); do
   echo "============================================================"
   echo
 
-  output_file=$(mktemp)
-
   claude -p "$(cat "$PROMPT_FILE")" \
     --dangerously-skip-permissions \
     --disallowedTools "AskUserQuestion" \
-    --verbose 2>&1 | tee "$output_file"
+    --verbose
 
   claude_exit=${PIPESTATUS[0]}
-  rm -f "$output_file"
 
   if (( claude_exit != 0 )); then
     echo

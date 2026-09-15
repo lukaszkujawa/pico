@@ -81,6 +81,34 @@ def test_stream_tool_call() -> None:
     assert events[1] == GenerationComplete(finish_reason="tool_calls")
 
 
+def test_stream_sends_authorization_header_when_api_key_set() -> None:
+    captured: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return _ndjson_response([{"message": {"content": ""}, "done": True}])
+
+    client = OllamaClient(model="qwen3", api_key="secret", transport=httpx.MockTransport(handle))
+
+    list(client.stream([Message(role=Role.USER, content="hi")], []))
+
+    assert captured[0].headers["authorization"] == "Bearer secret"
+
+
+def test_stream_omits_authorization_header_when_no_api_key() -> None:
+    captured: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return _ndjson_response([{"message": {"content": ""}, "done": True}])
+
+    client = OllamaClient(model="qwen3", transport=httpx.MockTransport(handle))
+
+    list(client.stream([Message(role=Role.USER, content="hi")], []))
+
+    assert "authorization" not in captured[0].headers
+
+
 def test_stream_http_error_raises_llm_error() -> None:
     def handle(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500, content="internal error")

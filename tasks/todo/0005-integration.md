@@ -2,7 +2,7 @@
 
 Wire the LLM abstraction (`0002-llm-abstraction.md`), application core (`0003-application-core.md`), and terminal UI (`0004-terminal-ui.md`) together behind the `pico` entry point. This is the first milestone where the three components run together as one program.
 
-## [ ] T001 Environment configuration
+## [X] T001 Environment configuration
 
 ### Description
 
@@ -29,7 +29,7 @@ Also add `.env.example` at the repository root, mirroring the real keys with pla
 * `.env.example` exists and documents every key with a placeholder value.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T002 Application wiring
+## [X] T002 Application wiring
 
 ### Description
 
@@ -49,7 +49,7 @@ This module is the only place in the codebase allowed to import from all three o
 * An unsupported `config.vendor` raises a clear error before any thread is started.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T003 Replace placeholder entry point
+## [X] T003 Replace placeholder entry point
 
 ### Description
 

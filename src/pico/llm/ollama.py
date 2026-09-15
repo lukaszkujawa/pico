@@ -51,10 +51,12 @@ class OllamaClient:
         self,
         model: str,
         base_url: str = "http://localhost:11434",
+        api_key: str | None = None,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self._model = model
         self._base_url = base_url.rstrip("/")
+        self._api_key = api_key
         self._transport = transport
 
     def stream(self, messages: list[Message], tools: list[ToolSpec]) -> Iterator[StreamEvent]:
@@ -66,11 +68,17 @@ class OllamaClient:
         if tools:
             payload["tools"] = [_tool_spec_to_payload(tool) for tool in tools]
 
+        headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
+
         try:
             with (
                 httpx.Client(transport=self._transport) as client,
                 client.stream(
-                    "POST", f"{self._base_url}/api/chat", json=payload, timeout=None
+                    "POST",
+                    f"{self._base_url}/api/chat",
+                    json=payload,
+                    headers=headers,
+                    timeout=None,
                 ) as response,
             ):
                 response.raise_for_status()
