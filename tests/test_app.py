@@ -8,7 +8,7 @@ import pico.app as app_module
 from pico.app import UnsupportedVendorError, run_pico
 from pico.config import Config
 from pico.llm.types import GenerationComplete, Message, StreamEvent, TextDelta, ToolSpec
-from pico.tui.app import PicoApp
+from pico.tui import PicoApp
 
 
 class SlowClient:

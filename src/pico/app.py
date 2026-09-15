@@ -7,7 +7,7 @@ from pico.core.tools import ToolRegistry
 from pico.llm.client import LLMClient
 from pico.llm.ollama import OllamaClient
 from pico.llm.types import Message, Role
-from pico.tui.app import PicoApp
+from pico.tui import PicoApp
 
 
 class UnsupportedVendorError(Exception):

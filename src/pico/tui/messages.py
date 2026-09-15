@@ -24,42 +24,42 @@ class RunFinishedMessage(Message):
         super().__init__()
 
 
-class ThinkingBoxCreate(Message):
-    def __init__(self, box_id: str) -> None:
-        self.box_id = box_id
+class AssistantPaneCreate(Message):
+    def __init__(self, pane_id: str) -> None:
+        self.pane_id = pane_id
         super().__init__()
 
 
-class ThinkingBoxDelta(Message):
-    def __init__(self, box_id: str, text: str) -> None:
-        self.box_id = box_id
+class AssistantPaneDelta(Message):
+    def __init__(self, pane_id: str, text: str) -> None:
+        self.pane_id = pane_id
         self.text = text
         super().__init__()
 
 
-class ThinkingBoxClose(Message):
-    def __init__(self, box_id: str) -> None:
-        self.box_id = box_id
+class AssistantPaneClose(Message):
+    def __init__(self, pane_id: str) -> None:
+        self.pane_id = pane_id
         super().__init__()
 
 
-class ToolCallBoxCreate(Message):
-    def __init__(self, box_id: str, name: str) -> None:
-        self.box_id = box_id
+class ToolCallPaneCreate(Message):
+    def __init__(self, pane_id: str, name: str) -> None:
+        self.pane_id = pane_id
         self.name = name
         super().__init__()
 
 
-class ToolCallBoxDelta(Message):
-    def __init__(self, box_id: str, text: str) -> None:
-        self.box_id = box_id
+class ToolCallPaneDelta(Message):
+    def __init__(self, pane_id: str, text: str) -> None:
+        self.pane_id = pane_id
         self.text = text
         super().__init__()
 
 
-class ToolCallBoxClose(Message):
-    def __init__(self, box_id: str, result: str, is_error: bool) -> None:
-        self.box_id = box_id
+class ToolCallPaneClose(Message):
+    def __init__(self, pane_id: str, result: str, is_error: bool) -> None:
+        self.pane_id = pane_id
         self.result = result
         self.is_error = is_error
         super().__init__()
@@ -71,16 +71,23 @@ class ErrorMessage(Message):
         super().__init__()
 
 
+class UserInputSubmitted(Message):
+    def __init__(self, text: str) -> None:
+        self.text = text
+        super().__init__()
+
+
 TuiMessage = (
     RunStartedMessage
     | RunFinishedMessage
-    | ThinkingBoxCreate
-    | ThinkingBoxDelta
-    | ThinkingBoxClose
-    | ToolCallBoxCreate
-    | ToolCallBoxDelta
-    | ToolCallBoxClose
+    | AssistantPaneCreate
+    | AssistantPaneDelta
+    | AssistantPaneClose
+    | ToolCallPaneCreate
+    | ToolCallPaneDelta
+    | ToolCallPaneClose
     | ErrorMessage
+    | UserInputSubmitted
 )
 
 
@@ -90,17 +97,17 @@ def translate(event: BusEvent) -> TuiMessage | None:
             return RunStartedMessage()
         case RunFinished(error=error):
             return RunFinishedMessage(error=error)
-        case AssistantTextStarted(id=box_id):
-            return ThinkingBoxCreate(box_id=box_id)
-        case AssistantTextDelta(id=box_id, text=text):
-            return ThinkingBoxDelta(box_id=box_id, text=text)
-        case AssistantTextFinished(id=box_id):
-            return ThinkingBoxClose(box_id=box_id)
-        case ToolCallStarted(id=box_id, name=name):
-            return ToolCallBoxCreate(box_id=box_id, name=name)
-        case ToolCallArgumentsDelta(id=box_id, arguments_delta=arguments_delta):
-            return ToolCallBoxDelta(box_id=box_id, text=arguments_delta)
-        case ToolCallFinished(id=box_id, result=result, is_error=is_error):
-            return ToolCallBoxClose(box_id=box_id, result=result, is_error=is_error)
+        case AssistantTextStarted(id=pane_id):
+            return AssistantPaneCreate(pane_id=pane_id)
+        case AssistantTextDelta(id=pane_id, text=text):
+            return AssistantPaneDelta(pane_id=pane_id, text=text)
+        case AssistantTextFinished(id=pane_id):
+            return AssistantPaneClose(pane_id=pane_id)
+        case ToolCallStarted(id=pane_id, name=name):
+            return ToolCallPaneCreate(pane_id=pane_id, name=name)
+        case ToolCallArgumentsDelta(id=pane_id, arguments_delta=arguments_delta):
+            return ToolCallPaneDelta(pane_id=pane_id, text=arguments_delta)
+        case ToolCallFinished(id=pane_id, result=result, is_error=is_error):
+            return ToolCallPaneClose(pane_id=pane_id, result=result, is_error=is_error)
         case ErrorOccurred(message=message):
             return ErrorMessage(message=message)

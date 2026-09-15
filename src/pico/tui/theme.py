@@ -15,8 +15,14 @@ class Theme:
     success: str
     warning: str
     error: str
-    thinking: str
+    assistant: str
     tool_call: str
+    tool_call_border: str
+    idle: str
+    running: str
+    input_bar_bg: str
+    input_bar_border: str
+    input_prompt: str
 
     def to_textual(self) -> TextualTheme:
         return TextualTheme(
@@ -34,15 +40,21 @@ class Theme:
 
 PICO_THEME = Theme(
     name="pico",
-    background="#0d1117",
-    surface="#161b22",
-    primary="#58a6ff",
-    accent="#bc8cff",
-    text="#c9d1d9",
-    muted_text="#8b949e",
-    success="#3fb950",
-    warning="#d29922",
-    error="#f85149",
-    thinking="#58a6ff",
-    tool_call="#bc8cff",
+    background="#12141c",
+    surface="#1a1d29",
+    primary="#7aa2f7",
+    accent="#7aa2f7",
+    text="#c8ccd4",
+    muted_text="#6b7280",
+    success="#4fd6a8",
+    warning="#e0af68",
+    error="#f7768e",
+    assistant="#c8ccd4",
+    tool_call="#9aa5ce",
+    tool_call_border="#3b3f51",
+    idle="#6b7280",
+    running="#7aa2f7",
+    input_bar_bg="#1a1d29",
+    input_bar_border="#3b3f51",
+    input_prompt="#7aa2f7",
 )

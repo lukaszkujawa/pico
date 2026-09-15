@@ -18,8 +18,14 @@ SEMANTIC_FIELDS = [
     "success",
     "warning",
     "error",
-    "thinking",
+    "assistant",
     "tool_call",
+    "tool_call_border",
+    "idle",
+    "running",
+    "input_bar_bg",
+    "input_bar_border",
+    "input_prompt",
 ]
 
 
@@ -36,8 +42,14 @@ def test_pico_theme_has_all_semantic_colors() -> None:
         assert COLOR_PATTERN.match(value), f"{field}={value!r} is not a valid color string"
 
 
-def test_thinking_and_tool_call_colors_are_distinct() -> None:
-    assert PICO_THEME.thinking != PICO_THEME.tool_call
+def test_accent_hierarchy_has_single_primary() -> None:
+    assert PICO_THEME.primary == PICO_THEME.accent
+
+
+def test_error_and_success_colors_are_distinct() -> None:
+    assert PICO_THEME.success != PICO_THEME.error
+    assert PICO_THEME.success != PICO_THEME.warning
+    assert PICO_THEME.error != PICO_THEME.warning
 
 
 def test_to_textual_produces_textual_theme() -> None:

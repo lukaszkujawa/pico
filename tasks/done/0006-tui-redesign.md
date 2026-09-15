@@ -10,7 +10,7 @@ Direction, decided up front:
 * A fixed input bar pinned to the bottom of the screen at all times: a horizontal rule above it, a horizontal rule below it, and a `>` prompt on the left.
 * The color palette is a template: one typed definition swappable for alternate palettes without touching widget code, already true of `Theme` in `0004` — this milestone raises the palette itself to a considered, professional standard and confirms nothing regresses that contract.
 
-## [ ] T001 Resolve the assistant-text ambiguity
+## [X] T001 Resolve the assistant-text ambiguity
 
 ### Description
 
@@ -27,7 +27,11 @@ Decide and document (in this file, as a short note under this task, and in a doc
 * No widget or identifier in `pico.tui` claims a "thinking" semantic that the current `BusEvent` set cannot support.
 * The naming decision is reflected consistently across `theme.py`, `widgets.py`, `messages.py`, `app.py`.
 
-## [ ] T002 Professional color palette
+### Decision
+
+`AssistantText*` carries the model's only text output; there is no core signal distinguishing reasoning from a final answer. Renamed `ThinkingBox` -> `AssistantPane`, `ThinkingBox{Create,Delta,Close}` -> `AssistantPane{Create,Delta,Close}`, and `Theme.thinking` -> `Theme.assistant` throughout `theme.py`, `widgets.py`, `messages.py`, `app.py`, and their tests. No visual or naming distinction between "thinking" and "answering" is made anywhere in `pico.tui`.
+
+## [X] T002 Professional color palette
 
 ### Description
 
@@ -44,7 +48,7 @@ Constraints:
 * `tests/tui/test_theme.py` is updated for any renamed/added fields and still confirms every semantic field is present and is a valid color string.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T003 Application chrome: header, layout, resize behaviour
+## [X] T003 Application chrome: header, layout, resize behaviour
 
 ### Description
 
@@ -60,7 +64,7 @@ In `src/pico/tui/app.py`, add the structural chrome around the conversation tran
 * No fixed-size layout that would break at common terminal sizes (test at minimum against an 80x24 and a wider/taller size using Textual's test harness size options).
 * Fully annotated, passes strict Pyright.
 
-## [ ] T004 Redesigned conversation panes
+## [X] T004 Redesigned conversation panes
 
 ### Description
 
@@ -78,7 +82,7 @@ Keep the existing small, explicit widget API shape from `0004` (`append_delta`, 
 * Success and error tool-call states are visually distinguishable by more than color alone.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T005 Bottom input bar
+## [X] T005 Bottom input bar
 
 ### Description
 
@@ -96,7 +100,7 @@ Submission behaviour: wire the input to produce a typed, testable event (e.g. a 
 * `tests/tui/test_widgets.py` or `tests/tui/test_app.py` covers: typing text and pressing Enter emits the submitted-text message and clears the field.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T006 Verify and finalize
+## [X] T006 Verify and finalize
 
 ### Description
 
