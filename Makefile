@@ -1,4 +1,4 @@
-.PHONY: lint format typecheck test check
+.PHONY: lint format typecheck test check code
 
 lint:
 	uv run ruff check .
@@ -15,3 +15,6 @@ test:
 	uv run pytest
 
 check: lint typecheck test
+
+code:
+	bin/code.sh
