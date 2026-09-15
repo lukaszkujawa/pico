@@ -5,7 +5,15 @@ import pytest
 
 from pico.llm.errors import LLMError
 from pico.llm.ollama import OllamaClient
-from pico.llm.types import GenerationComplete, Message, Role, TextDelta, ToolCallReady, ToolSpec
+from pico.llm.types import (
+    GenerationComplete,
+    Message,
+    Role,
+    TextDelta,
+    ThinkingDelta,
+    ToolCallReady,
+    ToolSpec,
+)
 
 
 def _ndjson_response(lines: list[dict[str, object]]) -> httpx.Response:
@@ -38,6 +46,65 @@ def test_stream_plain_text() -> None:
         TextDelta(text=" world"),
         GenerationComplete(finish_reason="stop", prompt_tokens=3, completion_tokens=2),
     ]
+
+
+def test_stream_thinking_and_content_yields_both_in_order() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return _ndjson_response(
+            [
+                {
+                    "message": {"role": "assistant", "thinking": "pondering", "content": "Hello"},
+                    "done": False,
+                },
+                {
+                    "message": {"role": "assistant", "content": ""},
+                    "done": True,
+                    "done_reason": "stop",
+                },
+            ]
+        )
+
+    client = OllamaClient(model="qwen3", transport=httpx.MockTransport(handle))
+
+    events = list(client.stream([Message(role=Role.USER, content="hi")], []))
+
+    assert events == [
+        ThinkingDelta(text="pondering"),
+        TextDelta(text="Hello"),
+        GenerationComplete(finish_reason="stop"),
+    ]
+
+
+def test_stream_only_thinking_yields_no_text_delta() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return _ndjson_response(
+            [
+                {"message": {"role": "assistant", "thinking": "pondering"}, "done": False},
+                {"message": {"role": "assistant", "content": ""}, "done": True},
+            ]
+        )
+
+    client = OllamaClient(model="qwen3", transport=httpx.MockTransport(handle))
+
+    events = list(client.stream([Message(role=Role.USER, content="hi")], []))
+
+    assert events == [ThinkingDelta(text="pondering"), GenerationComplete(finish_reason="stop")]
+
+
+def test_stream_only_content_yields_no_thinking_delta() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return _ndjson_response(
+            [
+                {"message": {"role": "assistant", "content": "Hello"}, "done": False},
+                {"message": {"role": "assistant", "content": ""}, "done": True},
+            ]
+        )
+
+    client = OllamaClient(model="qwen3", transport=httpx.MockTransport(handle))
+
+    events = list(client.stream([Message(role=Role.USER, content="hi")], []))
+
+    assert events == [TextDelta(text="Hello"), GenerationComplete(finish_reason="stop")]
 
 
 def test_stream_tool_call() -> None:

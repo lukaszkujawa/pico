@@ -11,6 +11,7 @@ from pico.llm.types import (
     Role,
     StreamEvent,
     TextDelta,
+    ThinkingDelta,
     ToolCall,
     ToolCallReady,
     ToolSpec,
@@ -95,6 +96,10 @@ class OllamaClient:
 
             message: dict[str, Any] | None = chunk.get("message")
             if message:
+                thinking: str = message.get("thinking", "")
+                if thinking:
+                    yield ThinkingDelta(text=thinking)
+
                 content: str = message.get("content", "")
                 if content:
                     yield TextDelta(text=content)

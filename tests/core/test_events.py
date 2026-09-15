@@ -2,8 +2,12 @@ from pico.core.events import (
     AssistantTextDelta,
     AssistantTextFinished,
     AssistantTextStarted,
+    AssistantThinkingDelta,
+    AssistantThinkingFinished,
+    AssistantThinkingStarted,
     BusEvent,
     ErrorOccurred,
+    RunCancelled,
     RunFinished,
     RunStarted,
     ToolCallArgumentsDelta,
@@ -43,6 +47,22 @@ def test_assistant_text_finished() -> None:
     assert event.id == "1"
 
 
+def test_assistant_thinking_started() -> None:
+    event = AssistantThinkingStarted(id="1")
+    assert event.id == "1"
+
+
+def test_assistant_thinking_delta() -> None:
+    event = AssistantThinkingDelta(id="1", text="hmm")
+    assert event.id == "1"
+    assert event.text == "hmm"
+
+
+def test_assistant_thinking_finished() -> None:
+    event = AssistantThinkingFinished(id="1")
+    assert event.id == "1"
+
+
 def test_tool_call_started() -> None:
     event = ToolCallStarted(id="1", name="echo")
     assert event.id == "1"
@@ -68,6 +88,10 @@ def test_error_occurred() -> None:
     assert event.message == "boom"
 
 
+def test_run_cancelled() -> None:
+    assert RunCancelled() == RunCancelled()
+
+
 def test_bus_event_exhaustive_match() -> None:
     def describe(event: BusEvent) -> str:
         match event:
@@ -81,6 +105,12 @@ def test_bus_event_exhaustive_match() -> None:
                 return "assistant_text_delta"
             case AssistantTextFinished():
                 return "assistant_text_finished"
+            case AssistantThinkingStarted():
+                return "assistant_thinking_started"
+            case AssistantThinkingDelta():
+                return "assistant_thinking_delta"
+            case AssistantThinkingFinished():
+                return "assistant_thinking_finished"
             case ToolCallStarted():
                 return "tool_call_started"
             case ToolCallArgumentsDelta():
@@ -89,12 +119,17 @@ def test_bus_event_exhaustive_match() -> None:
                 return "tool_call_finished"
             case ErrorOccurred():
                 return "error_occurred"
+            case RunCancelled():
+                return "run_cancelled"
 
     assert describe(RunStarted()) == "run_started"
     assert describe(RunFinished()) == "run_finished"
     assert describe(AssistantTextStarted(id="1")) == "assistant_text_started"
     assert describe(AssistantTextDelta(id="1", text="hi")) == "assistant_text_delta"
     assert describe(AssistantTextFinished(id="1")) == "assistant_text_finished"
+    assert describe(AssistantThinkingStarted(id="1")) == "assistant_thinking_started"
+    assert describe(AssistantThinkingDelta(id="1", text="hmm")) == "assistant_thinking_delta"
+    assert describe(AssistantThinkingFinished(id="1")) == "assistant_thinking_finished"
     assert describe(ToolCallStarted(id="1", name="echo")) == "tool_call_started"
     assert (
         describe(ToolCallArgumentsDelta(id="1", arguments_delta="")) == "tool_call_arguments_delta"
@@ -102,3 +137,4 @@ def test_bus_event_exhaustive_match() -> None:
     call = ToolCall(id="1", name="echo", arguments={})
     assert describe(ToolCallFinished(id="1", tool_call=call, result="ok")) == "tool_call_finished"
     assert describe(ErrorOccurred(message="boom")) == "error_occurred"
+    assert describe(RunCancelled()) == "run_cancelled"

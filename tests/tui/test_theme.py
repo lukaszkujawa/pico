@@ -26,6 +26,9 @@ SEMANTIC_FIELDS = [
     "input_bar_bg",
     "input_bar_border",
     "input_prompt",
+    "thinking_bg",
+    "thinking",
+    "waiting",
 ]
 
 

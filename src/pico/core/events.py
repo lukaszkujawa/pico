@@ -30,6 +30,22 @@ class AssistantTextFinished:
 
 
 @dataclass(frozen=True)
+class AssistantThinkingStarted:
+    id: str
+
+
+@dataclass(frozen=True)
+class AssistantThinkingDelta:
+    id: str
+    text: str
+
+
+@dataclass(frozen=True)
+class AssistantThinkingFinished:
+    id: str
+
+
+@dataclass(frozen=True)
 class ToolCallStarted:
     id: str
     name: str
@@ -54,14 +70,23 @@ class ErrorOccurred:
     message: str
 
 
+@dataclass(frozen=True)
+class RunCancelled:
+    pass
+
+
 BusEvent = (
     RunStarted
     | RunFinished
     | AssistantTextStarted
     | AssistantTextDelta
     | AssistantTextFinished
+    | AssistantThinkingStarted
+    | AssistantThinkingDelta
+    | AssistantThinkingFinished
     | ToolCallStarted
     | ToolCallArgumentsDelta
     | ToolCallFinished
     | ErrorOccurred
+    | RunCancelled
 )

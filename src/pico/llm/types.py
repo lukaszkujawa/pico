@@ -45,6 +45,11 @@ class TextDelta:
 
 
 @dataclass(frozen=True)
+class ThinkingDelta:
+    text: str
+
+
+@dataclass(frozen=True)
 class ToolCallDelta:
     id: str
     name: str
@@ -63,4 +68,4 @@ class GenerationComplete:
     completion_tokens: int | None = None
 
 
-StreamEvent = TextDelta | ToolCallDelta | ToolCallReady | GenerationComplete
+StreamEvent = TextDelta | ThinkingDelta | ToolCallDelta | ToolCallReady | GenerationComplete

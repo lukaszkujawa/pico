@@ -1,3 +1,4 @@
+import queue
 import threading
 import time
 from collections.abc import Iterator
@@ -7,7 +8,9 @@ import pytest
 import pico.app as app_module
 from pico.app import UnsupportedVendorError, run_pico
 from pico.config import Config
-from pico.llm.types import GenerationComplete, Message, StreamEvent, TextDelta, ToolSpec
+from pico.core.bus import Bus
+from pico.core.events import RunCancelled, RunFinished, RunStarted
+from pico.llm.types import GenerationComplete, Message, Role, StreamEvent, TextDelta, ToolSpec
 from pico.tui import PicoApp
 
 
@@ -76,6 +79,108 @@ def test_stopping_tui_does_not_leave_core_thread_running(monkeypatch: pytest.Mon
     release.set()
     core_threads[0].join(timeout=5)
     assert not core_threads[0].is_alive()
+
+
+class RecordingClient:
+    def __init__(self) -> None:
+        self.seen_messages: list[list[Message]] = []
+
+    def stream(self, messages: list[Message], tools: list[ToolSpec]) -> Iterator[StreamEvent]:
+        self.seen_messages.append(list(messages))
+        yield TextDelta(text="hi")
+        yield GenerationComplete(finish_reason="stop")
+
+
+def test_turn_loop_runs_one_turn_per_queued_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = RecordingClient()
+
+    def factory(*, model: str, base_url: str, api_key: str | None) -> RecordingClient:
+        return client
+
+    monkeypatch.setattr(app_module, "OllamaClient", factory)
+
+    queues: list[queue.Queue[str]] = []
+
+    def driving_run(self: PicoApp) -> None:
+        input_queue = queues[0]
+        input_queue.put("hello")
+        deadline = time.monotonic() + 5
+        while len(client.seen_messages) < 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        input_queue.put("world")
+        while len(client.seen_messages) < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+    original_init = PicoApp.__init__
+
+    def tracking_init(
+        self: PicoApp,
+        bus: Bus,
+        input_queue: "queue.Queue[str]",
+        cancel_handle: app_module.CancelHandle | None = None,
+    ) -> None:
+        queues.append(input_queue)
+        original_init(self, bus, input_queue, cancel_handle)
+
+    monkeypatch.setattr(PicoApp, "__init__", tracking_init)
+    monkeypatch.setattr(PicoApp, "run", driving_run)
+
+    run_pico(_config())
+
+    assert len(client.seen_messages) == 2
+    assert [m.content for m in client.seen_messages[0]] == ["hello"]
+    assert [m.content for m in client.seen_messages[1]] == ["hello", "hi", "world"]
+    assert [m.role for m in client.seen_messages[1]] == [Role.USER, Role.ASSISTANT, Role.USER]
+
+
+def test_cancelling_mid_turn_stops_run_and_allows_next_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release = threading.Event()
+    _patch_ollama_client(monkeypatch, release)
+
+    cancel_handles: list[app_module.CancelHandle] = []
+    queues: list[queue.Queue[str]] = []
+    subscribers: list[Iterator[object]] = []
+
+    def driving_run(self: PicoApp) -> None:
+        input_queue = queues[0]
+        cancel_handle = cancel_handles[0]
+        input_queue.put("hello")
+        time.sleep(0.1)
+        cancel_handle.trigger()
+        time.sleep(0.1)
+        release.set()
+        input_queue.put("world")
+        time.sleep(0.2)
+
+    original_init = PicoApp.__init__
+
+    def tracking_init(
+        self: PicoApp,
+        bus: Bus,
+        input_queue: "queue.Queue[str]",
+        cancel_handle: app_module.CancelHandle,
+    ) -> None:
+        queues.append(input_queue)
+        cancel_handles.append(cancel_handle)
+        subscribers.append(bus.subscribe())
+        original_init(self, bus, input_queue, cancel_handle)
+
+    monkeypatch.setattr(PicoApp, "__init__", tracking_init)
+    monkeypatch.setattr(PicoApp, "run", driving_run)
+
+    run_pico(_config())
+
+    subscriber = subscribers[0]
+    seen: list[object] = []
+    while sum(isinstance(event, RunFinished) for event in seen) < 1:
+        seen.append(next(subscriber))
+
+    assert seen[0] == RunStarted()
+    cancelled_index = seen.index(RunCancelled())
+    assert seen[cancelled_index + 1] == RunStarted()
+    assert seen[-1] == RunFinished()
 
 
 def test_run_pico_waits_for_core_thread_briefly_on_shutdown(

@@ -23,6 +23,9 @@ class Theme:
     input_bar_bg: str
     input_bar_border: str
     input_prompt: str
+    thinking_bg: str
+    thinking: str
+    waiting: str
 
     def to_textual(self) -> TextualTheme:
         return TextualTheme(
@@ -57,4 +60,7 @@ PICO_THEME = Theme(
     input_bar_bg="#1a1d29",
     input_bar_border="#3b3f51",
     input_prompt="#7aa2f7",
+    thinking_bg="#232838",
+    thinking="#9aa5ce",
+    waiting="#6b7280",
 )

@@ -4,8 +4,12 @@ from pico.core.events import (
     AssistantTextDelta,
     AssistantTextFinished,
     AssistantTextStarted,
+    AssistantThinkingDelta,
+    AssistantThinkingFinished,
+    AssistantThinkingStarted,
     BusEvent,
     ErrorOccurred,
+    RunCancelled,
     RunFinished,
     RunStarted,
     ToolCallArgumentsDelta,
@@ -24,6 +28,10 @@ class RunFinishedMessage(Message):
         super().__init__()
 
 
+class RunCancelledMessage(Message):
+    pass
+
+
 class AssistantPaneCreate(Message):
     def __init__(self, pane_id: str) -> None:
         self.pane_id = pane_id
@@ -38,6 +46,25 @@ class AssistantPaneDelta(Message):
 
 
 class AssistantPaneClose(Message):
+    def __init__(self, pane_id: str) -> None:
+        self.pane_id = pane_id
+        super().__init__()
+
+
+class ThinkingPaneCreate(Message):
+    def __init__(self, pane_id: str) -> None:
+        self.pane_id = pane_id
+        super().__init__()
+
+
+class ThinkingPaneDelta(Message):
+    def __init__(self, pane_id: str, text: str) -> None:
+        self.pane_id = pane_id
+        self.text = text
+        super().__init__()
+
+
+class ThinkingPaneClose(Message):
     def __init__(self, pane_id: str) -> None:
         self.pane_id = pane_id
         super().__init__()
@@ -80,9 +107,13 @@ class UserInputSubmitted(Message):
 TuiMessage = (
     RunStartedMessage
     | RunFinishedMessage
+    | RunCancelledMessage
     | AssistantPaneCreate
     | AssistantPaneDelta
     | AssistantPaneClose
+    | ThinkingPaneCreate
+    | ThinkingPaneDelta
+    | ThinkingPaneClose
     | ToolCallPaneCreate
     | ToolCallPaneDelta
     | ToolCallPaneClose
@@ -97,12 +128,20 @@ def translate(event: BusEvent) -> TuiMessage | None:
             return RunStartedMessage()
         case RunFinished(error=error):
             return RunFinishedMessage(error=error)
+        case RunCancelled():
+            return RunCancelledMessage()
         case AssistantTextStarted(id=pane_id):
             return AssistantPaneCreate(pane_id=pane_id)
         case AssistantTextDelta(id=pane_id, text=text):
             return AssistantPaneDelta(pane_id=pane_id, text=text)
         case AssistantTextFinished(id=pane_id):
             return AssistantPaneClose(pane_id=pane_id)
+        case AssistantThinkingStarted(id=pane_id):
+            return ThinkingPaneCreate(pane_id=pane_id)
+        case AssistantThinkingDelta(id=pane_id, text=text):
+            return ThinkingPaneDelta(pane_id=pane_id, text=text)
+        case AssistantThinkingFinished(id=pane_id):
+            return ThinkingPaneClose(pane_id=pane_id)
         case ToolCallStarted(id=pane_id, name=name):
             return ToolCallPaneCreate(pane_id=pane_id, name=name)
         case ToolCallArgumentsDelta(id=pane_id, arguments_delta=arguments_delta):

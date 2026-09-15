@@ -1,8 +1,10 @@
+import queue
 import threading
-from typing import Literal
+from typing import ClassVar, Literal, Protocol
 
 from rich.text import Text
 from textual.app import App, ComposeResult
+from textual.binding import BindingType
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Input, Rule, Static
 
@@ -12,8 +14,12 @@ from pico.tui.messages import (
     AssistantPaneCreate,
     AssistantPaneDelta,
     ErrorMessage,
+    RunCancelledMessage,
     RunFinishedMessage,
     RunStartedMessage,
+    ThinkingPaneClose,
+    ThinkingPaneCreate,
+    ThinkingPaneDelta,
     ToolCallPaneClose,
     ToolCallPaneCreate,
     ToolCallPaneDelta,
@@ -21,9 +27,20 @@ from pico.tui.messages import (
     translate,
 )
 from pico.tui.theme import PICO_THEME, Theme
-from pico.tui.widgets import AssistantPane, ErrorPane, ToolCallPane
+from pico.tui.widgets import (
+    AssistantPane,
+    ErrorPane,
+    ThinkingPane,
+    ToolCallPane,
+    UserPane,
+    WaitingIndicator,
+)
 
 RunStatus = Literal["idle", "running", "error"]
+
+
+class CancelHandle(Protocol):
+    def trigger(self) -> None: ...
 
 
 class StatusHeader(Static):
@@ -83,16 +100,27 @@ class PicoApp(App[None]):
         height: 1;
     }
     """
+    BINDINGS: ClassVar[list[BindingType]] = [("escape", "cancel_run", "Cancel")]
 
-    def __init__(self, bus: Bus) -> None:
+    def __init__(
+        self,
+        bus: Bus,
+        input_queue: "queue.Queue[str]",
+        cancel_handle: CancelHandle | None = None,
+    ) -> None:
         super().__init__()
         self._bus = bus
+        self._input_queue = input_queue
+        self._cancel_handle = cancel_handle
+        self._run_in_flight = False
         self._assistant_panes: dict[str, AssistantPane] = {}
+        self._thinking_panes: dict[str, ThinkingPane] = {}
         self._tool_call_panes: dict[str, ToolCallPane] = {}
 
     def compose(self) -> ComposeResult:
         yield StatusHeader()
-        yield VerticalScroll(id="conversation")
+        with VerticalScroll(id="conversation"):
+            yield WaitingIndicator()
         yield Rule()
         yield InputBar()
         yield Rule()
@@ -109,6 +137,7 @@ class PicoApp(App[None]):
                 self.post_message(message)
 
     def on_assistant_pane_create(self, message: AssistantPaneCreate) -> None:
+        self.query_one(WaitingIndicator).stop()
         pane = AssistantPane(pane_id=message.pane_id)
         self._assistant_panes[message.pane_id] = pane
         self.query_one("#conversation", VerticalScroll).mount(pane)
@@ -118,6 +147,18 @@ class PicoApp(App[None]):
 
     def on_assistant_pane_close(self, message: AssistantPaneClose) -> None:
         self._assistant_panes[message.pane_id].finish()
+
+    def on_thinking_pane_create(self, message: ThinkingPaneCreate) -> None:
+        self.query_one(WaitingIndicator).stop()
+        pane = ThinkingPane(pane_id=message.pane_id)
+        self._thinking_panes[message.pane_id] = pane
+        self.query_one("#conversation", VerticalScroll).mount(pane)
+
+    def on_thinking_pane_delta(self, message: ThinkingPaneDelta) -> None:
+        self._thinking_panes[message.pane_id].append_delta(message.text)
+
+    def on_thinking_pane_close(self, message: ThinkingPaneClose) -> None:
+        self._thinking_panes[message.pane_id].finish()
 
     def on_tool_call_pane_create(self, message: ToolCallPaneCreate) -> None:
         pane = ToolCallPane(pane_id=message.pane_id, name=message.name)
@@ -131,14 +172,36 @@ class PicoApp(App[None]):
         self._tool_call_panes[message.pane_id].finish(is_error=message.is_error)
 
     def on_run_started_message(self, message: RunStartedMessage) -> None:
+        self._run_in_flight = True
         self.query_one(StatusHeader).set_status("running")
 
     def on_run_finished_message(self, message: RunFinishedMessage) -> None:
+        self._run_in_flight = False
+        self.query_one(WaitingIndicator).stop()
         self.query_one(StatusHeader).set_status("error" if message.error else "idle")
 
+    def on_run_cancelled_message(self, message: RunCancelledMessage) -> None:
+        self._run_in_flight = False
+        self.query_one(WaitingIndicator).stop()
+        self.query_one(StatusHeader).set_status("idle")
+
+    def action_cancel_run(self) -> None:
+        if self._run_in_flight and self._cancel_handle is not None:
+            self._cancel_handle.trigger()
+
     def on_error_message(self, message: ErrorMessage) -> None:
+        self._run_in_flight = False
+        self.query_one(WaitingIndicator).stop()
         self.query_one(StatusHeader).set_status("error")
         self.query_one("#conversation", VerticalScroll).mount(ErrorPane(message.message))
 
     def on_user_input_submitted(self, message: UserInputSubmitted) -> None:
-        pass
+        text = message.text.strip()
+        if not text:
+            return
+        conversation = self.query_one("#conversation", VerticalScroll)
+        conversation.mount(UserPane(text=message.text))
+        indicator = self.query_one(WaitingIndicator)
+        conversation.move_child(indicator, after=-1)
+        indicator.start()
+        self._input_queue.put(text)

@@ -2,6 +2,9 @@ from pico.core.events import (
     AssistantTextDelta,
     AssistantTextFinished,
     AssistantTextStarted,
+    AssistantThinkingDelta,
+    AssistantThinkingFinished,
+    AssistantThinkingStarted,
     ErrorOccurred,
     RunFinished,
     RunStarted,
@@ -17,6 +20,9 @@ from pico.tui.messages import (
     ErrorMessage,
     RunFinishedMessage,
     RunStartedMessage,
+    ThinkingPaneClose,
+    ThinkingPaneCreate,
+    ThinkingPaneDelta,
     ToolCallPaneClose,
     ToolCallPaneCreate,
     ToolCallPaneDelta,
@@ -51,6 +57,25 @@ def test_translate_assistant_text_delta() -> None:
 def test_translate_assistant_text_finished() -> None:
     message = translate(AssistantTextFinished(id="0"))
     assert isinstance(message, AssistantPaneClose)
+    assert message.pane_id == "0"
+
+
+def test_translate_assistant_thinking_started() -> None:
+    message = translate(AssistantThinkingStarted(id="0"))
+    assert isinstance(message, ThinkingPaneCreate)
+    assert message.pane_id == "0"
+
+
+def test_translate_assistant_thinking_delta() -> None:
+    message = translate(AssistantThinkingDelta(id="0", text="hmm"))
+    assert isinstance(message, ThinkingPaneDelta)
+    assert message.pane_id == "0"
+    assert message.text == "hmm"
+
+
+def test_translate_assistant_thinking_finished() -> None:
+    message = translate(AssistantThinkingFinished(id="0"))
+    assert isinstance(message, ThinkingPaneClose)
     assert message.pane_id == "0"
 
 

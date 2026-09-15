@@ -5,6 +5,7 @@ from pico.llm.types import (
     Message,
     Role,
     TextDelta,
+    ThinkingDelta,
     ToolCall,
     ToolCallDelta,
     ToolCallReady,
@@ -75,6 +76,11 @@ def test_text_delta() -> None:
     assert delta.text == "hello"
 
 
+def test_thinking_delta() -> None:
+    delta = ThinkingDelta(text="pondering")
+    assert delta.text == "pondering"
+
+
 def test_tool_call_delta() -> None:
     delta = ToolCallDelta(id="1", name="search", arguments_delta='{"query":')
     assert delta.id == "1"
@@ -101,10 +107,14 @@ def test_generation_complete_with_usage() -> None:
 
 
 def test_stream_event_exhaustive_match() -> None:
-    def describe(event: TextDelta | ToolCallDelta | ToolCallReady | GenerationComplete) -> str:
+    def describe(
+        event: TextDelta | ThinkingDelta | ToolCallDelta | ToolCallReady | GenerationComplete,
+    ) -> str:
         match event:
             case TextDelta():
                 return "text"
+            case ThinkingDelta():
+                return "thinking"
             case ToolCallDelta():
                 return "tool_call_delta"
             case ToolCallReady():
@@ -113,6 +123,7 @@ def test_stream_event_exhaustive_match() -> None:
                 return "complete"
 
     assert describe(TextDelta(text="hi")) == "text"
+    assert describe(ThinkingDelta(text="hmm")) == "thinking"
     assert describe(ToolCallDelta(id="1", name="x", arguments_delta="")) == "tool_call_delta"
     assert (
         describe(ToolCallReady(tool_call=ToolCall(id="1", name="x", arguments={})))
