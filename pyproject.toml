@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.13"
 dependencies = [
     "httpx>=0.28.1",
+    "textual>=8.2.8",
 ]
 
 [project.scripts]
@@ -23,6 +24,7 @@ dev = [
     "hypothesis>=6.168.0",
     "pyright>=1.1.414",
     "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
     "ruff>=0.16.7",
 ]
@@ -58,6 +60,7 @@ reportMissingTypeStubs = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--cov=pico --cov-report=term-missing"
+asyncio_mode = "auto"
 
 [tool.coverage.run]
 source = ["src/pico"]

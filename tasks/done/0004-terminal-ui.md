@@ -2,7 +2,7 @@
 
 Build the terminal UI in `src/pico/tui/` using Textual. The TUI is a pure consumer of `pico.core.Bus` events (from `0003-application-core.md`) and never talks to the LLM layer or agentic loop directly. It runs on its own thread, independent of application core.
 
-## [ ] T001 Add Textual dependency
+## [X] T001 Add Textual dependency
 
 ### Description
 
@@ -12,7 +12,7 @@ Add the runtime dependency with `uv add textual`.
 
 * `textual` appears in `pyproject.toml` under `[project] dependencies`, added only via `uv add`.
 
-## [ ] T002 Color schema
+## [X] T002 Color schema
 
 ### Description
 
@@ -26,7 +26,7 @@ Provide one concrete `PICO_THEME` instance. Every widget in this milestone must 
 * `tests/tui/test_theme.py` confirms `PICO_THEME` provides every required semantic color and that values are valid color strings.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T003 Bus-to-TUI message contract
+## [X] T003 Bus-to-TUI message contract
 
 ### Description
 
@@ -38,7 +38,7 @@ In `src/pico/tui/messages.py`, define the Textual `Message` subclasses the TUI r
 * `tests/tui/test_messages.py` covers `translate` for each `BusEvent` variant.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T004 Thinking box and tool call box widgets
+## [X] T004 Thinking box and tool call box widgets
 
 ### Description
 
@@ -55,7 +55,7 @@ Both widgets use `PICO_THEME` exclusively for styling and expose a small, explic
 * `tests/tui/test_widgets.py` uses Textual's test harness (`App.run_test`) to drive each widget through create -> delta -> delta -> finish and asserts the rendered content and finished state.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T005 PicoApp shell and threaded bus consumer
+## [X] T005 PicoApp shell and threaded bus consumer
 
 ### Description
 
@@ -74,7 +74,7 @@ This widget must not import anything from `pico.llm` or `pico.core.agent` — on
 * The app never blocks its own UI thread waiting on the bus.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T006 Verify and finalize
+## [X] T006 Verify and finalize
 
 ### Description
 
