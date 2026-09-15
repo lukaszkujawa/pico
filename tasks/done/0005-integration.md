@@ -61,7 +61,7 @@ Replace the placeholder `main()` in `src/pico/__init__.py` with one that calls `
 * `tests/test_main.py` covers: `main()` calls `run_pico` with the loaded config (using a monkeypatch/fake, no real TUI launch), and a `ConfigError` results in a clean non-zero exit rather than a traceback.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T004 Manual smoke test
+## [X] T004 Manual smoke test
 
 ### Description
 
@@ -72,7 +72,7 @@ With the `.env` file's configured Ollama server reachable, run `uv run python -m
 * Smoke test performed and confirmed working; note the model used in the commit message.
 * If the configured Ollama server is not reachable from this environment, this task cannot be completed — stop and leave it unchecked rather than marking it done without verification.
 
-## [ ] T005 Verify and finalize
+## [X] T005 Verify and finalize
 
 ### Description
 

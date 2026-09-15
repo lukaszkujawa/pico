@@ -1,0 +1,3 @@
+import pico
+
+pico.main()

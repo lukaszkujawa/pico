@@ -1,3 +1,5 @@
+import runpy
+
 import pytest
 
 import pico
@@ -39,3 +41,13 @@ def test_main_exits_cleanly_on_config_error(monkeypatch: pytest.MonkeyPatch) -> 
         pico.main()
 
     assert excinfo.value.code != 0
+
+
+def test_dunder_main_calls_main(monkeypatch: pytest.MonkeyPatch) -> None:
+    called: list[bool] = []
+
+    monkeypatch.setattr(pico, "main", lambda: called.append(True))
+
+    runpy.run_module("pico.__main__", run_name="__main__")
+
+    assert called == [True]
