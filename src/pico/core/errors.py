@@ -1,0 +1,2 @@
+class UnknownToolError(Exception):
+    pass

@@ -2,7 +2,7 @@
 
 Build the application core in `src/pico/core/`: the message bus that decouples the agentic loop from any consumer (such as the TUI), and the agentic loop itself. Depends on the LLM abstraction from `0002-llm-abstraction.md`.
 
-## [ ] T001 Application bus
+## [X] T001 Application bus
 
 ### Description
 
@@ -20,7 +20,7 @@ Keep this generic over `BusEvent` — the bus itself does not know about thinkin
 * `tests/core/test_bus.py` covers: a subscriber receives events published after subscribing, multiple subscribers each receive their own copy, and publishing from one thread is observed by a subscriber reading on another thread.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T002 Agent run events
+## [X] T002 Agent run events
 
 ### Description
 
@@ -39,7 +39,7 @@ Model `BusEvent` as a discriminated union of these, mirroring the `StreamEvent` 
 * `tests/core/test_events.py` covers construction of each variant.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T003 Tool registry
+## [X] T003 Tool registry
 
 ### Description
 
@@ -54,7 +54,7 @@ No built-in tools are implemented yet — this milestone only needs the registry
 * `tests/core/test_tools.py` covers registration, spec listing, successful execution, and the unknown-tool error path.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T004 Agentic loop
+## [X] T004 Agentic loop
 
 ### Description
 
@@ -70,7 +70,7 @@ In `src/pico/core/agent.py`, implement `Run`, which drives one agent run to comp
 * `tests/core/test_agent.py` uses a fake `LLMClient` (satisfying the protocol from `0002-llm-abstraction.md`) and a real `ToolRegistry` with a test tool, and asserts the exact sequence of bus events for: a plain text run, a single tool-call round trip, and an LLM error surfaced as `ErrorOccurred`.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T005 Verify and finalize
+## [X] T005 Verify and finalize
 
 ### Description
 
