@@ -1,4 +1,4 @@
-.PHONY: lint format typecheck test check code
+.PHONY: lint format typecheck test check code run stop_code
 
 lint:
 	uv run ruff check .
@@ -18,3 +18,9 @@ check: lint typecheck test
 
 code:
 	bin/code.sh
+
+run:
+	uv run python -m pico
+
+stop_code:
+	touch .stop_code

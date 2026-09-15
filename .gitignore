@@ -34,3 +34,6 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Autonomous loop control
+.stop_code

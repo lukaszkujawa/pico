@@ -7,6 +7,7 @@ TASKS_DIR="$ROOT_DIR/tasks"
 TODO_DIR="$TASKS_DIR/todo"
 DONE_DIR="$TASKS_DIR/done"
 PROMPT_FILE="$TASKS_DIR/PROMPT.md"
+STOP_FILE="$ROOT_DIR/.stop_code"
 MAX_STEPS="${MAX_STEPS:-50}"
 
 next_task() {
@@ -42,6 +43,13 @@ for ((step = 1; step <= MAX_STEPS; step++)); do
     --verbose
 
   claude_exit=${PIPESTATUS[0]}
+
+  if [[ -f "$STOP_FILE" ]]; then
+    rm -f "$STOP_FILE"
+    echo
+    echo "Stop requested via .stop_code. Stopping after current step."
+    exit 0
+  fi
 
   if (( claude_exit != 0 )); then
     echo
