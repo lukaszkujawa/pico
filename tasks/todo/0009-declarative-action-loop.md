@@ -1,0 +1,9 @@
+# Declarative Action Loop
+
+Roadmap milestone 2 of 7 (see `0008-session-store.md` for the full arc and rationale). Not yet broken into tasks — write full `T00N` detail for this file before starting it, following the pattern in `0008`.
+
+`Run._step` today hardcodes its control flow directly in Python: stream text, collect tool calls, run them, loop if any, stop otherwise. This milestone replaces that fixed shape with a declarative loop configuration — an ordered, data-described sequence of steps/conditions (a `LoopConfig` or similar) that a single generic runner executes, so that trying a different loop shape (different stop conditions, different step ordering, a max-steps cap, a different action set per `0010`) is a configuration change, not a rewrite of loop code. This is the direct answer to "define the agentic loop declaratively so we can test different configurations without a big refactor."
+
+Integrates `0008`'s `Session` as the loop's state: replaces `Run`'s hand-built `list[Message]` with `session.messages()`, and every step's outcome is recorded via `Session.append`, not just published to `Bus`. `Bus`/`BusEvent` stay as the live-streaming channel to the TUI (unchanged contract); `Session` becomes the durable record the loop itself reads back to decide what to do next — the same "reconstruct state by replaying the log" principle as the old architecture's event-sourced loop, scoped down to what Pico needs today (no stuckness/streaks yet — those are `0014`).
+
+Key design question to resolve while writing this milestone's tasks: what "declarative" means concretely for Pico (a small typed config object listing step handlers + a stop predicate is likely the right size — avoid building a generic rule engine or DSL; match the old architecture's spirit, not its literal size).

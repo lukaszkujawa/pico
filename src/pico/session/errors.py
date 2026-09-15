@@ -1,0 +1,2 @@
+class UnknownEventKindError(Exception):
+    pass
