@@ -5,7 +5,7 @@ from typing import ClassVar, Literal, Protocol
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import BindingType
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Input, Rule, Static
 
 from pico.core.bus import Bus
@@ -73,7 +73,7 @@ class InputBar(Horizontal):
     def __init__(self, theme: Theme = PICO_THEME) -> None:
         super().__init__(id="input-bar")
         self._theme = theme
-        self.styles.background = theme.input_bar_bg
+        self.styles.background = theme.background
         self.styles.height = 1
 
     def compose(self) -> ComposeResult:
@@ -81,7 +81,9 @@ class InputBar(Horizontal):
         prompt.styles.color = self._theme.input_prompt
         prompt.styles.width = 2
         yield prompt
-        yield Input(placeholder="Type a message...", id="user-input")
+        text_input = Input(placeholder="Type a message...", id="user-input")
+        text_input.add_class("-textual-compact")
+        yield text_input
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
@@ -95,9 +97,19 @@ class PicoApp(App[None]):
     #conversation {
         height: 1fr;
     }
-    #input-bar {
+    #footer {
         dock: bottom;
+        height: 2;
+    }
+    #input-bar {
         height: 1;
+    }
+    #user-input, #user-input:focus {
+        background: $background;
+        background-tint: $background 0%;
+    }
+    Rule {
+        margin: 0;
     }
     """
     BINDINGS: ClassVar[list[BindingType]] = [("escape", "cancel_run", "Cancel")]
@@ -122,12 +134,14 @@ class PicoApp(App[None]):
         with VerticalScroll(id="conversation"):
             yield WaitingIndicator()
         yield Rule()
-        yield InputBar()
-        yield Rule()
+        with Vertical(id="footer"):
+            yield InputBar()
+            yield Rule()
 
     def on_mount(self) -> None:
         self.register_theme(PICO_THEME.to_textual())
         self.theme = PICO_THEME.name
+        self.query_one("#user-input", Input).focus()
         threading.Thread(target=self._consume_bus, daemon=True).start()
 
     def _consume_bus(self) -> None:
