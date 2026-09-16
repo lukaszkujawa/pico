@@ -562,7 +562,7 @@ async def test_input_bar_submission_emits_message_and_clears_field() -> None:
     submitted: list[str] = []
 
     class TrackingApp(PicoApp):
-        def on_user_input_submitted(self, message: UserInputSubmitted) -> None:
+        async def on_user_input_submitted(self, message: UserInputSubmitted) -> None:
             submitted.append(message.text)
 
     app = TrackingApp(bus, queue.Queue())
@@ -583,7 +583,7 @@ async def test_ctrl_j_inserts_newline_without_submitting() -> None:
     submitted: list[str] = []
 
     class TrackingApp(PicoApp):
-        def on_user_input_submitted(self, message: UserInputSubmitted) -> None:
+        async def on_user_input_submitted(self, message: UserInputSubmitted) -> None:
             submitted.append(message.text)
 
     app = TrackingApp(bus, queue.Queue())

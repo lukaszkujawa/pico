@@ -108,6 +108,7 @@ class PicoApp(App[None]):
     CSS = """
     #conversation {
         height: 1fr;
+        scrollbar-size-vertical: 0;
     }
     #footer {
         dock: bottom;
@@ -217,10 +218,10 @@ class PicoApp(App[None]):
     def _conversation(self) -> VerticalScroll:
         return self.query_one("#conversation", VerticalScroll)
 
-    def _mount_at_bottom(self, pane: Static) -> None:
+    async def _mount_at_bottom(self, pane: Static) -> None:
         conversation = self._conversation()
         at_bottom = conversation.scroll_offset.y >= conversation.max_scroll_y
-        conversation.mount(pane, before=self.query_one(StatusLine))
+        await conversation.mount(pane, before=self.query_one(StatusLine))
         if at_bottom:
             conversation.scroll_end(animate=False)
 
@@ -240,40 +241,40 @@ class PicoApp(App[None]):
             if conversation.scroll_offset.y >= conversation.max_scroll_y:
                 conversation.scroll_end(animate=False)
 
-    def on_assistant_pane_create(self, message: AssistantPaneCreate) -> None:
+    async def on_assistant_pane_create(self, message: AssistantPaneCreate) -> None:
         pane = AssistantPane(pane_id=message.pane_id)
         self._assistant_panes[message.pane_id] = pane
-        self._mount_at_bottom(pane)
+        await self._mount_at_bottom(pane)
 
     def on_assistant_pane_delta(self, message: AssistantPaneDelta) -> None:
         self._assistant_panes[message.pane_id].append_delta(message.text)
         self._queue_token_estimate(message.text)
         self._stick_to_bottom()
 
-    def on_thinking_pane_create(self, message: ThinkingPaneCreate) -> None:
+    async def on_thinking_pane_create(self, message: ThinkingPaneCreate) -> None:
         pane = ThinkingPane(pane_id=message.pane_id)
         self._thinking_panes[message.pane_id] = pane
-        self._mount_at_bottom(pane)
+        await self._mount_at_bottom(pane)
 
     def on_thinking_pane_delta(self, message: ThinkingPaneDelta) -> None:
         self._thinking_panes[message.pane_id].append_delta(message.text)
         self._queue_token_estimate(message.text)
         self._stick_to_bottom()
 
-    def on_tool_call_pane_create(self, message: ToolCallPaneCreate) -> None:
+    async def on_tool_call_pane_create(self, message: ToolCallPaneCreate) -> None:
         if message.pane_id in self._tool_call_panes:
             return
         pane = ToolCallPane(pane_id=message.pane_id, name=message.name, arguments=message.arguments)
         self._tool_call_panes[message.pane_id] = pane
-        self._mount_at_bottom(pane)
+        await self._mount_at_bottom(pane)
 
-    def on_tool_call_pane_arguments_delta(self, message: ToolCallPaneArgumentsDelta) -> None:
+    async def on_tool_call_pane_arguments_delta(self, message: ToolCallPaneArgumentsDelta) -> None:
         if message.name == "answer":
             answer_pane = self._answer_panes.get(message.pane_id)
             if answer_pane is None:
                 answer_pane = AnswerPane(pane_id=message.pane_id)
                 self._answer_panes[message.pane_id] = answer_pane
-                self._mount_at_bottom(answer_pane)
+                await self._mount_at_bottom(answer_pane)
             raw = self._answer_arguments.get(message.pane_id, "") + message.text
             self._answer_arguments[message.pane_id] = raw
             content = extract_answer_content(raw)
@@ -285,7 +286,7 @@ class PicoApp(App[None]):
         if pane is None:
             pane = ToolCallPane(pane_id=message.pane_id, name=message.name)
             self._tool_call_panes[message.pane_id] = pane
-            self._mount_at_bottom(pane)
+            await self._mount_at_bottom(pane)
         pane.append_arguments_delta(message.text)
         self._stick_to_bottom()
 
@@ -301,12 +302,12 @@ class PicoApp(App[None]):
             arguments=message.arguments,
         )
 
-    def on_answer_pane_create(self, message: AnswerPaneCreate) -> None:
+    async def on_answer_pane_create(self, message: AnswerPaneCreate) -> None:
         if message.pane_id in self._answer_panes:
             return
         pane = AnswerPane(pane_id=message.pane_id)
         self._answer_panes[message.pane_id] = pane
-        self._mount_at_bottom(pane)
+        await self._mount_at_bottom(pane)
 
     def on_answer_pane_settle(self, message: AnswerPaneSettle) -> None:
         self._answer_arguments.pop(message.pane_id, None)
@@ -338,11 +339,11 @@ class PicoApp(App[None]):
         self._pending_token_text = ""
         counter.reconcile(message.completion_tokens)
 
-    def on_run_finished_message(self, message: RunFinishedMessage) -> None:
+    async def on_run_finished_message(self, message: RunFinishedMessage) -> None:
         self._run_in_flight = False
         self._stop_status()
         if message.error is not None and not self._error_shown_this_run:
-            self._mount_at_bottom(ErrorPane(message.error))
+            await self._mount_at_bottom(ErrorPane(message.error))
         self._advance_queue()
 
     def on_run_cancelled_message(self, message: RunCancelledMessage) -> None:
@@ -381,14 +382,14 @@ class PicoApp(App[None]):
             if child is not splash and child is not status:
                 child.remove()
 
-    def on_error_message(self, message: ErrorMessage) -> None:
+    async def on_error_message(self, message: ErrorMessage) -> None:
         self._run_in_flight = False
         self._error_shown_this_run = True
         self._stop_status()
-        self._mount_at_bottom(ErrorPane(message.message))
+        await self._mount_at_bottom(ErrorPane(message.message))
         self._advance_queue()
 
-    def on_user_input_submitted(self, message: UserInputSubmitted) -> None:
+    async def on_user_input_submitted(self, message: UserInputSubmitted) -> None:
         text = message.text.strip()
         if not text:
             return
@@ -396,6 +397,6 @@ class PicoApp(App[None]):
         if self._queued_user_panes:
             pane.queued = True
         self._queued_user_panes.append(pane)
-        self._mount_at_bottom(pane)
+        await self._mount_at_bottom(pane)
         self.query_one(StatusLine).start()
         self._input_queue.put(text)
