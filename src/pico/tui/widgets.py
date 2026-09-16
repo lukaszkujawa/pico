@@ -181,27 +181,38 @@ class WaitingIndicator(Static):
         return Text(WAITING_FRAMES[self.frame_index], style=self._theme.waiting)
 
 
-ROBOT_ART = r"""
- ╭───────╮
- │ ◉   ◉ │
- │   ▾   │
- ╰┬─────┬╯
-  ┴     ┴
-"""
+LOGO_TOP = " ╭────────╮"
+LOGO_PROMPT = " │  "
+LOGO_CURSOR = "_"
+LOGO_PROMPT_END = "    │"
+LOGO_MID = " │        │"
+LOGO_BOTTOM = " ╰────────╯"
+LOGO_LABEL = "    PICO"
+TAGLINE = "Small model. Real agency."
 
 
 class Splash(Static):
     def __init__(self, theme: Theme = PICO_THEME) -> None:
         super().__init__(id="splash")
         self._theme = theme
-        self.styles.color = theme.primary
         self.styles.padding = (1, 0, 1, 2)
 
     def render(self) -> Text:
-        lines = [line for line in ROBOT_ART.splitlines() if line.strip()]
-        art = Text("\n".join(lines), style=f"bold {self._theme.primary}")
-        caption = Text("Pico", style=f"bold {self._theme.text}")
-        return Text("\n").join([art, caption])
+        border = f"bold {self._theme.primary}"
+        lines = [
+            Text(LOGO_TOP, style=border),
+            Text.assemble(
+                (LOGO_PROMPT, border),
+                (">", f"bold {self._theme.success}"),
+                (LOGO_CURSOR, f"bold {self._theme.success} blink"),
+                (LOGO_PROMPT_END, border),
+            ),
+            Text(LOGO_MID, style=border),
+            Text(LOGO_BOTTOM, style=border),
+            Text(LOGO_LABEL, style=f"bold {self._theme.text}"),
+            Text(TAGLINE, style=f"italic {self._theme.muted_text}"),
+        ]
+        return Text("\n").join(lines)
 
 
 class ErrorPane(Static):
