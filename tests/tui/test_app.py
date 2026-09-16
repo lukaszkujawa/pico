@@ -1222,16 +1222,16 @@ async def test_new_session_action_without_a_session_handle_is_a_no_op() -> None:
         assert app.query_one(Splash).render().plain.count("session ") == 0
 
 
-async def test_status_line_docks_in_the_footer_not_the_conversation() -> None:
+async def test_status_line_stays_in_conversation_as_its_last_child() -> None:
     bus = Bus()
     app = PicoApp(bus, queue.Queue())
     async with app.run_test() as pilot:
         await pilot.pause()
 
         status = app.query_one(StatusLine)
-        assert status.parent is not None
-        assert status.parent.id == "footer"
-        assert status not in app.query_one("#conversation", VerticalScroll).children
+        conversation = app.query_one("#conversation", VerticalScroll)
+        assert status.parent is conversation
+        assert conversation.children[-1] is status
 
 
 async def test_status_line_stays_visible_after_panes_mount_below_it() -> None:

@@ -8,6 +8,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.timer import Timer
 from textual.widgets import Rule, Static, TextArea
 
 from pico.core.bus import Bus
@@ -163,6 +164,9 @@ class PicoApp(App[None]):
         self._answer_panes: dict[str, AnswerPane] = {}
         self._answer_arguments: dict[str, str] = {}
         self._queued_user_panes: list[UserPane] = []
+        self._pending_token_text: str = ""
+        self._scroll_dirty: bool = False
+        self._flush_timer: Timer | None = None
 
     def _session_id(self) -> str:
         return "" if self._session_handle is None else self._session_handle.session_id
@@ -178,9 +182,9 @@ class PicoApp(App[None]):
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="conversation"):
             yield Splash(self._session_id(), self._local_directory())
+            yield StatusLine()
         yield Rule()
         with Vertical(id="footer"):
-            yield StatusLine()
             yield InputBar()
             yield Rule()
 
@@ -191,6 +195,7 @@ class PicoApp(App[None]):
         conversation = self.query_one("#conversation", VerticalScroll)
         conversation.anchor(False)
         threading.Thread(target=self._consume_bus, daemon=True).start()
+        self._flush_timer = self.set_interval(0.05, self._flush_pending_updates)
 
     def on_click(self, event: events.Click) -> None:
         text_input = self.query_one("#user-input", ChatInput)
@@ -215,14 +220,25 @@ class PicoApp(App[None]):
     def _mount_at_bottom(self, pane: Static) -> None:
         conversation = self._conversation()
         at_bottom = conversation.scroll_offset.y >= conversation.max_scroll_y
-        conversation.mount(pane)
+        conversation.mount(pane, before=self.query_one(StatusLine))
         if at_bottom:
             conversation.scroll_end(animate=False)
 
     def _stick_to_bottom(self) -> None:
-        conversation = self._conversation()
-        if conversation.scroll_offset.y >= conversation.max_scroll_y:
-            conversation.scroll_end(animate=False)
+        self._scroll_dirty = True
+
+    def _queue_token_estimate(self, text: str) -> None:
+        self._pending_token_text += text
+
+    def _flush_pending_updates(self) -> None:
+        if self._pending_token_text:
+            self.query_one(StatusLine).counter.estimate(self._pending_token_text)
+            self._pending_token_text = ""
+        if self._scroll_dirty:
+            self._scroll_dirty = False
+            conversation = self._conversation()
+            if conversation.scroll_offset.y >= conversation.max_scroll_y:
+                conversation.scroll_end(animate=False)
 
     def on_assistant_pane_create(self, message: AssistantPaneCreate) -> None:
         pane = AssistantPane(pane_id=message.pane_id)
@@ -231,7 +247,7 @@ class PicoApp(App[None]):
 
     def on_assistant_pane_delta(self, message: AssistantPaneDelta) -> None:
         self._assistant_panes[message.pane_id].append_delta(message.text)
-        self.query_one(StatusLine).counter.estimate(message.text)
+        self._queue_token_estimate(message.text)
         self._stick_to_bottom()
 
     def on_thinking_pane_create(self, message: ThinkingPaneCreate) -> None:
@@ -241,7 +257,7 @@ class PicoApp(App[None]):
 
     def on_thinking_pane_delta(self, message: ThinkingPaneDelta) -> None:
         self._thinking_panes[message.pane_id].append_delta(message.text)
-        self.query_one(StatusLine).counter.estimate(message.text)
+        self._queue_token_estimate(message.text)
         self._stick_to_bottom()
 
     def on_tool_call_pane_create(self, message: ToolCallPaneCreate) -> None:
@@ -313,7 +329,14 @@ class PicoApp(App[None]):
             self._queued_user_panes.pop(0)
 
     def on_generation_completed_message(self, message: GenerationCompletedMessage) -> None:
-        self.query_one(StatusLine).counter.reconcile(message.completion_tokens)
+        counter = self.query_one(StatusLine).counter
+        if message.completion_tokens is None:
+            if self._pending_token_text:
+                counter.estimate(self._pending_token_text)
+                self._pending_token_text = ""
+            return
+        self._pending_token_text = ""
+        counter.reconcile(message.completion_tokens)
 
     def on_run_finished_message(self, message: RunFinishedMessage) -> None:
         self._run_in_flight = False
@@ -355,7 +378,7 @@ class PicoApp(App[None]):
         splash = self.query_one(Splash)
         splash.session_id = self._session_id()
         for child in list(conversation.children):
-            if child is not splash:
+            if child is not splash and child is not status:
                 child.remove()
 
     def on_error_message(self, message: ErrorMessage) -> None:
