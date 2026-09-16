@@ -713,6 +713,56 @@ def test_cancelled_turn_does_not_publish_run_finished() -> None:
     assert not any(isinstance(event, RunFinished) for event in events)
 
 
+def test_cancel_set_before_second_tool_call_leaves_it_unexecuted() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    cancel = threading.Event()
+
+    registry = ToolRegistry()
+    registry.register(
+        Tool(
+            spec=ToolSpec(name="first", description="first", parameters={"type": "object"}),
+            execute=lambda args: (cancel.set(), "first done")[1],
+        )
+    )
+    registry.register(
+        Tool(
+            spec=ToolSpec(name="second", description="second", parameters={"type": "object"}),
+            execute=lambda args: "second done",
+        )
+    )
+    first_call = ToolCall(id="1", name="first", arguments={})
+    second_call = ToolCall(id="2", name="second", arguments={})
+    client = ScriptedClient(
+        [
+            [
+                ToolCallReady(tool_call=first_call),
+                ToolCallReady(tool_call=second_call),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+        ]
+    )
+
+    runner = LoopRunner(client, registry, bus, session, 128_000, DEFAULT_LOOP_CONFIG, cancel)
+    runner.execute()
+
+    events = [next(subscriber) for _ in range(4)]
+    assert events[:3] == [
+        RunStarted(),
+        GenerationCompleted(),
+        ToolCallStarted(id="0", name="first", arguments={}),
+    ]
+    finished = events[3]
+    assert isinstance(finished, ToolCallFinished)
+    assert finished.result == "first done"
+    assert finished.is_error is False
+    assert next(subscriber) == RunCancelled()
+    tool_events = [event for event in session.events() if isinstance(event, ToolCallRecorded)]
+    assert [event.name for event in tool_events] == ["first"]
+
+
 def test_default_loop_config_is_stuckness_then_stream_then_tool_call() -> None:
     assert DEFAULT_LOOP_CONFIG.steps == (stuckness_step, stream_step, tool_call_step)
     assert DEFAULT_LOOP_CONFIG.max_steps is None

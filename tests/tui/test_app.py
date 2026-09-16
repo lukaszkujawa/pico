@@ -60,7 +60,6 @@ async def test_app_renders_assistant_pane_from_bus_events() -> None:
         assert len(panes) == 1
         pane = panes.first()
         assert pane.render().plain == "Hello, world!"
-        assert pane.finished is True
 
 
 async def test_app_renders_tool_call_pane_from_bus_events() -> None:
@@ -292,6 +291,21 @@ async def test_rejected_then_accepted_answer_leaves_two_answer_panes_in_order() 
         assert answer_panes[1].accepted is True
 
 
+async def test_long_streamed_thinking_text_wraps_taller_than_one_line() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+
+        bus.publish(RunStarted())
+        bus.publish(AssistantThinkingStarted(id="0"))
+        bus.publish(AssistantThinkingDelta(id="0", text="word " * 100))
+        await pilot.pause(0.2)
+
+        pane = app.query_one(ThinkingPane)
+        assert pane.size.height > 1
+
+
 async def test_thinking_then_text_produces_one_pane_each() -> None:
     bus = Bus()
     app = PicoApp(bus, queue.Queue())
@@ -313,8 +327,6 @@ async def test_thinking_then_text_produces_one_pane_each() -> None:
         assistant_panes = app.query(AssistantPane)
         assert len(thinking_panes) == 1
         assert len(assistant_panes) == 1
-        assert thinking_panes.first().finished is True
-        assert assistant_panes.first().finished is True
 
 
 async def test_second_turn_creates_new_panes_not_reused() -> None:
@@ -382,6 +394,117 @@ async def test_app_handles_multiple_panes_and_error() -> None:
         assert len(tool_panes) == 1
         assert tool_panes.first().is_error is True
         assert len(error_panes) == 1
+
+
+async def test_run_finished_with_error_and_no_error_occurred_shows_error() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        bus.publish(RunStarted())
+        bus.publish(RunFinished(error="boom"))
+        await pilot.pause(0.2)
+
+        error_panes = app.query(ErrorPane)
+        assert len(error_panes) == 1
+        assert "boom" in error_panes.first().render().plain
+
+
+async def test_run_finished_without_error_shows_no_error_pane() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        bus.publish(RunStarted())
+        bus.publish(RunFinished())
+        await pilot.pause(0.2)
+
+        assert len(app.query(ErrorPane)) == 0
+
+
+async def test_conversation_scroll_offset_is_never_negative_on_startup() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+
+        conversation = app.query_one("#conversation", VerticalScroll)
+        assert conversation.scroll_offset.y >= 0
+
+
+async def test_conversation_stays_pinned_to_bottom_as_panes_overflow_the_viewport() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+
+        conversation = app.query_one("#conversation", VerticalScroll)
+        for i in range(30):
+            bus.publish(RunStarted())
+            bus.publish(AssistantTextStarted(id=str(i)))
+            bus.publish(AssistantTextDelta(id=str(i), text="line " * 20))
+            bus.publish(AssistantTextFinished(id=str(i)))
+            bus.publish(RunFinished())
+            await pilot.pause(0.01)
+
+        assert conversation.scroll_offset.y >= 0
+        panes = app.query(AssistantPane)
+        last_pane = panes[-1]
+        assert last_pane.region.y < conversation.region.bottom
+        assert last_pane.region.bottom > conversation.region.y
+
+
+async def test_manual_scroll_up_is_not_overridden_by_the_next_delta() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+
+        conversation = app.query_one("#conversation", VerticalScroll)
+        for i in range(30):
+            bus.publish(RunStarted())
+            bus.publish(AssistantTextStarted(id=str(i)))
+            bus.publish(AssistantTextDelta(id=str(i), text="line " * 20))
+            bus.publish(AssistantTextFinished(id=str(i)))
+            bus.publish(RunFinished())
+            await pilot.pause(0.01)
+
+        conversation.scroll_home(animate=False)
+        await pilot.pause()
+        scrolled_up_offset = conversation.scroll_offset.y
+        assert scrolled_up_offset < conversation.max_scroll_y
+
+        bus.publish(RunStarted())
+        bus.publish(AssistantTextStarted(id="new"))
+        bus.publish(AssistantTextDelta(id="new", text="more text"))
+        bus.publish(AssistantTextFinished(id="new"))
+        bus.publish(RunFinished())
+        await pilot.pause(0.2)
+
+        assert conversation.scroll_offset.y == scrolled_up_offset
+
+
+async def test_bus_consumer_exception_surfaces_as_error_pane_not_a_dead_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import pico.tui.app as app_module
+
+    def raising_translate(event: object) -> object:
+        raise ValueError("boom")
+
+    monkeypatch.setattr(app_module, "translate", raising_translate)
+
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        bus.publish(RunStarted())
+        await pilot.pause(0.2)
+
+        assert len(app.query(ErrorPane)) == 1
 
 
 async def test_splash_renders_on_startup() -> None:
@@ -675,6 +798,53 @@ async def test_escape_while_idle_does_nothing() -> None:
         await pilot.pause()
 
         assert cancel_handle.trigger_count == 0
+
+
+async def test_run_cancelled_closes_open_tool_call_pane_and_stops_its_timer() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        bus.publish(RunStarted())
+        bus.publish(ToolCallStarted(id="1", name="search", arguments={}))
+        await pilot.pause(0.2)
+
+        pane = app.query_one(ToolCallPane)
+        assert pane.finished is False
+
+        bus.publish(RunCancelled())
+        await pilot.pause(0.2)
+
+        assert pane.finished is True
+        frame_after_cancel = pane.render().plain
+        await pilot.pause(0.3)
+        assert pane.render().plain == frame_after_cancel
+
+
+async def test_new_session_closes_open_tool_call_pane_and_stops_its_timer() -> None:
+    bus = Bus()
+    session_handle = RecordingSessionHandle()
+    app = PicoApp(bus, queue.Queue(), None, session_handle)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        bus.publish(RunStarted())
+        bus.publish(ToolCallStarted(id="1", name="search", arguments={}))
+        await pilot.pause(0.2)
+
+        pane = app.query_one(ToolCallPane)
+        assert pane.finished is False
+
+        bus.publish(RunCancelled())
+        await pilot.pause(0.2)
+        await pilot.press("ctrl+n")
+        await pilot.pause(0.2)
+
+        assert pane.finished is True
+        frame_after_new_session = pane.render().plain
+        await pilot.pause(0.3)
+        assert pane.render().plain == frame_after_new_session
 
 
 async def test_run_cancelled_stops_waiting_indicator() -> None:

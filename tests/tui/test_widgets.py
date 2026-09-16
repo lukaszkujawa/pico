@@ -70,17 +70,10 @@ async def test_assistant_pane_lifecycle() -> None:
     async with app.run_test() as pilot:
         pane = app.query_one(AssistantPane)
         assert pane.render().plain == ""
-        assert pane.finished is False
 
         pane.append_delta("Hello, ")
         pane.append_delta("world!")
         await pilot.pause()
-        assert pane.render().plain == "Hello, world!"
-        assert pane.finished is False
-
-        pane.finish()
-        await pilot.pause()
-        assert pane.finished is True
         assert pane.render().plain == "Hello, world!"
 
 
@@ -168,18 +161,67 @@ async def test_thinking_pane_lifecycle() -> None:
     async with app.run_test() as pilot:
         pane = app.query_one(ThinkingPane)
         assert pane.render().plain == ""
-        assert pane.finished is False
 
         pane.append_delta("pondering ")
         pane.append_delta("deeply")
         await pilot.pause()
         assert pane.render().plain == "pondering deeply"
-        assert pane.finished is False
 
-        pane.finish()
+
+async def test_thinking_pane_wraps_long_text_and_grows_taller_than_one_line() -> None:
+    app = ThinkingPaneHarness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = app.query_one(ThinkingPane)
+        long_text = "word " * 100
+        pane.append_delta(long_text)
         await pilot.pause()
-        assert pane.finished is True
-        assert pane.render().plain == "pondering deeply"
+
+        assert pane.size.height > 1
+        assert pane.render().plain == long_text
+
+
+async def test_assistant_pane_wraps_long_text_and_grows_taller_than_one_line() -> None:
+    app = AssistantPaneHarness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = app.query_one(AssistantPane)
+        long_text = "word " * 100
+        pane.append_delta(long_text)
+        await pilot.pause()
+
+        assert pane.size.height > 1
+        assert pane.render().plain == long_text
+
+
+async def test_answer_pane_wraps_long_text_and_grows_taller_than_one_line() -> None:
+    app = AnswerPaneHarness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = app.query_one(AnswerPane)
+        long_text = "word " * 100
+        pane.append_delta(long_text)
+        await pilot.pause()
+
+        assert pane.size.height > 1
+        assert long_text in pane.render().plain
+
+
+async def test_pane_with_explicit_newline_still_breaks_there() -> None:
+    app = ThinkingPaneHarness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = app.query_one(ThinkingPane)
+        pane.append_delta("line one\nline two")
+        await pilot.pause()
+
+        assert pane.size.height == 2
+
+
+async def test_short_pane_stays_height_one() -> None:
+    app = ThinkingPaneHarness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        pane = app.query_one(ThinkingPane)
+        pane.append_delta("short")
+        await pilot.pause()
+
+        assert pane.size.height == 1
 
 
 async def test_thinking_pane_background_differs_from_assistant_pane() -> None:

@@ -18,8 +18,7 @@ WAITING_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 
 class AssistantPane(Static):
-    content_text: reactive[str] = reactive("", repaint=True)
-    finished: reactive[bool] = reactive(False, repaint=True)
+    content_text: reactive[str] = reactive("", layout=True)
 
     def __init__(self, pane_id: str, theme: Theme = PICO_THEME) -> None:
         super().__init__(id=f"assistant-{pane_id}")
@@ -30,15 +29,12 @@ class AssistantPane(Static):
     def append_delta(self, text: str) -> None:
         self.content_text += text
 
-    def finish(self) -> None:
-        self.finished = True
-
     def render(self) -> Text:
         return Text(self.content_text, style=self._theme.assistant)
 
 
 class AnswerPane(Static):
-    content_text: reactive[str] = reactive("", repaint=True)
+    content_text: reactive[str] = reactive("", layout=True)
     settled: reactive[bool] = reactive(False, repaint=True)
     accepted: reactive[bool] = reactive(False, repaint=True)
     reason: reactive[str | None] = reactive(None, repaint=True)
@@ -83,8 +79,7 @@ class AnswerPane(Static):
 
 
 class ThinkingPane(Static):
-    content_text: reactive[str] = reactive("", repaint=True)
-    finished: reactive[bool] = reactive(False, repaint=True)
+    content_text: reactive[str] = reactive("", layout=True)
 
     def __init__(self, pane_id: str, theme: Theme = PICO_THEME) -> None:
         super().__init__(id=f"thinking-{pane_id}")
@@ -95,9 +90,6 @@ class ThinkingPane(Static):
 
     def append_delta(self, text: str) -> None:
         self.content_text += text
-
-    def finish(self) -> None:
-        self.finished = True
 
     def render(self) -> Text:
         return Text(self.content_text, style=self._theme.thinking)

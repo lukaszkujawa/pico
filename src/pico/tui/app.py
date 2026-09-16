@@ -13,7 +13,6 @@ from pico.core.bus import Bus
 from pico.tui.messages import (
     AnswerPaneCreate,
     AnswerPaneSettle,
-    AssistantPaneClose,
     AssistantPaneCreate,
     AssistantPaneDelta,
     ErrorMessage,
@@ -21,7 +20,6 @@ from pico.tui.messages import (
     RunCancelledMessage,
     RunFinishedMessage,
     RunStartedMessage,
-    ThinkingPaneClose,
     ThinkingPaneCreate,
     ThinkingPaneDelta,
     ToolCallPaneArgumentsDelta,
@@ -157,6 +155,7 @@ class PicoApp(App[None]):
         self._cancel_handle = cancel_handle
         self._session_handle = session_handle
         self._run_in_flight = False
+        self._error_shown_this_run = False
         self._assistant_panes: dict[str, AssistantPane] = {}
         self._thinking_panes: dict[str, ThinkingPane] = {}
         self._tool_call_panes: dict[str, ToolCallPane] = {}
@@ -180,7 +179,8 @@ class PicoApp(App[None]):
         self.register_theme(PICO_THEME.to_textual())
         self.theme = PICO_THEME.name
         self.query_one("#user-input", ChatInput).focus()
-        self.query_one("#conversation", VerticalScroll).anchor()
+        conversation = self.query_one("#conversation", VerticalScroll)
+        conversation.anchor(False)
         threading.Thread(target=self._consume_bus, daemon=True).start()
 
     def on_click(self, event: events.Click) -> None:
@@ -190,41 +190,55 @@ class PicoApp(App[None]):
 
     def _consume_bus(self) -> None:
         for event in self._bus.subscribe():
-            message = translate(event)
-            if message is not None:
-                self.post_message(message)
+            try:
+                message = translate(event)
+                if message is not None:
+                    self.post_message(message)
+            except Exception as error:
+                self.post_message(ErrorMessage(message=f"UI event handling failed: {error}"))
 
     def _stop_status(self) -> None:
         self.query_one(StatusLine).stop()
 
+    def _conversation(self) -> VerticalScroll:
+        return self.query_one("#conversation", VerticalScroll)
+
+    def _mount_at_bottom(self, pane: Static) -> None:
+        conversation = self._conversation()
+        at_bottom = conversation.scroll_offset.y >= conversation.max_scroll_y
+        conversation.mount(pane)
+        if at_bottom:
+            conversation.scroll_end(animate=False)
+
+    def _stick_to_bottom(self) -> None:
+        conversation = self._conversation()
+        if conversation.scroll_offset.y >= conversation.max_scroll_y:
+            conversation.scroll_end(animate=False)
+
     def on_assistant_pane_create(self, message: AssistantPaneCreate) -> None:
         pane = AssistantPane(pane_id=message.pane_id)
         self._assistant_panes[message.pane_id] = pane
-        self.query_one("#conversation", VerticalScroll).mount(pane)
+        self._mount_at_bottom(pane)
 
     def on_assistant_pane_delta(self, message: AssistantPaneDelta) -> None:
         self._assistant_panes[message.pane_id].append_delta(message.text)
         self.query_one(StatusLine).counter.estimate(message.text)
-
-    def on_assistant_pane_close(self, message: AssistantPaneClose) -> None:
-        self._assistant_panes[message.pane_id].finish()
+        self._stick_to_bottom()
 
     def on_thinking_pane_create(self, message: ThinkingPaneCreate) -> None:
         pane = ThinkingPane(pane_id=message.pane_id)
         self._thinking_panes[message.pane_id] = pane
-        self.query_one("#conversation", VerticalScroll).mount(pane)
+        self._mount_at_bottom(pane)
 
     def on_thinking_pane_delta(self, message: ThinkingPaneDelta) -> None:
         self._thinking_panes[message.pane_id].append_delta(message.text)
         self.query_one(StatusLine).counter.estimate(message.text)
-
-    def on_thinking_pane_close(self, message: ThinkingPaneClose) -> None:
-        self._thinking_panes[message.pane_id].finish()
+        self._stick_to_bottom()
 
     def on_tool_call_pane_create(self, message: ToolCallPaneCreate) -> None:
         pane = ToolCallPane(pane_id=message.pane_id, name=message.name, arguments=message.arguments)
         self._tool_call_panes[message.pane_id] = pane
-        self.query_one("#conversation", VerticalScroll).mount(pane)
+        self._mount_at_bottom(pane)
 
     def on_tool_call_pane_arguments_delta(self, message: ToolCallPaneArgumentsDelta) -> None:
         answer_pane = self._answer_panes.get(message.pane_id)
@@ -234,11 +248,14 @@ class PicoApp(App[None]):
             content = extract_answer_content(raw)
             if content is not None:
                 answer_pane.content_text = content
+            self._stick_to_bottom()
             return
         self._tool_call_panes[message.pane_id].append_arguments_delta(message.text)
+        self._stick_to_bottom()
 
     def on_tool_call_pane_result_delta(self, message: ToolCallPaneResultDelta) -> None:
         self._tool_call_panes[message.pane_id].append_result_delta(message.text)
+        self._stick_to_bottom()
 
     def on_tool_call_pane_close(self, message: ToolCallPaneClose) -> None:
         self._tool_call_panes[message.pane_id].finish(
@@ -251,7 +268,7 @@ class PicoApp(App[None]):
     def on_answer_pane_create(self, message: AnswerPaneCreate) -> None:
         pane = AnswerPane(pane_id=message.pane_id)
         self._answer_panes[message.pane_id] = pane
-        self.query_one("#conversation", VerticalScroll).mount(pane)
+        self._mount_at_bottom(pane)
 
     def on_answer_pane_settle(self, message: AnswerPaneSettle) -> None:
         self._answer_arguments.pop(message.pane_id, None)
@@ -264,6 +281,7 @@ class PicoApp(App[None]):
 
     def on_run_started_message(self, message: RunStartedMessage) -> None:
         self._run_in_flight = True
+        self._error_shown_this_run = False
         self.query_one(StatusLine).start()
         if self._queued_user_panes:
             self._queued_user_panes[0].queued = False
@@ -278,12 +296,20 @@ class PicoApp(App[None]):
     def on_run_finished_message(self, message: RunFinishedMessage) -> None:
         self._run_in_flight = False
         self._stop_status()
+        if message.error is not None and not self._error_shown_this_run:
+            self._mount_at_bottom(ErrorPane(message.error))
         self._advance_queue()
 
     def on_run_cancelled_message(self, message: RunCancelledMessage) -> None:
         self._run_in_flight = False
         self._stop_status()
+        self._close_open_tool_call_panes()
         self._advance_queue()
+
+    def _close_open_tool_call_panes(self) -> None:
+        for pane in self._tool_call_panes.values():
+            if not pane.finished:
+                pane.finish(result="", is_error=True)
 
     def action_cancel_run(self) -> None:
         if self._run_in_flight and self._cancel_handle is not None:
@@ -292,6 +318,7 @@ class PicoApp(App[None]):
     def action_new_session(self) -> None:
         if self._run_in_flight or self._session_handle is None:
             return
+        self._close_open_tool_call_panes()
         self._session_handle.start_new()
         self._assistant_panes.clear()
         self._thinking_panes.clear()
@@ -311,19 +338,19 @@ class PicoApp(App[None]):
 
     def on_error_message(self, message: ErrorMessage) -> None:
         self._run_in_flight = False
+        self._error_shown_this_run = True
         self._stop_status()
-        self.query_one("#conversation", VerticalScroll).mount(ErrorPane(message.message))
+        self._mount_at_bottom(ErrorPane(message.message))
         self._advance_queue()
 
     def on_user_input_submitted(self, message: UserInputSubmitted) -> None:
         text = message.text.strip()
         if not text:
             return
-        conversation = self.query_one("#conversation", VerticalScroll)
         pane = UserPane(text=message.text)
         if self._queued_user_panes:
             pane.queued = True
         self._queued_user_panes.append(pane)
-        conversation.mount(pane)
+        self._mount_at_bottom(pane)
         self.query_one(StatusLine).start()
         self._input_queue.put(text)

@@ -344,6 +344,8 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
     runner.pending_tool_calls = []
     outcome: StepOutcome = "continue"
     for call in tool_calls:
+        if runner.cancel.is_set():
+            return "cancelled"
         pane_id = runner.tool_call_pane_ids.get(call.id)
         if pane_id is None:
             pane_id = runner.new_id()
