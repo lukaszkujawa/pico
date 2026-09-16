@@ -4,10 +4,10 @@ from dataclasses import dataclass
 from typing import Self, cast
 
 from pico.core.errors import ToolError
-from pico.core.ledger import facts
+from pico.core.ledger import facts, plan, render_plan
 from pico.core.tools import Tool, ToolRegistry
 from pico.llm.types import ToolSpec
-from pico.session import Session
+from pico.session import PlanSet, PlanStepCompleted, Session
 
 
 class InvalidActionError(ValueError):
@@ -23,6 +23,25 @@ def _require[T](arguments: Mapping[str, object], field: str, expected: type[T]) 
             f"field {field!r} must be a {expected.__name__}, got {type(value).__name__}"
         )
     return value
+
+
+def _require_str_list(arguments: Mapping[str, object], field: str) -> tuple[str, ...]:
+    if field not in arguments:
+        raise InvalidActionError(f"missing required field {field!r}")
+    value = arguments[field]
+    if not isinstance(value, list):
+        raise InvalidActionError(f"field {field!r} must be a list, got {type(value).__name__}")
+    raw = cast(list[object], value)
+    elements: list[str] = []
+    for element in raw:
+        if not isinstance(element, str):
+            raise InvalidActionError(
+                f"field {field!r} must be a list of strings, got {type(element).__name__} element"
+            )
+        elements.append(element)
+    if not elements:
+        raise InvalidActionError(f"field {field!r} must not be empty")
+    return tuple(elements)
 
 
 def _require_int_list(arguments: Mapping[str, object], field: str) -> tuple[int, ...]:
@@ -118,6 +137,26 @@ class Answer:
 
 
 @dataclass(frozen=True)
+class SetPlan:
+    steps: tuple[str, ...]
+
+    @classmethod
+    def from_arguments(cls, arguments: Mapping[str, object]) -> Self:
+        steps = _require_str_list(arguments, "steps")
+        return cls(steps=steps)
+
+
+@dataclass(frozen=True)
+class CompleteStep:
+    index: int
+
+    @classmethod
+    def from_arguments(cls, arguments: Mapping[str, object]) -> Self:
+        index = _require(arguments, "index", int)
+        return cls(index=index)
+
+
+@dataclass(frozen=True)
 class Delegate:
     question: str
 
@@ -127,7 +166,7 @@ class Delegate:
         return cls(question=question)
 
 
-Action = ReadFile | WriteFile | Shell | Answer | Delegate
+Action = ReadFile | WriteFile | Shell | Answer | Delegate | SetPlan | CompleteStep
 
 _TOOL_SPECS = {
     "read_file": ToolSpec(
@@ -184,6 +223,27 @@ _TOOL_SPECS = {
             "required": ["id"],
         },
     ),
+    "set_plan": ToolSpec(
+        name="set_plan",
+        description=(
+            "Replace the current plan with an ordered checklist of steps. "
+            "The runtime remembers it and shows it to you every turn."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {"steps": {"type": "array", "items": {"type": "string"}}},
+            "required": ["steps"],
+        },
+    ),
+    "complete_step": ToolSpec(
+        name="complete_step",
+        description="Mark the plan step at the given zero-based index as done.",
+        parameters={
+            "type": "object",
+            "properties": {"index": {"type": "integer"}},
+            "required": ["index"],
+        },
+    ),
     "delegate": ToolSpec(
         name="delegate",
         description=(
@@ -228,11 +288,50 @@ def fact_recall_tool(session: Session) -> Tool:
     return Tool(spec=_TOOL_SPECS["read_fact"], execute=execute)
 
 
+def set_plan_tool(session: Session) -> Tool:
+    def execute(arguments: Mapping[str, object]) -> str:
+        try:
+            action = SetPlan.from_arguments(arguments)
+        except InvalidActionError as error:
+            return str(error)
+        session.append(PlanSet(steps=action.steps))
+        current = plan(session)
+        assert current is not None
+        return f"plan set:\n{render_plan(current)}"
+
+    return Tool(spec=_TOOL_SPECS["set_plan"], execute=execute)
+
+
+def complete_step_tool(session: Session) -> Tool:
+    def execute(arguments: Mapping[str, object]) -> str:
+        try:
+            action = CompleteStep.from_arguments(arguments)
+        except InvalidActionError as error:
+            return str(error)
+        current = plan(session)
+        if current is None:
+            raise ToolError("no plan set; call set_plan first")
+        if not 0 <= action.index < len(current.steps):
+            raise ToolError(
+                f"no plan step at index {action.index}; the plan has {len(current.steps)} step(s)"
+            )
+        if current.steps[action.index].done:
+            raise ToolError(f"plan step {action.index} is already done")
+        session.append(PlanStepCompleted(index=action.index))
+        updated = plan(session)
+        assert updated is not None
+        return f"step {action.index} done:\n{render_plan(updated)}"
+
+    return Tool(spec=_TOOL_SPECS["complete_step"], execute=execute)
+
+
 def register_actions(registry: ToolRegistry, session: Session) -> None:
     registry.register(_action_tool(ReadFile, "read_file"))
     registry.register(_action_tool(WriteFile, "write_file"))
     registry.register(_action_tool(Shell, "shell"))
     registry.register(fact_recall_tool(session))
+    registry.register(set_plan_tool(session))
+    registry.register(complete_step_tool(session))
     registry.register(_answer_tool())
     registry.register(Tool(spec=_TOOL_SPECS["delegate"], execute=lambda _: ""))
 

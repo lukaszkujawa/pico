@@ -28,7 +28,7 @@ from pico.core.events import (
     ToolCallFinished,
     ToolCallStarted,
 )
-from pico.core.ledger import facts
+from pico.core.ledger import Plan, facts, plan, render_plan
 from pico.core.stuckness import assess
 from pico.core.tools import ToolRegistry
 from pico.llm.client import LLMClient
@@ -127,6 +127,16 @@ def stuckness_step(runner: LoopRunner) -> StepOutcome:
     return "continue"
 
 
+def _plan_message(current: Plan) -> Message:
+    return Message(
+        role=Role.USER,
+        content=(
+            f"Your current plan:\n{render_plan(current)}\n"
+            "Keep it current with set_plan and complete_step."
+        ),
+    )
+
+
 def stream_step(runner: LoopRunner) -> StepOutcome:
     text = ""
     thinking = ""
@@ -135,8 +145,10 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
     thinking_id: str | None = None
     cancelled = False
 
+    current_plan = plan(runner.session)
     messages = [
         Message(role=Role.SYSTEM, content=SYSTEM_PROMPT),
+        *([] if current_plan is None else [_plan_message(current_plan)]),
         *render_messages(runner.session, runner.context_size),
     ]
     if runner.pending_nudge is not None:

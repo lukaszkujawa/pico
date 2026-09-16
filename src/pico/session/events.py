@@ -21,4 +21,16 @@ class ToolCallRecorded:
     is_error: bool
 
 
-SessionEvent = UserMessageRecorded | AssistantMessageRecorded | ToolCallRecorded
+@dataclass(frozen=True)
+class PlanSet:
+    steps: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class PlanStepCompleted:
+    index: int
+
+
+SessionEvent = (
+    UserMessageRecorded | AssistantMessageRecorded | ToolCallRecorded | PlanSet | PlanStepCompleted
+)

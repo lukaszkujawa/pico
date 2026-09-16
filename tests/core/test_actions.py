@@ -4,19 +4,23 @@ import pytest
 
 from pico.core.actions import (
     Answer,
+    CompleteStep,
     Delegate,
     InvalidActionError,
     ReadFile,
+    SetPlan,
     Shell,
     WriteFile,
+    complete_step_tool,
     fact_recall_tool,
     register_actions,
     register_delegate_actions,
+    set_plan_tool,
 )
 from pico.core.errors import ToolError
 from pico.core.tools import ToolRegistry
 from pico.llm.types import ToolCall
-from pico.session import Session, ToolCallRecorded, connect
+from pico.session import PlanSet, PlanStepCompleted, Session, ToolCallRecorded, connect
 
 
 def _session_with_fact(content: str) -> tuple[Session, int]:
@@ -200,13 +204,22 @@ def test_read_fact_missing_id_returns_invalid_field_error() -> None:
     assert "missing required field" in result
 
 
-def test_register_actions_populates_all_six_names() -> None:
+def test_register_actions_populates_all_tool_names() -> None:
     registry = ToolRegistry()
     register_actions(registry, Session(connect(":memory:"), "s1"))
 
     names = {spec.name for spec in registry.specs()}
 
-    assert names == {"read_file", "write_file", "shell", "read_fact", "answer", "delegate"}
+    assert names == {
+        "read_file",
+        "write_file",
+        "shell",
+        "read_fact",
+        "set_plan",
+        "complete_step",
+        "answer",
+        "delegate",
+    }
 
 
 def test_register_delegate_actions_populates_read_only_names() -> None:
@@ -258,3 +271,112 @@ def test_register_actions_invalid_arguments_return_error_string_not_raise() -> N
     result = registry.execute(ToolCall(id="1", name="read_file", arguments={}))
 
     assert "missing required field" in result
+
+
+def _planless_session() -> Session:
+    return Session(connect(":memory:"), "s1")
+
+
+def test_set_plan_from_arguments() -> None:
+    assert SetPlan.from_arguments({"steps": ["one", "two"]}) == SetPlan(steps=("one", "two"))
+
+
+def test_set_plan_from_arguments_empty_list_is_invalid() -> None:
+    with pytest.raises(InvalidActionError, match="must not be empty"):
+        SetPlan.from_arguments({"steps": []})
+
+
+def test_set_plan_from_arguments_non_string_element_is_invalid() -> None:
+    with pytest.raises(InvalidActionError, match="list of strings"):
+        SetPlan.from_arguments({"steps": ["one", 2]})
+
+
+def test_complete_step_from_arguments() -> None:
+    assert CompleteStep.from_arguments({"index": 3}) == CompleteStep(index=3)
+
+
+def test_set_plan_appends_event_and_returns_checklist() -> None:
+    session = _planless_session()
+
+    result = set_plan_tool(session).execute({"steps": ["read the file", "write the answer"]})
+
+    assert list(session.events()) == [PlanSet(steps=("read the file", "write the answer"))]
+    assert result == "plan set:\n[ ] 0. read the file\n[ ] 1. write the answer"
+
+
+def test_set_plan_with_empty_steps_appends_nothing() -> None:
+    session = _planless_session()
+
+    result = set_plan_tool(session).execute({"steps": []})
+
+    assert list(session.events()) == []
+    assert "must not be empty" in result
+
+
+def test_set_plan_with_malformed_steps_appends_nothing() -> None:
+    session = _planless_session()
+
+    result = set_plan_tool(session).execute({"steps": "one"})
+
+    assert list(session.events()) == []
+    assert "must be a list" in result
+
+
+def test_complete_step_checks_the_box() -> None:
+    session = _planless_session()
+    set_plan_tool(session).execute({"steps": ["one", "two"]})
+
+    result = complete_step_tool(session).execute({"index": 0})
+
+    assert list(session.events())[-1] == PlanStepCompleted(index=0)
+    assert result == "step 0 done:\n[x] 0. one\n[ ] 1. two"
+
+
+def test_complete_step_without_a_plan_raises_tool_error() -> None:
+    session = _planless_session()
+
+    with pytest.raises(ToolError, match="no plan set"):
+        complete_step_tool(session).execute({"index": 0})
+
+    assert list(session.events()) == []
+
+
+def test_complete_step_out_of_range_raises_tool_error_and_appends_nothing() -> None:
+    session = _planless_session()
+    set_plan_tool(session).execute({"steps": ["one"]})
+
+    with pytest.raises(ToolError, match="no plan step at index 5"):
+        complete_step_tool(session).execute({"index": 5})
+
+    assert list(session.events()) == [PlanSet(steps=("one",))]
+
+
+def test_complete_step_already_done_raises_tool_error_and_appends_nothing() -> None:
+    session = _planless_session()
+    set_plan_tool(session).execute({"steps": ["one"]})
+    complete_step_tool(session).execute({"index": 0})
+    before = list(session.events())
+
+    with pytest.raises(ToolError, match="already done"):
+        complete_step_tool(session).execute({"index": 0})
+
+    assert list(session.events()) == before
+
+
+def test_complete_step_non_integer_index_returns_invalid_field_error() -> None:
+    session = _planless_session()
+    set_plan_tool(session).execute({"steps": ["one"]})
+
+    result = complete_step_tool(session).execute({"index": "0"})
+
+    assert "must be a int" in result
+
+
+def test_delegate_registry_has_no_plan_tools() -> None:
+    registry = ToolRegistry()
+    register_delegate_actions(registry, _planless_session())
+
+    names = {spec.name for spec in registry.specs()}
+
+    assert "set_plan" not in names
+    assert "complete_step" not in names

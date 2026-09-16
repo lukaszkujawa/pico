@@ -2,7 +2,13 @@ import pytest
 
 from pico.llm.types import Message, Role, ToolCall, ToolResult
 from pico.session.errors import UnknownEventKindError
-from pico.session.events import AssistantMessageRecorded, ToolCallRecorded, UserMessageRecorded
+from pico.session.events import (
+    AssistantMessageRecorded,
+    PlanSet,
+    PlanStepCompleted,
+    ToolCallRecorded,
+    UserMessageRecorded,
+)
 from pico.session.session import Session, latest_session_id, new_session_id
 from pico.session.store import connect
 
@@ -171,3 +177,31 @@ def test_child_session_seqs_are_independent_of_parent() -> None:
 
     assert [seq for seq, _ in parent.records()] == [1, 2]
     assert [seq for seq, _ in child.records()] == [1]
+
+
+def test_plan_events_round_trip_through_append_and_events() -> None:
+    conn = connect(":memory:")
+    session = Session(conn, "s1")
+
+    session.append(PlanSet(steps=("read the file", "write the answer")))
+    session.append(PlanStepCompleted(index=0))
+
+    assert list(session.events()) == [
+        PlanSet(steps=("read the file", "write the answer")),
+        PlanStepCompleted(index=0),
+    ]
+
+
+def test_messages_ignores_plan_events() -> None:
+    conn = connect(":memory:")
+    plain = Session(conn, "plain")
+    planned = Session(conn, "planned")
+
+    for session in (plain, planned):
+        session.append(UserMessageRecorded(content="hi"))
+        if session is planned:
+            session.append(PlanSet(steps=("one", "two")))
+            session.append(PlanStepCompleted(index=1))
+        session.append(AssistantMessageRecorded(content="done", thinking=""))
+
+    assert planned.messages() == plain.messages()

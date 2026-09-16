@@ -3,6 +3,8 @@ from pathlib import Path
 from pico.core.context import estimate_tokens, prompt_budget
 from pico.evals.tasks import (
     EXPECTED_INVENTORY_VALUE,
+    EXPECTED_LARGEST_REGION,
+    EXPECTED_SHIFT_TOTAL,
     LOG_MARKER,
     MEASUREMENT_TOTAL,
     REFERENCE_CONTEXT_SIZE,
@@ -138,3 +140,40 @@ def test_multi_step_chore_accepts_the_computed_total_and_rejects_wrong_states(
 
     (tmp_path / "value.txt").write_text("999")
     assert not task.check(tmp_path, f"the total is {EXPECTED_INVENTORY_VALUE}")
+
+
+def _write_correct_chain_outputs(directory: Path) -> None:
+    (directory / "totals.csv").write_text("north,100\nsouth,90\neast,120\nwest,90\n")
+    (directory / "summary.txt").write_text(
+        f"total {EXPECTED_SHIFT_TOTAL + EXPECTED_SHIFT_TOTAL // 10}, "
+        f"biggest region {EXPECTED_LARGEST_REGION}\n"
+    )
+
+
+def test_dependent_chain_accepts_the_full_end_state_and_rejects_partial_work(
+    tmp_path: Path,
+) -> None:
+    task = _seeded("dependent_chain", tmp_path)
+    taxed = EXPECTED_SHIFT_TOTAL + EXPECTED_SHIFT_TOTAL // 10
+
+    assert not task.check(tmp_path, f"the total is {taxed}")
+
+    (tmp_path / "totals.csv").write_text("north,100\nsouth,90\neast,120\nwest,90\n")
+    assert not task.check(tmp_path, f"the total is {taxed}")
+
+    _write_correct_chain_outputs(tmp_path)
+    assert task.check(tmp_path, f"the total is {taxed}")
+    assert not task.check(tmp_path, "the total is unclear")
+
+
+def test_dependent_chain_rejects_wrong_revenues_and_missing_region(tmp_path: Path) -> None:
+    task = _seeded("dependent_chain", tmp_path)
+    taxed = EXPECTED_SHIFT_TOTAL + EXPECTED_SHIFT_TOTAL // 10
+    _write_correct_chain_outputs(tmp_path)
+
+    (tmp_path / "totals.csv").write_text("north,100\nsouth,90\neast,999\nwest,90\n")
+    assert not task.check(tmp_path, f"the total is {taxed}")
+
+    (tmp_path / "totals.csv").write_text("north,100\nsouth,90\neast,120\nwest,90\n")
+    (tmp_path / "summary.txt").write_text(f"total {taxed}\n")
+    assert not task.check(tmp_path, f"the total is {taxed}")

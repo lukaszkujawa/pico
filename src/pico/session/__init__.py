@@ -1,6 +1,8 @@
 from pico.session.errors import UnknownEventKindError
 from pico.session.events import (
     AssistantMessageRecorded,
+    PlanSet,
+    PlanStepCompleted,
     SessionEvent,
     ToolCallRecorded,
     UserMessageRecorded,
@@ -10,6 +12,8 @@ from pico.session.store import connect
 
 __all__ = [
     "AssistantMessageRecorded",
+    "PlanSet",
+    "PlanStepCompleted",
     "Session",
     "SessionEvent",
     "ToolCallRecorded",

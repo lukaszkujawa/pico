@@ -12,7 +12,7 @@ This milestone gives plans the same treatment facts got: durable events in the s
 * **Injection at render time, never persisted as conversation.** `stream_step` (`src/pico/core/loop.py`) already appends a transient nudge message; the plan gets the same treatment at the other end: when `plan(session)` is non-`None`, insert one `Message(role=Role.USER)` immediately after the conversation's start rendering the checklist (`[x] step one` / `[ ] step two`, plus a one-line instruction to keep it current via `set_plan`/`complete_step`). It is rebuilt from the ledger every call, so it is always correct, always present regardless of what the budget did to the rest of the context, and appears exactly once.
 * **No TUI work.** `set_plan`/`complete_step` calls already surface through the existing `ToolCallPane` rendering like any other tool. A dedicated plan widget is scope for a later milestone if the eval numbers say plans earn it.
 
-## [ ] T001 Plan events and ledger replay
+## [X] T001 Plan events and ledger replay
 
 ### Description
 
@@ -24,7 +24,7 @@ Add the two events, register their kinds, and implement `PlanStep`/`Plan`/`plan(
 * `tests/core/test_ledger.py` covers: no plan events yields `None`; `PlanSet` then two `PlanStepCompleted` yields the right done flags; a second `PlanSet` discards prior completion; completion events for indices from a superseded plan don't corrupt the current one (define the rule: a `PlanStepCompleted` applies to the plan most recently set before it).
 * Fully annotated, passes strict Pyright.
 
-## [ ] T002 `set_plan` and `complete_step` tools
+## [X] T002 `set_plan` and `complete_step` tools
 
 ### Description
 
@@ -35,7 +35,7 @@ Add the specs and session-closing tool factories to `src/pico/core/actions.py`, 
 * `tests/core/test_actions.py` covers: `set_plan` with valid steps appends `PlanSet` and returns the rendered checklist; empty/malformed steps raise `InvalidActionError` and append nothing; `complete_step` on a valid index appends the event and the confirmation shows that box checked; out-of-range and already-done indices raise `ToolError` and append nothing; the delegate registry does not contain either tool.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T003 Render-time plan injection
+## [X] T003 Render-time plan injection
 
 ### Description
 
@@ -46,7 +46,7 @@ Wire the transient plan message into `stream_step` per the design decisions. The
 * `tests/core/test_loop.py` covers, with a recording LLM client: when a plan exists, every subsequent LLM call's message list contains exactly one plan message with current checkbox state (set plan → complete a step → assert the next call shows the updated state); with no plan, message lists are byte-identical to pre-milestone shapes; `session.events()` contains no plan-rendering text, only the plan events themselves.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T004 Verify and finalize
+## [X] T004 Verify and finalize
 
 ### Description
 

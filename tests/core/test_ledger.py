@@ -1,6 +1,8 @@
-from pico.core.ledger import Fact, Goal, facts, goal
+from pico.core.ledger import Fact, Goal, Plan, PlanStep, facts, goal, plan
 from pico.session import (
     AssistantMessageRecorded,
+    PlanSet,
+    PlanStepCompleted,
     Session,
     ToolCallRecorded,
     UserMessageRecorded,
@@ -71,3 +73,46 @@ def test_goal_returns_latest_user_message() -> None:
     session.append(UserMessageRecorded(content="second"))
 
     assert goal(session) == Goal(content="second")
+
+
+def test_plan_returns_none_without_plan_events() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="do it"))
+
+    assert plan(session) is None
+
+
+def test_plan_marks_completed_steps_done() -> None:
+    session = _session()
+    session.append(PlanSet(steps=("one", "two", "three")))
+    session.append(PlanStepCompleted(index=0))
+    session.append(PlanStepCompleted(index=2))
+
+    assert plan(session) == Plan(
+        steps=(
+            PlanStep(text="one", done=True),
+            PlanStep(text="two", done=False),
+            PlanStep(text="three", done=True),
+        )
+    )
+
+
+def test_plan_reset_discards_prior_completion() -> None:
+    session = _session()
+    session.append(PlanSet(steps=("one", "two")))
+    session.append(PlanStepCompleted(index=0))
+    session.append(PlanSet(steps=("fresh", "start")))
+
+    assert plan(session) == Plan(
+        steps=(PlanStep(text="fresh", done=False), PlanStep(text="start", done=False))
+    )
+
+
+def test_completion_of_superseded_plan_does_not_corrupt_current_plan() -> None:
+    session = _session()
+    session.append(PlanSet(steps=("a", "b", "c", "d")))
+    session.append(PlanStepCompleted(index=3))
+    session.append(PlanSet(steps=("only",)))
+    session.append(PlanStepCompleted(index=3))
+
+    assert plan(session) == Plan(steps=(PlanStep(text="only", done=False),))

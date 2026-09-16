@@ -4,6 +4,7 @@ from collections.abc import Iterator, Mapping
 
 from pico.core.actions import register_actions
 from pico.core.bus import Bus
+from pico.core.context import SYSTEM_PROMPT
 from pico.core.errors import ToolError
 from pico.core.events import (
     AssistantTextDelta,
@@ -49,6 +50,8 @@ from pico.llm.types import (
 )
 from pico.session import (
     AssistantMessageRecorded,
+    PlanSet,
+    PlanStepCompleted,
     Session,
     ToolCallRecorded,
     UserMessageRecorded,
@@ -1234,3 +1237,88 @@ def test_delegate_read_fact_cannot_reach_parent_facts() -> None:
     ]
     assert recalled[0].is_error is True
     assert "parent secret" not in recalled[0].result
+
+
+def _plan_messages(messages: list[Message]) -> list[Message]:
+    return [
+        message
+        for message in messages
+        if message.role is Role.USER and message.content.startswith("Your current plan:")
+    ]
+
+
+def test_no_plan_leaves_message_list_free_of_plan_messages() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    client = ScriptedClient([[TextDelta(text="hello"), GenerationComplete(finish_reason="stop")]])
+
+    LoopRunner(client, _echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
+
+    assert client.seen_messages[0] == [
+        Message(role=Role.SYSTEM, content=SYSTEM_PROMPT),
+        Message(role=Role.USER, content="hi"),
+    ]
+
+
+def test_plan_message_tracks_completion_and_appears_exactly_once() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    registry = ToolRegistry()
+    register_actions(registry, session)
+    client = ScriptedClient(
+        [
+            [
+                ToolCallReady(
+                    tool_call=ToolCall(id="1", name="set_plan", arguments={"steps": ["one", "two"]})
+                ),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [
+                ToolCallReady(
+                    tool_call=ToolCall(id="2", name="complete_step", arguments={"index": 0})
+                ),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
+        ]
+    )
+
+    LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
+
+    assert _plan_messages(client.seen_messages[0]) == []
+    assert [message.content for message in _plan_messages(client.seen_messages[1])] == [
+        "Your current plan:\n[ ] 0. one\n[ ] 1. two\n"
+        "Keep it current with set_plan and complete_step."
+    ]
+    assert [message.content for message in _plan_messages(client.seen_messages[2])] == [
+        "Your current plan:\n[x] 0. one\n[ ] 1. two\n"
+        "Keep it current with set_plan and complete_step."
+    ]
+
+
+def test_plan_message_is_never_persisted_to_the_session() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    registry = ToolRegistry()
+    register_actions(registry, session)
+    client = ScriptedClient(
+        [
+            [
+                ToolCallReady(
+                    tool_call=ToolCall(id="1", name="set_plan", arguments={"steps": ["one"]})
+                ),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
+        ]
+    )
+
+    LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
+
+    events = list(session.events())
+    assert PlanSet(steps=("one",)) in events
+    assert not any(
+        isinstance(event, UserMessageRecorded) and "Your current plan" in event.content
+        for event in events
+    )
+    assert not any(isinstance(event, PlanStepCompleted) for event in events)

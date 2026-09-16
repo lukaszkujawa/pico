@@ -4,11 +4,14 @@ import uuid
 from collections.abc import Iterator
 from dataclasses import asdict
 from datetime import UTC, datetime
+from typing import Any, cast
 
 from pico.llm.types import Message, Role, ToolCall, ToolResult
 from pico.session.errors import UnknownEventKindError
 from pico.session.events import (
     AssistantMessageRecorded,
+    PlanSet,
+    PlanStepCompleted,
     SessionEvent,
     ToolCallRecorded,
     UserMessageRecorded,
@@ -18,6 +21,8 @@ _EVENT_KINDS: dict[str, type[SessionEvent]] = {
     "UserMessageRecorded": UserMessageRecorded,
     "AssistantMessageRecorded": AssistantMessageRecorded,
     "ToolCallRecorded": ToolCallRecorded,
+    "PlanSet": PlanSet,
+    "PlanStepCompleted": PlanStepCompleted,
 }
 
 
@@ -74,7 +79,10 @@ class Session:
             event_type = _EVENT_KINDS.get(row["kind"])
             if event_type is None:
                 raise UnknownEventKindError(row["kind"])
-            yield int(row["seq"]), event_type(**json.loads(row["payload"]))
+            payload = cast(dict[str, Any], json.loads(row["payload"]))
+            if event_type is PlanSet:
+                payload["steps"] = tuple(cast(list[str], payload["steps"]))
+            yield int(row["seq"]), event_type(**payload)
 
     def events(self) -> Iterator[SessionEvent]:
         return (event for _, event in self.records())
@@ -105,4 +113,6 @@ class Session:
                             ),
                         )
                     )
+                case PlanSet() | PlanStepCompleted():
+                    pass
         return messages

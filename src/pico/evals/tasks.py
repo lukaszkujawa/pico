@@ -132,6 +132,39 @@ def _check_multi_step_chore(directory: Path, answer: str) -> bool:
     )
 
 
+SHIFT_ORDERS = (
+    ("north", 4, 25),
+    ("south", 9, 10),
+    ("east", 3, 40),
+    ("west", 6, 15),
+)
+EXPECTED_SHIFT_TOTAL = sum(quantity * price for _, quantity, price in SHIFT_ORDERS)
+EXPECTED_LARGEST_REGION = max(SHIFT_ORDERS, key=lambda order: order[1] * order[2])[0]
+
+
+def _setup_dependent_chain(directory: Path) -> None:
+    (directory / "orders.csv").write_text(
+        "region,quantity,unit_price\n"
+        + "".join(f"{region},{quantity},{price}\n" for region, quantity, price in SHIFT_ORDERS)
+    )
+    (directory / "rate.txt").write_text("tax_percent = 10\n")
+
+
+def _check_dependent_chain(directory: Path, answer: str) -> bool:
+    totals = directory / "totals.csv"
+    summary = directory / "summary.txt"
+    if not totals.is_file() or not summary.is_file():
+        return False
+    rows = [line.split(",") for line in totals.read_text().strip().splitlines()]
+    expected_rows = [[region, str(quantity * price)] for region, quantity, price in SHIFT_ORDERS]
+    if [[cell.strip() for cell in row] for row in rows] != expected_rows:
+        return False
+    with_tax = EXPECTED_SHIFT_TOTAL + EXPECTED_SHIFT_TOTAL // 10
+    return _mentions(summary.read_text(), str(with_tax), EXPECTED_LARGEST_REGION) and _mentions(
+        answer, str(with_tax)
+    )
+
+
 SUITE: tuple[EvalTask, ...] = (
     EvalTask(
         name="read_one_file",
@@ -193,5 +226,20 @@ SUITE: tuple[EvalTask, ...] = (
         ),
         setup=_setup_multi_step_chore,
         check=_check_multi_step_chore,
+    ),
+    EvalTask(
+        name="dependent_chain",
+        prompt=(
+            "Work through orders.csv step by step. "
+            "First write totals.csv with one line per region as region,revenue "
+            "where revenue is quantity times unit_price, keeping the original row order "
+            "and no header. "
+            "Then add the tax percentage in rate.txt to the sum of those revenues. "
+            "Then write summary.txt containing that taxed total and the name of the region "
+            "with the highest revenue. "
+            "Finally report the taxed total."
+        ),
+        setup=_setup_dependent_chain,
+        check=_check_dependent_chain,
     ),
 )
