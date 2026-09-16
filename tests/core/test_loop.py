@@ -1,8 +1,10 @@
 import itertools
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 
+from pico.core.actions import register_actions
 from pico.core.bus import Bus
+from pico.core.errors import ToolError
 from pico.core.events import (
     AssistantTextDelta,
     AssistantTextFinished,
@@ -91,6 +93,20 @@ def _echo_registry() -> ToolRegistry:
         Tool(
             spec=ToolSpec(name="echo", description="echo", parameters={"type": "object"}),
             execute=lambda args: str(args.get("text", "")),
+        )
+    )
+    return registry
+
+
+def _failing_registry() -> ToolRegistry:
+    def boom(arguments: Mapping[str, object]) -> str:
+        raise ToolError("could not read /nope: no such file")
+
+    registry = ToolRegistry()
+    registry.register(
+        Tool(
+            spec=ToolSpec(name="boom", description="boom", parameters={"type": "object"}),
+            execute=boom,
         )
     )
     return registry
@@ -1049,3 +1065,172 @@ def test_each_llm_call_publishes_its_own_token_counts() -> None:
         GenerationCompleted(prompt_tokens=120, completion_tokens=17),
         GenerationCompleted(prompt_tokens=160, completion_tokens=4),
     ]
+
+
+def test_tool_error_is_recorded_as_error_and_excluded_from_facts() -> None:
+    bus = Bus()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    client = ScriptedClient(
+        [
+            [
+                ToolCallReady(tool_call=ToolCall(id="1", name="boom", arguments={})),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
+        ]
+    )
+
+    runner = LoopRunner(client, _failing_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    recorded = [event for event in session.events() if isinstance(event, ToolCallRecorded)]
+    assert recorded[0].is_error is True
+    assert "could not read /nope" in recorded[0].result
+    assert facts(session) == []
+
+
+def test_repeated_tool_errors_do_not_end_run_via_invalid_action_cap() -> None:
+    bus = Bus()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    turns: list[list[StreamEvent]] = [
+        [
+            ToolCallReady(tool_call=ToolCall(id=str(i), name="boom", arguments={"n": i})),
+            GenerationComplete(finish_reason="tool_calls"),
+        ]
+        for i in range(MAX_INVALID_ACTION_ATTEMPTS)
+    ]
+    turns.append([TextDelta(text="done"), GenerationComplete(finish_reason="stop")])
+    client = ScriptedClient(turns)
+
+    runner = LoopRunner(client, _failing_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    assert runner.invalid_action_attempts == 0
+    errors = [
+        event
+        for event in session.events()
+        if isinstance(event, ToolCallRecorded) and event.is_error
+    ]
+    assert len(errors) == MAX_INVALID_ACTION_ATTEMPTS
+    assert list(session.events())[-1] == AssistantMessageRecorded(content="done", thinking="")
+
+
+def test_model_recovers_a_truncated_fact_via_read_fact_and_cites_it() -> None:
+    bus = Bus()
+    session = _session()
+    session.append(UserMessageRecorded(content="what is in the log?"))
+    content = "needle " * 2000
+    session.append(ToolCallRecorded(name="shell", arguments={}, result=content, is_error=False))
+    tools = ToolRegistry()
+    register_actions(tools, session)
+    client = ScriptedClient(
+        [
+            [
+                ToolCallReady(tool_call=ToolCall(id="1", name="read_fact", arguments={"id": 2})),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [
+                ToolCallReady(
+                    tool_call=ToolCall(
+                        id="2",
+                        name="answer",
+                        arguments={"content": "it is needles", "citations": [2]},
+                    )
+                ),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+        ]
+    )
+
+    runner = LoopRunner(client, tools, bus, session, 100, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    handle = client.seen_messages[0][-1]
+    assert handle.tool_result is not None
+    assert "fact 2 truncated" in handle.tool_result.content
+    assert "call read_fact(2) for the full content" in handle.tool_result.content
+
+    recalled = [
+        event
+        for event in session.events()
+        if isinstance(event, ToolCallRecorded) and event.name == "read_fact"
+    ]
+    assert recalled[0].result == content
+    assert recalled[0].is_error is False
+    assert runner.final_answer == "it is needles"
+
+
+def test_read_fact_with_unknown_id_is_recorded_as_error() -> None:
+    bus = Bus()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    tools = ToolRegistry()
+    register_actions(tools, session)
+    client = ScriptedClient(
+        [
+            [
+                ToolCallReady(tool_call=ToolCall(id="1", name="read_fact", arguments={"id": 404})),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
+        ]
+    )
+
+    runner = LoopRunner(client, tools, bus, session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    recorded = [event for event in session.events() if isinstance(event, ToolCallRecorded)]
+    assert recorded[0].is_error is True
+    assert "404" in recorded[0].result
+    assert facts(session) == []
+    assert runner.invalid_action_attempts == 0
+
+
+def test_delegate_read_fact_cannot_reach_parent_facts() -> None:
+    bus = Bus()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    session.append(
+        ToolCallRecorded(name="shell", arguments={}, result="parent secret", is_error=False)
+    )
+    tools = ToolRegistry()
+    register_actions(tools, session)
+    client = ScriptedClient(
+        [
+            [
+                ToolCallReady(
+                    tool_call=ToolCall(
+                        id="1", name="delegate", arguments={"question": "what is x?"}
+                    )
+                ),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [
+                ToolCallReady(tool_call=ToolCall(id="c1", name="read_fact", arguments={"id": 2})),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [
+                ToolCallReady(
+                    tool_call=ToolCall(
+                        id="c2", name="answer", arguments={"content": "x is 1", "citations": []}
+                    )
+                ),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
+        ]
+    )
+
+    runner = LoopRunner(client, tools, bus, session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    child = session.child("delegate/1")
+    recalled = [
+        event
+        for event in child.events()
+        if isinstance(event, ToolCallRecorded) and event.name == "read_fact"
+    ]
+    assert recalled[0].is_error is True
+    assert "parent secret" not in recalled[0].result

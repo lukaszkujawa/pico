@@ -3,8 +3,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Self, cast
 
+from pico.core.errors import ToolError
+from pico.core.ledger import facts
 from pico.core.tools import Tool, ToolRegistry
 from pico.llm.types import ToolSpec
+from pico.session import Session
 
 
 class InvalidActionError(ValueError):
@@ -53,7 +56,7 @@ class ReadFile:
             with open(self.path, encoding="utf-8") as handle:
                 return handle.read()
         except OSError as error:
-            return f"could not read {self.path}: {error}"
+            raise ToolError(f"could not read {self.path}: {error}") from error
 
 
 @dataclass(frozen=True)
@@ -72,7 +75,7 @@ class WriteFile:
             with open(self.path, "w", encoding="utf-8") as handle:
                 handle.write(self.content)
         except OSError as error:
-            return f"could not write {self.path}: {error}"
+            raise ToolError(f"could not write {self.path}: {error}") from error
         return f"wrote {len(self.content)} bytes to {self.path}"
 
 
@@ -94,8 +97,8 @@ class Shell:
                 text=True,
                 timeout=timeout,
             )
-        except subprocess.TimeoutExpired:
-            return f"command timed out after {timeout}s: {self.command}"
+        except subprocess.TimeoutExpired as error:
+            raise ToolError(f"command timed out after {timeout}s: {self.command}") from error
         output = "\n".join(part for part in (result.stdout, result.stderr) if part)
         if result.returncode != 0:
             return f"exit code {result.returncode}\n{output}"
@@ -169,6 +172,18 @@ _TOOL_SPECS = {
             "required": ["content", "citations"],
         },
     ),
+    "read_fact": ToolSpec(
+        name="read_fact",
+        description=(
+            "Recover the full content of a fact that was truncated to a handle, "
+            "given the fact id shown in the handle."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {"id": {"type": "integer"}},
+            "required": ["id"],
+        },
+    ),
     "delegate": ToolSpec(
         name="delegate",
         description=(
@@ -199,14 +214,30 @@ def _answer_tool() -> Tool:
     return Tool(spec=_TOOL_SPECS["answer"], execute=lambda _: "")
 
 
-def register_actions(registry: ToolRegistry) -> None:
+def fact_recall_tool(session: Session) -> Tool:
+    def execute(arguments: Mapping[str, object]) -> str:
+        try:
+            fact_id = _require(arguments, "id", int)
+        except InvalidActionError as error:
+            return str(error)
+        for fact in facts(session):
+            if fact.id == fact_id:
+                return fact.content
+        raise ToolError(f"no fact with id {fact_id}")
+
+    return Tool(spec=_TOOL_SPECS["read_fact"], execute=execute)
+
+
+def register_actions(registry: ToolRegistry, session: Session) -> None:
     registry.register(_action_tool(ReadFile, "read_file"))
     registry.register(_action_tool(WriteFile, "write_file"))
     registry.register(_action_tool(Shell, "shell"))
+    registry.register(fact_recall_tool(session))
     registry.register(_answer_tool())
     registry.register(Tool(spec=_TOOL_SPECS["delegate"], execute=lambda _: ""))
 
 
-def register_delegate_actions(registry: ToolRegistry) -> None:
+def register_delegate_actions(registry: ToolRegistry, session: Session) -> None:
     registry.register(_action_tool(ReadFile, "read_file"))
+    registry.register(fact_recall_tool(session))
     registry.register(_answer_tool())

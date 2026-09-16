@@ -157,6 +157,7 @@ def test_turn_loop_runs_one_turn_per_queued_message(
         "read_file",
         "write_file",
         "shell",
+        "read_fact",
         "answer",
         "delegate",
     }

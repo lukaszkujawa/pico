@@ -22,7 +22,10 @@ def render_tool_result(content: str, fact_id: int, level: RenderLevel) -> str:
     if level == "full":
         return content
     tokens = estimate_tokens(content)
-    summary = f"[fact {fact_id} truncated — {len(content)} chars, {tokens} tokens]"
+    summary = (
+        f"[fact {fact_id} truncated — {len(content)} chars, {tokens} tokens "
+        f"— call read_fact({fact_id}) for the full content]"
+    )
     preview = content[:_HANDLE_PREVIEW_CHARS]
     return f"{summary} {preview}"
 

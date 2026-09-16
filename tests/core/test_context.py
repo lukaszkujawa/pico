@@ -55,7 +55,14 @@ def test_render_tool_result_handle_short_content_not_padded_beyond_overhead() ->
     rendered = render_tool_result(content, fact_id=0, level="handle")
 
     assert rendered.endswith(content)
-    assert len(rendered) < len(content) + 100
+    assert len(rendered) < len(content) + 150
+
+
+def test_render_tool_result_handle_names_the_same_id_in_summary_and_hint() -> None:
+    rendered = render_tool_result("y" * 2000, fact_id=12, level="handle")
+
+    assert "fact 12 truncated" in rendered
+    assert "call read_fact(12) for the full content" in rendered
 
 
 def test_prompt_budget_reserves_completion_fraction() -> None:

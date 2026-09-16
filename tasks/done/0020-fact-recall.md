@@ -12,7 +12,7 @@ This milestone closes the loop with a `read_fact` tool: given a fact id (`0019`'
 * **A recalled fact is an ordinary event.** The `read_fact` result is recorded like any tool call and becomes a fact itself (source `read_fact`). Deduplicating or aliasing it back to the original id would add machinery for no failure it prevents; if the copy is later truncated, it is recoverable by its own id like anything else.
 * **Handles advertise the way back.** `render_tool_result`'s summary becomes actionable: `[fact 12 truncated — 5400 chars, ~1350 tokens — call read_fact(12) for the full content] <preview>`. The model should never have to know the recovery mechanism a priori; the handle teaches it at the moment it matters.
 
-## [ ] T001 `ToolError` and honest error recording
+## [X] T001 `ToolError` and honest error recording
 
 ### Description
 
@@ -25,7 +25,7 @@ Add `ToolError` to `src/pico/core/errors.py`. Convert the failure returns in `sr
 * `tests/core/test_stuckness.py` (if needed) confirms `tool_failure_streak` now counts these failures.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T002 `read_fact` tool
+## [X] T002 `read_fact` tool
 
 ### Description
 
@@ -37,7 +37,7 @@ In `src/pico/core/actions.py`: add the `read_fact` `ToolSpec` (one required inte
 * `tests/core/test_loop.py` covers a scripted end-to-end shape: a large tool result gets truncated to a handle by the renderer, the model calls `read_fact` with the id from the handle, receives the full content, and answers citing the original fact — all against a recording LLM client asserting the handle text (with its `read_fact` hint) is what the model actually saw.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T003 Handles that teach recovery
+## [X] T003 Handles that teach recovery
 
 ### Description
 
@@ -48,7 +48,7 @@ In `src/pico/core/context.py`: extend the `render_tool_result` handle summary to
 * `tests/core/test_context.py` covers: the handle text names the same id in both the summary and the hint; full-level rendering is unchanged.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T004 Verify and finalize
+## [X] T004 Verify and finalize
 
 ### Description
 
@@ -57,6 +57,11 @@ Run `make check` and fix everything until it is green. Update `src/pico/core/__i
 ### Acceptance criteria
 
 * `make check` passes with no errors, including the coverage floor in `pyproject.toml`.
+
+Live-model verification was not possible: the configured Ollama endpoint
+(`LLM_BASE_URL` in `.env`) refuses TCP connections. The handle text the model would
+see was verified by rendering it against a real session, and the recovery round trip
+is covered end to end by `test_model_recovers_a_truncated_fact_via_read_fact_and_cites_it`.
 
 ### Completion
 

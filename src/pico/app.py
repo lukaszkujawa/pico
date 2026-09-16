@@ -61,7 +61,6 @@ def _build_llm_client(config: Config) -> LLMClient:
 
 def _turn_loop(
     llm: LLMClient,
-    tools: ToolRegistry,
     bus: Bus,
     session_handle: SessionHandle,
     context_size: int,
@@ -79,6 +78,8 @@ def _turn_loop(
             continue
         session = session_handle.session
         session.append(UserMessageRecorded(content=text))
+        tools = ToolRegistry()
+        register_actions(tools, session)
         cancel = threading.Event()
         cancel_handle.arm(cancel)
         runner = LoopRunner(
@@ -95,8 +96,6 @@ def _consume_bus_to_log(bus: Bus, run_log: RunLog) -> None:
 
 def run_pico(config: Config, debug: bool = False, session_id: str | None = None) -> None:
     llm = _build_llm_client(config)
-    tools = ToolRegistry()
-    register_actions(tools)
     bus = Bus()
     conn = connect(config.session_path)
     session_handle = SessionHandle(Session(conn, session_id or new_session_id()))
@@ -116,7 +115,6 @@ def run_pico(config: Config, debug: bool = False, session_id: str | None = None)
         target=_turn_loop,
         args=(
             llm,
-            tools,
             bus,
             session_handle,
             config.context_size,

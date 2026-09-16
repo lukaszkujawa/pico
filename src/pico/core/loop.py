@@ -12,7 +12,7 @@ from pico.core.actions import (
 )
 from pico.core.bus import Bus
 from pico.core.context import SYSTEM_PROMPT, render_messages
-from pico.core.errors import UnknownToolError
+from pico.core.errors import ToolError, UnknownToolError
 from pico.core.events import (
     AssistantTextDelta,
     AssistantTextFinished,
@@ -194,7 +194,7 @@ def _run_delegate(runner: LoopRunner, delegate: Delegate) -> tuple[str, bool]:
     child_session = runner.session.child(f"delegate/{runner.delegate_calls}")
     child_session.append(UserMessageRecorded(content=delegate.question))
     child_tools = ToolRegistry()
-    register_delegate_actions(child_tools)
+    register_delegate_actions(child_tools, child_session)
     child_runner = LoopRunner(
         runner.llm,
         child_tools,
@@ -219,6 +219,7 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
     outcome: StepOutcome = "continue"
     for call in tool_calls:
         runner.bus.publish(ToolCallStarted(id=call.id, name=call.name, arguments=call.arguments))
+        invalid = False
         if call.name == "answer":
             try:
                 answer = Answer.from_arguments(call.arguments)
@@ -232,6 +233,7 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
             except InvalidActionError as error:
                 output = str(error)
                 is_error = True
+                invalid = True
         elif call.name == "delegate":
             try:
                 delegate = Delegate.from_arguments(call.arguments)
@@ -239,13 +241,18 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
             except InvalidActionError as error:
                 output = str(error)
                 is_error = True
+                invalid = True
         else:
             try:
                 output = runner.tools.execute(call)
                 is_error = False
+            except ToolError as error:
+                output = str(error)
+                is_error = True
             except UnknownToolError as error:
                 output = str(error)
                 is_error = True
+                invalid = True
         runner.bus.publish(
             ToolCallFinished(id=call.id, tool_call=call, result=output, is_error=is_error)
         )
@@ -254,11 +261,11 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
                 name=call.name, arguments=call.arguments, result=output, is_error=is_error
             )
         )
-        if is_error:
+        if invalid:
             runner.invalid_action_attempts += 1
             if runner.invalid_action_attempts >= MAX_INVALID_ACTION_ATTEMPTS:
                 outcome = "done"
-        elif runner.final_answer is not None:
+        elif not is_error and runner.final_answer is not None:
             outcome = "done"
     return outcome
 

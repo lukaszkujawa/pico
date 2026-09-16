@@ -6,6 +6,7 @@ from pico.core.actions import (
     ReadFile,
     Shell,
     WriteFile,
+    fact_recall_tool,
     register_actions,
     register_delegate_actions,
 )
@@ -18,7 +19,7 @@ from pico.core.context import (
     render_messages,
     render_tool_result,
 )
-from pico.core.errors import UnknownToolError
+from pico.core.errors import ToolError, UnknownToolError
 from pico.core.events import (
     AssistantTextDelta,
     AssistantTextFinished,
@@ -91,11 +92,13 @@ __all__ = [
     "Tool",
     "ToolCallFinished",
     "ToolCallStarted",
+    "ToolError",
     "ToolRegistry",
     "UnknownToolError",
     "WriteFile",
     "assess",
     "estimate_tokens",
+    "fact_recall_tool",
     "facts",
     "goal",
     "prompt_budget",
