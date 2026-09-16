@@ -11,6 +11,7 @@ SESSION="claude-pico"
 FORMAT_FILTER="$ROOT_DIR/bin/format_stream.jq"
 WORKTREE_DIR="$ROOT_DIR/agent-worktree"
 
+export UV_PROJECT_ENVIRONMENT="$ROOT_DIR/.venv"
 source "$ROOT_DIR/.venv/bin/activate"
 
 BOLD="\033[1m"
@@ -119,7 +120,7 @@ for ((step = 1; step <= MAX_STEPS; step++)); do
   box_border "┌" "┐"
   box_line "$step_line" "${BOLD}STEP $step/$MAX_STEPS${RESET}  ${DIM}·${RESET}  ${before_count} task(s) remaining"
   box_line "$next_line" "${DIM}next:${RESET} ${YELLOW}$task_name${RESET}"
-  box_line "$attach_line" "${DIM}watch live:${RESET} ${BOLD}make cloude_attach${RESET}"
+  box_line "$attach_line" "${DIM}watch live:${RESET} ${BOLD}make claude_attach${RESET}"
   box_border "└" "┘"
   echo
 
@@ -130,6 +131,11 @@ for ((step = 1; step <= MAX_STEPS; step++)); do
   fi
 
   ln -sf "$ROOT_DIR/.env" "$WORKTREE_DIR/.env"
+
+  mkdir -p "$WORKTREE_DIR/tasks/todo"
+  if [[ ! -f "$WORKTREE_DIR/tasks/todo/$task_name" ]]; then
+    cp "$before_task" "$WORKTREE_DIR/tasks/todo/$task_name"
+  fi
 
   run_claude_in_tmux "$WORKTREE_DIR" "$WORKTREE_DIR/tasks/PROMPT.md"
   claude_exit=$?
