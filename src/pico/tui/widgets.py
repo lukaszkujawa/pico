@@ -7,7 +7,6 @@ from pico.tui.theme import PICO_THEME, Theme
 
 SUCCESS_GLYPH = "✓"
 ERROR_GLYPH = "✗"
-PENDING_GLYPH = "…"
 WAITING_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 
@@ -100,6 +99,7 @@ class ToolCallPane(Static):
     finished: reactive[bool] = reactive(False, repaint=True)
     is_error: reactive[bool] = reactive(False, repaint=True)
     fact_index: reactive[int | None] = reactive(None, repaint=True)
+    frame_index: reactive[int] = reactive(0, repaint=True)
 
     def __init__(
         self, pane_id: str, name: str, arguments: str = "", theme: Theme = PICO_THEME
@@ -108,22 +108,32 @@ class ToolCallPane(Static):
         self._theme = theme
         self.name_label = name
         self.arguments_text = arguments
+        self._timer: Timer | None = None
         self.styles.border = ("round", theme.tool_call_border)
         self.styles.color = theme.text
         self.styles.padding = (0, 1)
+
+    def on_mount(self) -> None:
+        self._timer = self.set_interval(0.08, self._advance)
+
+    def _advance(self) -> None:
+        self.frame_index = (self.frame_index + 1) % len(WAITING_FRAMES)
 
     def finish(self, result: str, is_error: bool, fact_index: int | None = None) -> None:
         self.result_text = result
         self.is_error = is_error
         self.fact_index = fact_index
         self.finished = True
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
 
     def render(self) -> Text:
         if self.finished:
             glyph = ERROR_GLYPH if self.is_error else SUCCESS_GLYPH
             color = self._theme.error if self.is_error else self._theme.success
         else:
-            glyph = PENDING_GLYPH
+            glyph = WAITING_FRAMES[self.frame_index]
             color = self._theme.tool_call
 
         header = Text(f"{glyph} {self.name_label}", style=f"bold {color}")

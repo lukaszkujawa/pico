@@ -116,6 +116,35 @@ async def test_tool_call_pane_lifecycle_success() -> None:
         assert "found it" in pane.render().plain
 
 
+async def test_tool_call_pane_pending_icon_animates_over_ticks() -> None:
+    app = ToolCallPaneHarness()
+    async with app.run_test() as pilot:
+        pane = app.query_one(ToolCallPane)
+        await pilot.pause()
+
+        first_frame = pane.render().plain
+        await pilot.pause(0.1)
+        second_frame = pane.render().plain
+        await pilot.pause(0.1)
+        third_frame = pane.render().plain
+
+        assert len({first_frame, second_frame, third_frame}) > 1
+
+
+async def test_tool_call_pane_animation_stops_once_finished() -> None:
+    app = ToolCallPaneHarness()
+    async with app.run_test() as pilot:
+        pane = app.query_one(ToolCallPane)
+        await pilot.pause()
+
+        pane.finish(result="done", is_error=False)
+        await pilot.pause()
+
+        frame_after_finish = pane.render().plain
+        await pilot.pause(0.2)
+        assert pane.render().plain == frame_after_finish
+
+
 async def test_tool_call_pane_lifecycle_error() -> None:
     app = ToolCallPaneHarness()
     async with app.run_test() as pilot:
