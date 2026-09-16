@@ -27,6 +27,7 @@ dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
+    "pytest-xdist>=3.8.0",
     "ruff>=0.16.7",
 ]
 
@@ -60,7 +61,7 @@ reportMissingTypeStubs = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=pico --cov-report=term-missing"
+addopts = "-n auto --cov=pico --cov-report=term-missing"
 asyncio_mode = "auto"
 
 [tool.coverage.run]

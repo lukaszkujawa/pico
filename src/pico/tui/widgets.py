@@ -208,6 +208,7 @@ class WaitingIndicator(Static):
         self.display = False
 
     def start(self) -> None:
+        self.stop()
         self.frame_index = 0
         self.running = True
         self.display = True
@@ -251,6 +252,7 @@ class ElapsedTimer(Static):
         self.styles.color = theme.muted_text
 
     def start(self) -> None:
+        self.stop()
         self._started_at = self._clock()
         self.elapsed = 0
         self.running = True
