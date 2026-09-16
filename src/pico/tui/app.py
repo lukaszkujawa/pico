@@ -122,6 +122,8 @@ class PicoApp(App[None]):
         self._assistant_panes: dict[str, AssistantPane] = {}
         self._thinking_panes: dict[str, ThinkingPane] = {}
         self._tool_call_panes: dict[str, ToolCallPane] = {}
+        self._queued_user_panes: list[UserPane] = []
+        self._fact_count = 0
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="conversation"):
@@ -182,18 +184,32 @@ class PicoApp(App[None]):
         self._tool_call_panes[message.pane_id].append_delta(message.text)
 
     def on_tool_call_pane_close(self, message: ToolCallPaneClose) -> None:
-        self._tool_call_panes[message.pane_id].finish(is_error=message.is_error)
+        fact_index: int | None = None
+        if not message.is_error:
+            fact_index = self._fact_count
+            self._fact_count += 1
+        self._tool_call_panes[message.pane_id].finish(
+            result=message.result, is_error=message.is_error, fact_index=fact_index
+        )
 
     def on_run_started_message(self, message: RunStartedMessage) -> None:
         self._run_in_flight = True
+        if self._queued_user_panes:
+            self._queued_user_panes[0].queued = False
+
+    def _advance_queue(self) -> None:
+        if self._queued_user_panes:
+            self._queued_user_panes.pop(0)
 
     def on_run_finished_message(self, message: RunFinishedMessage) -> None:
         self._run_in_flight = False
         self.query_one(WaitingIndicator).stop()
+        self._advance_queue()
 
     def on_run_cancelled_message(self, message: RunCancelledMessage) -> None:
         self._run_in_flight = False
         self.query_one(WaitingIndicator).stop()
+        self._advance_queue()
 
     def action_cancel_run(self) -> None:
         if self._run_in_flight and self._cancel_handle is not None:
@@ -203,13 +219,18 @@ class PicoApp(App[None]):
         self._run_in_flight = False
         self.query_one(WaitingIndicator).stop()
         self.query_one("#conversation", VerticalScroll).mount(ErrorPane(message.message))
+        self._advance_queue()
 
     def on_user_input_submitted(self, message: UserInputSubmitted) -> None:
         text = message.text.strip()
         if not text:
             return
         conversation = self.query_one("#conversation", VerticalScroll)
-        conversation.mount(UserPane(text=message.text))
+        pane = UserPane(text=message.text)
+        if self._queued_user_panes:
+            pane.queued = True
+        self._queued_user_panes.append(pane)
+        conversation.mount(pane)
         indicator = self.query_one(WaitingIndicator)
         conversation.move_child(indicator, after=-1)
         indicator.start()

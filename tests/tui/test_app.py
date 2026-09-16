@@ -73,9 +73,35 @@ async def test_app_renders_tool_call_pane_from_bus_events() -> None:
         assert len(panes) == 1
         pane = panes.first()
         assert pane.name_label == "search"
-        assert "found it" not in pane.render().plain
+        assert "found it" in pane.render().plain
         assert pane.finished is True
         assert pane.is_error is False
+        assert pane.fact_index == 0
+
+
+async def test_fact_index_increments_across_successful_tool_calls_only() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        tool_call = ToolCall(id="1", name="search", arguments={})
+        bus.publish(RunStarted())
+        bus.publish(ToolCallStarted(id="1", name="search"))
+        bus.publish(ToolCallFinished(id="1", tool_call=tool_call, result="first", is_error=False))
+        bus.publish(ToolCallStarted(id="2", name="search"))
+        bus.publish(ToolCallFinished(id="2", tool_call=tool_call, result="oops", is_error=True))
+        bus.publish(ToolCallStarted(id="3", name="search"))
+        bus.publish(ToolCallFinished(id="3", tool_call=tool_call, result="second", is_error=False))
+        bus.publish(RunFinished())
+
+        await pilot.pause(0.2)
+
+        panes = app.query(ToolCallPane)
+        assert len(panes) == 3
+        assert panes[0].fact_index == 0
+        assert panes[1].fact_index is None
+        assert panes[2].fact_index == 1
 
 
 async def test_thinking_then_text_produces_one_pane_each() -> None:
@@ -278,6 +304,86 @@ async def test_submitting_input_enqueues_text() -> None:
         await pilot.pause()
 
         assert input_queue.get_nowait() == "hello pico"
+
+
+async def test_first_message_is_not_marked_queued() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#user-input", ChatInput).focus()
+        await pilot.press(*"hello")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        pane = app.query_one(UserPane)
+        assert pane.queued is False
+
+
+async def test_message_sent_while_run_in_flight_is_marked_queued() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#user-input", ChatInput).focus()
+        await pilot.press(*"first")
+        await pilot.press("enter")
+        await pilot.pause()
+        bus.publish(RunStarted())
+        await pilot.pause(0.2)
+
+        app.query_one("#user-input", ChatInput).focus()
+        await pilot.press(*"second")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        panes = app.query(UserPane)
+        assert panes[0].queued is False
+        assert panes[1].queued is True
+
+
+async def test_second_message_marked_queued_even_before_run_started_arrives() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#user-input", ChatInput).focus()
+        await pilot.press(*"first")
+        await pilot.press("enter")
+        app.query_one("#user-input", ChatInput).focus()
+        await pilot.press(*"second")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        panes = app.query(UserPane)
+        assert panes[0].queued is False
+        assert panes[1].queued is True
+
+
+async def test_run_started_unmarks_the_oldest_queued_pane() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#user-input", ChatInput).focus()
+        await pilot.press(*"first")
+        await pilot.press("enter")
+        app.query_one("#user-input", ChatInput).focus()
+        await pilot.press(*"second")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        bus.publish(RunStarted())
+        await pilot.pause(0.2)
+        bus.publish(RunFinished())
+        await pilot.pause(0.2)
+
+        bus.publish(RunStarted())
+        await pilot.pause(0.2)
+
+        panes = app.query(UserPane)
+        assert panes[0].queued is False
+        assert panes[1].queued is False
 
 
 async def test_submitting_blank_input_does_not_enqueue() -> None:

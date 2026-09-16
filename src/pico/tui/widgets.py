@@ -53,6 +53,8 @@ class ThinkingPane(Static):
 
 
 class UserPane(Static):
+    queued: reactive[bool] = reactive(False, repaint=True)
+
     def __init__(self, text: str, theme: Theme = PICO_THEME) -> None:
         super().__init__(id=None)
         self._theme = theme
@@ -61,13 +63,30 @@ class UserPane(Static):
         self.styles.padding = (0, 1)
 
     def render(self) -> Text:
+        if self.queued:
+            return Text.assemble(
+                (self._text, f"bold {self._theme.muted_text}"),
+                "  ",
+                ("queued", f"italic {self._theme.muted_text}"),
+            )
         return Text(self._text, style=f"bold {self._theme.text}")
 
 
+RESULT_TRUNCATE_LENGTH = 300
+
+
+def truncate(text: str, limit: int = RESULT_TRUNCATE_LENGTH) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"… ({len(text) - limit} more chars)"
+
+
 class ToolCallPane(Static):
-    content_text: reactive[str] = reactive("", repaint=True)
+    arguments_text: reactive[str] = reactive("", repaint=True)
+    result_text: reactive[str] = reactive("", repaint=True)
     finished: reactive[bool] = reactive(False, repaint=True)
     is_error: reactive[bool] = reactive(False, repaint=True)
+    fact_index: reactive[int | None] = reactive(None, repaint=True)
 
     def __init__(self, pane_id: str, name: str, theme: Theme = PICO_THEME) -> None:
         super().__init__(id=f"tool-{pane_id}")
@@ -78,10 +97,12 @@ class ToolCallPane(Static):
         self.styles.padding = (0, 1)
 
     def append_delta(self, text: str) -> None:
-        self.content_text += text
+        self.arguments_text += text
 
-    def finish(self, is_error: bool) -> None:
+    def finish(self, result: str, is_error: bool, fact_index: int | None = None) -> None:
+        self.result_text = result
         self.is_error = is_error
+        self.fact_index = fact_index
         self.finished = True
 
     def render(self) -> Text:
@@ -93,8 +114,16 @@ class ToolCallPane(Static):
             color = self._theme.tool_call
 
         header = Text(f"{glyph} {self.name_label}", style=f"bold {color}")
-        body = Text(self.content_text, style=self._theme.muted_text)
-        return Text("\n").join([header, body]) if self.content_text else header
+        if self.fact_index is not None:
+            header.append(f"  → fact #{self.fact_index}", style=f"italic {self._theme.muted_text}")
+
+        lines = [header]
+        if self.arguments_text:
+            lines.append(Text(self.arguments_text, style=self._theme.muted_text))
+        if self.finished and self.result_text:
+            lines.append(Text(truncate(self.result_text), style=self._theme.text))
+
+        return Text("\n").join(lines)
 
 
 class WaitingIndicator(Static):

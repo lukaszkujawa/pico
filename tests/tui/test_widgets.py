@@ -94,12 +94,13 @@ async def test_tool_call_pane_lifecycle_success() -> None:
         await pilot.pause()
         assert "pico" in pane.render().plain
 
-        pane.finish(is_error=False)
+        pane.finish(result="found it", is_error=False)
         await pilot.pause()
         assert pane.finished is True
         assert pane.is_error is False
         assert SUCCESS_GLYPH in pane.render().plain
         assert ERROR_GLYPH not in pane.render().plain
+        assert "found it" in pane.render().plain
 
 
 async def test_tool_call_pane_lifecycle_error() -> None:
@@ -108,12 +109,50 @@ async def test_tool_call_pane_lifecycle_error() -> None:
         pane = app.query_one(ToolCallPane)
 
         pane.append_delta("boom")
-        pane.finish(is_error=True)
+        pane.finish(result="tool crashed", is_error=True)
         await pilot.pause()
         assert pane.finished is True
         assert pane.is_error is True
         assert ERROR_GLYPH in pane.render().plain
         assert SUCCESS_GLYPH not in pane.render().plain
+        assert "tool crashed" in pane.render().plain
+
+
+async def test_tool_call_pane_truncates_long_result() -> None:
+    app = ToolCallPaneHarness()
+    long_result = "x" * 400
+    async with app.run_test() as pilot:
+        pane = app.query_one(ToolCallPane)
+
+        pane.finish(result=long_result, is_error=False)
+        await pilot.pause()
+
+        rendered = pane.render().plain
+        assert long_result not in rendered
+        assert "x" * 300 in rendered
+        assert "100 more chars" in rendered
+
+
+async def test_tool_call_pane_shows_fact_index_on_success() -> None:
+    app = ToolCallPaneHarness()
+    async with app.run_test() as pilot:
+        pane = app.query_one(ToolCallPane)
+
+        pane.finish(result="ok", is_error=False, fact_index=3)
+        await pilot.pause()
+
+        assert "fact #3" in pane.render().plain
+
+
+async def test_tool_call_pane_has_no_fact_index_on_error() -> None:
+    app = ToolCallPaneHarness()
+    async with app.run_test() as pilot:
+        pane = app.query_one(ToolCallPane)
+
+        pane.finish(result="boom", is_error=True)
+        await pilot.pause()
+
+        assert "fact #" not in pane.render().plain
 
 
 async def test_success_and_error_are_distinguishable_beyond_color() -> None:
@@ -123,8 +162,8 @@ async def test_success_and_error_are_distinguishable_beyond_color() -> None:
         success_pane = success_app.query_one(ToolCallPane)
         error_pane = error_app.query_one(ToolCallPane)
 
-        success_pane.finish(is_error=False)
-        error_pane.finish(is_error=True)
+        success_pane.finish(result="ok", is_error=False)
+        error_pane.finish(result="boom", is_error=True)
         await success_pilot.pause()
         await error_pilot.pause()
 
