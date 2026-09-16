@@ -435,12 +435,12 @@ def test_single_tool_call_round_trip() -> None:
     assert events == [
         RunStarted(),
         GenerationCompleted(),
-        ToolCallStarted(id="1", name="echo", arguments={"text": "hi"}),
-        ToolCallFinished(id="1", tool_call=call, result="hi", is_error=False, fact_id=3),
-        AssistantTextStarted(id="0"),
-        AssistantTextDelta(id="0", text="done"),
+        ToolCallStarted(id="0", name="echo", arguments={"text": "hi"}),
+        ToolCallFinished(id="0", tool_call=call, result="hi", is_error=False, fact_id=3),
+        AssistantTextStarted(id="1"),
+        AssistantTextDelta(id="1", text="done"),
         GenerationCompleted(),
-        AssistantTextFinished(id="0"),
+        AssistantTextFinished(id="1"),
         RunFinished(),
     ]
     assert list(session.events()) == [
@@ -449,6 +449,66 @@ def test_single_tool_call_round_trip() -> None:
         ToolCallRecorded(name="echo", arguments={"text": "hi"}, result="hi", is_error=False),
         AssistantMessageRecorded(content="done", thinking=""),
     ]
+
+
+def test_two_tool_calls_sharing_model_id_get_distinct_pane_ids() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    first_call = ToolCall(id="0", name="echo", arguments={"text": "first"})
+    second_call = ToolCall(id="0", name="echo", arguments={"text": "second"})
+    client = ScriptedClient(
+        [
+            [
+                ToolCallReady(tool_call=first_call),
+                ToolCallReady(tool_call=second_call),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [GenerationComplete(finish_reason="stop")],
+        ]
+    )
+
+    runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    events = [next(subscriber) for _ in range(7)]
+    started = [event for event in events if isinstance(event, ToolCallStarted)]
+    finished = [event for event in events if isinstance(event, ToolCallFinished)]
+    assert [event.id for event in started] == ["0", "1"]
+    assert [event.id for event in finished] == ["0", "1"]
+    assert started[0].id == finished[0].id
+    assert started[1].id == finished[1].id
+
+
+def test_tool_call_pane_ids_do_not_collide_with_text_or_thinking_pane_ids() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    call = ToolCall(id="7", name="echo", arguments={"text": "hi"})
+    client = ScriptedClient(
+        [
+            [
+                ThinkingDelta(text="pondering"),
+                TextDelta(text="calling"),
+                ToolCallReady(tool_call=call),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [GenerationComplete(finish_reason="stop")],
+        ]
+    )
+
+    runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    events = [next(subscriber) for _ in range(9)]
+    pane_ids = [
+        event.id
+        for event in events
+        if isinstance(event, AssistantThinkingStarted | AssistantTextStarted | ToolCallStarted)
+    ]
+    assert len(pane_ids) == len(set(pane_ids))
 
 
 def test_tool_call_delta_from_llm_is_ignored() -> None:
@@ -475,8 +535,8 @@ def test_tool_call_delta_from_llm_is_ignored() -> None:
     assert events == [
         RunStarted(),
         GenerationCompleted(),
-        ToolCallStarted(id="1", name="echo", arguments={"text": "hi"}),
-        ToolCallFinished(id="1", tool_call=call, result="hi", is_error=False, fact_id=3),
+        ToolCallStarted(id="0", name="echo", arguments={"text": "hi"}),
+        ToolCallFinished(id="0", tool_call=call, result="hi", is_error=False, fact_id=3),
         GenerationCompleted(),
         RunFinished(),
     ]
@@ -502,8 +562,8 @@ def test_unknown_tool_call_surfaced_as_tool_error() -> None:
     assert events == [
         RunStarted(),
         GenerationCompleted(),
-        ToolCallStarted(id="1", name="missing", arguments={}),
-        ToolCallFinished(id="1", tool_call=call, result="missing", is_error=True),
+        ToolCallStarted(id="0", name="missing", arguments={}),
+        ToolCallFinished(id="0", tool_call=call, result="missing", is_error=True),
         GenerationCompleted(),
         RunFinished(),
     ]
@@ -633,9 +693,9 @@ def test_valid_answer_call_ends_run_and_records_result() -> None:
         RunStarted(),
         GenerationCompleted(),
         ToolCallStarted(
-            id="1", name="answer", arguments={"content": "the answer", "citations": []}
+            id="0", name="answer", arguments={"content": "the answer", "citations": []}
         ),
-        ToolCallFinished(id="1", tool_call=call, result="the answer", is_error=False),
+        ToolCallFinished(id="0", tool_call=call, result="the answer", is_error=False),
         RunFinished(),
     ]
     assert runner.final_answer == "the answer"
@@ -712,7 +772,7 @@ def test_invalid_answer_call_continues_run_instead_of_ending() -> None:
     assert events[:3] == [
         RunStarted(),
         GenerationCompleted(),
-        ToolCallStarted(id="1", name="answer", arguments={}),
+        ToolCallStarted(id="0", name="answer", arguments={}),
     ]
     finished = events[3]
     assert isinstance(finished, ToolCallFinished)
@@ -1025,14 +1085,14 @@ def test_delegate_child_stream_events_do_not_appear_on_parent_bus() -> None:
     assert events == [
         RunStarted(),
         GenerationCompleted(),
-        ToolCallStarted(id="1", name="delegate", arguments={"question": "what is x?"}),
+        ToolCallStarted(id="0", name="delegate", arguments={"question": "what is x?"}),
         ToolCallFinished(
-            id="1", tool_call=delegate_call, result="x is 1", is_error=False, fact_id=None
+            id="0", tool_call=delegate_call, result="x is 1", is_error=False, fact_id=None
         ),
-        AssistantTextStarted(id="0"),
-        AssistantTextDelta(id="0", text="done"),
+        AssistantTextStarted(id="1"),
+        AssistantTextDelta(id="1", text="done"),
         GenerationCompleted(),
-        AssistantTextFinished(id="0"),
+        AssistantTextFinished(id="1"),
     ]
 
 

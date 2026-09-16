@@ -89,6 +89,60 @@ async def test_app_renders_tool_call_pane_from_bus_events() -> None:
         assert pane.fact_index == 2
 
 
+async def test_two_tool_calls_with_distinct_pane_ids_both_mount_without_crashing() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        first_call = ToolCall(id="0", name="search", arguments={"q": "first"})
+        second_call = ToolCall(id="0", name="search", arguments={"q": "second"})
+        bus.publish(RunStarted())
+        bus.publish(ToolCallStarted(id="0", name="search", arguments={"q": "first"}))
+        bus.publish(ToolCallFinished(id="0", tool_call=first_call, result="one", is_error=False))
+        bus.publish(ToolCallStarted(id="1", name="search", arguments={"q": "second"}))
+        bus.publish(ToolCallFinished(id="1", tool_call=second_call, result="two", is_error=False))
+        bus.publish(RunFinished())
+
+        await pilot.pause(0.2)
+
+        panes = app.query(ToolCallPane)
+        assert len(panes) == 2
+        assert {pane.render().plain.count("one") for pane in panes} != {0}
+        assert {pane.finished for pane in panes} == {True}
+
+
+async def test_second_session_tool_call_panes_do_not_collide_with_first_sessions_ids() -> None:
+    bus = Bus()
+    session_handle = RecordingSessionHandle()
+    app = PicoApp(bus, queue.Queue(), None, session_handle)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        first_call = ToolCall(id="0", name="search", arguments={})
+        bus.publish(RunStarted())
+        bus.publish(ToolCallStarted(id="0", name="search", arguments={}))
+        bus.publish(ToolCallFinished(id="0", tool_call=first_call, result="one", is_error=False))
+        bus.publish(RunFinished())
+        await pilot.pause(0.2)
+
+        assert len(app.query(ToolCallPane)) == 1
+
+        await pilot.press("ctrl+n")
+        await pilot.pause(0.2)
+
+        second_call = ToolCall(id="0", name="search", arguments={})
+        bus.publish(RunStarted())
+        bus.publish(ToolCallStarted(id="0", name="search", arguments={}))
+        bus.publish(ToolCallFinished(id="0", tool_call=second_call, result="two", is_error=False))
+        bus.publish(RunFinished())
+        await pilot.pause(0.2)
+
+        panes = app.query(ToolCallPane)
+        assert len(panes) == 1
+        assert "two" in panes.first().render().plain
+
+
 async def test_fact_index_reflects_real_non_contiguous_fact_ids() -> None:
     bus = Bus()
     app = PicoApp(bus, queue.Queue())

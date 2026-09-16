@@ -293,7 +293,8 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
     runner.pending_tool_calls = []
     outcome: StepOutcome = "continue"
     for call in tool_calls:
-        runner.bus.publish(ToolCallStarted(id=call.id, name=call.name, arguments=call.arguments))
+        pane_id = runner.new_id()
+        runner.bus.publish(ToolCallStarted(id=pane_id, name=call.name, arguments=call.arguments))
         invalid = False
         if call.name == "answer":
             try:
@@ -343,7 +344,7 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
             fact_id = facts(runner.session)[-1].id
         runner.bus.publish(
             ToolCallFinished(
-                id=call.id, tool_call=call, result=output, is_error=is_error, fact_id=fact_id
+                id=pane_id, tool_call=call, result=output, is_error=is_error, fact_id=fact_id
             )
         )
         if invalid:

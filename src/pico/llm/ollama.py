@@ -1,3 +1,4 @@
+import itertools
 import json
 from collections.abc import Iterator
 from typing import Any
@@ -59,6 +60,7 @@ class OllamaClient:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._transport = transport
+        self._fallback_call_ids = itertools.count()
 
     def stream(self, messages: list[Message], tools: list[ToolSpec]) -> Iterator[StreamEvent]:
         payload: dict[str, Any] = {
@@ -88,7 +90,6 @@ class OllamaClient:
             raise LLMError(str(error)) from error
 
     def _parse_lines(self, lines: Iterator[str]) -> Iterator[StreamEvent]:
-        next_call_id = 0
         for line in lines:
             if not line.strip():
                 continue
@@ -107,8 +108,7 @@ class OllamaClient:
                 raw_calls: list[dict[str, Any]] = message.get("tool_calls") or []
                 for raw_call in raw_calls:
                     function: dict[str, Any] = raw_call["function"]
-                    call_id: str = raw_call.get("id", str(next_call_id))
-                    next_call_id += 1
+                    call_id: str = raw_call.get("id") or str(next(self._fallback_call_ids))
                     yield ToolCallReady(
                         tool_call=ToolCall(
                             id=call_id,

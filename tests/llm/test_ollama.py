@@ -148,6 +148,68 @@ def test_stream_tool_call() -> None:
     assert events[1] == GenerationComplete(finish_reason="tool_calls")
 
 
+def test_stream_uses_explicit_call_id_verbatim() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return _ndjson_response(
+            [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {"id": "call_abc", "function": {"name": "search", "arguments": {}}}
+                        ],
+                    },
+                    "done": False,
+                },
+                {"message": {"content": ""}, "done": True, "done_reason": "tool_calls"},
+            ]
+        )
+
+    client = OllamaClient(model="qwen3", transport=httpx.MockTransport(handle))
+
+    events = list(client.stream([Message(role=Role.USER, content="hi")], []))
+
+    ready = events[0]
+    assert isinstance(ready, ToolCallReady)
+    assert ready.tool_call.id == "call_abc"
+
+
+def test_successive_streams_with_omitted_ids_do_not_repeat_fallback_ids() -> None:
+    def two_calls_no_id(request: httpx.Request) -> httpx.Response:
+        return _ndjson_response(
+            [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {"function": {"name": "search", "arguments": {}}},
+                            {"function": {"name": "search", "arguments": {}}},
+                        ],
+                    },
+                    "done": False,
+                },
+                {"message": {"content": ""}, "done": True, "done_reason": "tool_calls"},
+            ]
+        )
+
+    client = OllamaClient(model="qwen3", transport=httpx.MockTransport(two_calls_no_id))
+
+    first_stream = [
+        event.tool_call.id
+        for event in client.stream([Message(role=Role.USER, content="hi")], [])
+        if isinstance(event, ToolCallReady)
+    ]
+    second_stream = [
+        event.tool_call.id
+        for event in client.stream([Message(role=Role.USER, content="hi")], [])
+        if isinstance(event, ToolCallReady)
+    ]
+
+    assert len(set(first_stream + second_stream)) == 4
+
+
 def test_stream_sends_authorization_header_when_api_key_set() -> None:
     captured: list[httpx.Request] = []
 
