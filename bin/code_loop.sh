@@ -12,6 +12,28 @@ MAX_STEPS="${MAX_STEPS:-50}"
 SESSION="claude-pico"
 FORMAT_FILTER="$ROOT_DIR/bin/format_stream.jq"
 
+BOLD="\033[1m"
+DIM="\033[2m"
+CYAN="\033[36m"
+YELLOW="\033[33m"
+RESET="\033[0m"
+
+BOX_WIDTH=61
+
+box_line() {
+  local visible="$1" styled="$2"
+  local pad=$(( BOX_WIDTH - 2 - ${#visible} ))
+  (( pad < 0 )) && pad=0
+  printf "${BOLD}${CYAN}│${RESET} %b%*s ${BOLD}${CYAN}│${RESET}\n" "$styled" "$pad" ""
+}
+
+box_border() {
+  local corner_left="$1" corner_right="$2"
+  printf "${BOLD}${CYAN}%s" "$corner_left"
+  printf '─%.0s' $(seq 1 "$BOX_WIDTH")
+  printf "%s${RESET}\n" "$corner_right"
+}
+
 next_task() {
   find "$TODO_DIR" -maxdepth 1 -type f -name '*.md' | sort | head -n 1
 }
@@ -21,32 +43,27 @@ todo_count() {
 }
 
 run_claude_in_tmux() {
-  local log_file exit_file
-  log_file="$(mktemp)"
+  local exit_file done_channel
   exit_file="$(mktemp)"
+  done_channel="${SESSION}_done_$$_${RANDOM}"
 
   tmux kill-session -t "$SESSION" 2>/dev/null || true
 
   tmux new-session -d -s "$SESSION" -x 220 -y 50 bash -c \
-    "claude -p \"\$(cat '$PROMPT_FILE')\" --dangerously-skip-permissions --disallowedTools AskUserQuestion --verbose --output-format stream-json | jq -r -f '$FORMAT_FILTER'; echo \${PIPESTATUS[0]} > '$exit_file'; tmux wait-for -S ${SESSION}_done"
+    "claude -p \"\$(cat '$PROMPT_FILE')\" --dangerously-skip-permissions --disallowedTools AskUserQuestion --verbose --output-format stream-json | jq -r -f '$FORMAT_FILTER'; echo \${PIPESTATUS[0]} > '$exit_file'; tmux wait-for -S '$done_channel'"
 
-  tmux pipe-pane -t "$SESSION" -o "cat >> '$log_file'"
-
-  tail -n +1 -f "$log_file" &
-  local tail_pid=$!
-
-  tmux wait-for "${SESSION}_done"
-
-  sleep 0.2
-  kill "$tail_pid" 2>/dev/null || true
-  wait "$tail_pid" 2>/dev/null || true
+  tmux wait-for "$done_channel"
 
   local exit_code
-  exit_code="$(cat "$exit_file" 2>/dev/null || echo 1)"
+  exit_code="$(cat "$exit_file" 2>/dev/null)"
 
-  rm -f "$log_file" "$exit_file"
+  rm -f "$exit_file"
 
   tmux has-session -t "$SESSION" 2>/dev/null && tmux kill-session -t "$SESSION"
+
+  if [[ ! "$exit_code" =~ ^[0-9]+$ ]]; then
+    exit_code=1
+  fi
 
   return "$exit_code"
 }
@@ -58,17 +75,22 @@ for ((step = 1; step <= MAX_STEPS; step++)); do
 
   if (( before_count == 0 )); then
     echo
-    echo "All tasks complete."
+    echo -e "${BOLD}All tasks complete.${RESET}"
     exit 0
   fi
 
   before_task=$(next_task)
+  task_name="$(basename "$before_task")"
+  step_line="STEP $step/$MAX_STEPS  ·  $before_count task(s) remaining"
+  next_line="next: $task_name"
+  attach_line="watch live: make cloude_attach"
 
   echo
-  echo "============================================================"
-  echo "STEP $step/$MAX_STEPS | $before_count task(s) remaining | next: $(basename "$before_task")"
-  echo "Attach live with: tmux attach -t $SESSION"
-  echo "============================================================"
+  box_border "┌" "┐"
+  box_line "$step_line" "${BOLD}STEP $step/$MAX_STEPS${RESET}  ${DIM}·${RESET}  ${before_count} task(s) remaining"
+  box_line "$next_line" "${DIM}next:${RESET} ${YELLOW}$task_name${RESET}"
+  box_line "$attach_line" "${DIM}watch live:${RESET} ${BOLD}make cloude_attach${RESET}"
+  box_border "└" "┘"
   echo
 
   run_claude_in_tmux
@@ -77,13 +99,13 @@ for ((step = 1; step <= MAX_STEPS; step++)); do
   if [[ -f "$STOP_FILE" ]]; then
     rm -f "$STOP_FILE"
     echo
-    echo "Stop requested via .stop_code. Stopping after current step."
+    echo -e "${YELLOW}Stop requested via .stop_code.${RESET} Stopping after current step."
     exit 0
   fi
 
   if (( claude_exit != 0 )); then
     echo
-    echo "Claude exited with status $claude_exit."
+    echo -e "\033[31mClaude exited with status $claude_exit.${RESET}"
     exit 1
   fi
 
@@ -91,18 +113,18 @@ for ((step = 1; step <= MAX_STEPS; step++)); do
 
   if (( after_count == 0 )); then
     echo
-    echo "All tasks complete."
+    echo -e "${BOLD}All tasks complete.${RESET}"
     exit 0
   fi
 
   if [[ -f "$DONE_DIR/$(basename "$before_task")" ]] && [[ ! -f "$before_task" ]]; then
     echo
-    echo "Progress: $(basename "$before_task") -> done. $after_count task(s) remaining."
+    echo -e "\033[32m✓${RESET} $(basename "$before_task") ${DIM}->${RESET} done. $after_count task(s) remaining."
     continue
   fi
 
   echo
-  echo "No progress on $(basename "$before_task") this run."
+  echo -e "\033[31mNo progress on $(basename "$before_task") this run.${RESET}"
   echo "Still $after_count task(s) remaining. Stopping."
   exit 1
 done
