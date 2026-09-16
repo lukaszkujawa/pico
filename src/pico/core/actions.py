@@ -107,7 +107,7 @@ class Shell:
         command = _require(arguments, "command", str)
         return cls(command=command)
 
-    def execute(self, timeout: float = 30) -> str:
+    def run(self, timeout: float = 30) -> tuple[int, str]:
         try:
             result = subprocess.run(
                 self.command,
@@ -119,8 +119,12 @@ class Shell:
         except subprocess.TimeoutExpired as error:
             raise ToolError(f"command timed out after {timeout}s: {self.command}") from error
         output = "\n".join(part for part in (result.stdout, result.stderr) if part)
-        if result.returncode != 0:
-            return f"exit code {result.returncode}\n{output}"
+        return result.returncode, output
+
+    def execute(self, timeout: float = 30) -> str:
+        code, output = self.run(timeout)
+        if code != 0:
+            return f"exit code {code}\n{output}"
         return output
 
 
@@ -128,12 +132,16 @@ class Shell:
 class Answer:
     content: str
     citations: tuple[int, ...]
+    verify: str | None = None
 
     @classmethod
     def from_arguments(cls, arguments: Mapping[str, object]) -> Self:
         content = _require(arguments, "content", str)
         citations = _require_int_list(arguments, "citations")
-        return cls(content=content, citations=citations)
+        verify = None if arguments.get("verify") is None else _require(arguments, "verify", str)
+        if verify is not None and not verify.strip():
+            raise InvalidActionError("field 'verify' must not be empty")
+        return cls(content=content, citations=citations, verify=verify)
 
 
 @dataclass(frozen=True)
@@ -201,12 +209,18 @@ _TOOL_SPECS = {
     ),
     "answer": ToolSpec(
         name="answer",
-        description="Give the final answer to the user and end the run.",
+        description=(
+            "Give the final answer to the user and end the run. "
+            "Whenever the task has a checkable outcome, pass verify: a shell command that "
+            "exits 0 exactly when your answer's claim is true. The runtime runs it before "
+            "accepting the answer and rejects the answer if it fails."
+        ),
         parameters={
             "type": "object",
             "properties": {
                 "content": {"type": "string"},
                 "citations": {"type": "array", "items": {"type": "integer"}},
+                "verify": {"type": "string"},
             },
             "required": ["content", "citations"],
         },

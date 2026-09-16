@@ -12,7 +12,7 @@ This milestone lets an answer carry its own mechanical check: an optional shell 
 * **Success is silent, but recorded.** On exit 0, accept the answer exactly as today; the recorded tool result may note `verified` plus the command for the log's benefit — provenance for free.
 * **Delegates cannot verify.** Delegates are read-only by design (`register_delegate_actions` grants no shell); an `answer` carrying `verify` inside a delegate is rejected with `InvalidActionError` — running arbitrary commands through the answer channel would quietly break the read-only contract.
 
-## [ ] T001 `Answer.verify` parsing
+## [X] T001 `Answer.verify` parsing
 
 ### Description
 
@@ -23,7 +23,7 @@ Add the optional field to `Answer.from_arguments` (absent → `None`; present �
 * `tests/core/test_actions.py` covers: absent field parses to `None`; a valid command string round-trips; a non-string or empty-string `verify` raises `InvalidActionError`.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T002 Verification gating in the loop
+## [X] T002 Verification gating in the loop
 
 ### Description
 
@@ -34,7 +34,7 @@ Implement the gate in `tool_call_step` per the design decisions: execution via `
 * `tests/core/test_loop.py` covers, with scripted clients and real (cheap) shell commands like `true`/`false`/`test -f`: a passing `verify` ends the run with `final_answer` set; a failing one records an `is_error` result containing the exit code and output, leaves `final_answer` unset, and the run continues to another model turn; an answer with no `verify` behaves byte-for-byte as before; repeated failing verifications trip the stuckness hard stop rather than `MAX_INVALID_ACTION_ATTEMPTS`; a delegate answering with `verify` set is rejected and the delegate result reports it.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T003 Verify and finalize
+## [X] T003 Verify and finalize
 
 ### Description
 

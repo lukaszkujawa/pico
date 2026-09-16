@@ -111,6 +111,13 @@ def test_recall_from_log_hides_the_evidence_past_budget_and_preview(tmp_path: Pa
     assert LOG_MARKER not in content[:200]
 
 
+def test_make_tests_pass_prompt_names_a_command_usable_as_verify() -> None:
+    task = next(task for task in SUITE if task.name == "make_tests_pass")
+
+    assert "python3 check.py" in task.prompt
+    assert "exits 0" in task.prompt
+
+
 def test_make_tests_pass_accepts_a_working_solution_and_rejects_a_broken_one(
     tmp_path: Path,
 ) -> None:

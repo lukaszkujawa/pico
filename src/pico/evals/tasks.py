@@ -240,6 +240,7 @@ SUITE: tuple[EvalTask, ...] = (
         name="make_tests_pass",
         prompt=(
             "Write solution.py so that running check.py succeeds. "
+            "Running `python3 check.py` exits 0 exactly when the work is correct. "
             "Keep fixing it until check.py prints ok."
         ),
         setup=_setup_make_tests_pass,

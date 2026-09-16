@@ -1,6 +1,8 @@
 import itertools
 import threading
 from collections.abc import Iterator, Mapping
+from pathlib import Path
+from unittest.mock import patch
 
 from pico.core.actions import register_actions
 from pico.core.bus import Bus
@@ -1577,3 +1579,204 @@ def test_fitting_prompt_publishes_no_budget_exceeded() -> None:
 
     events = [next(subscriber) for _ in range(5)]
     assert not any(isinstance(event, BudgetExceeded) for event in events)
+
+
+def test_answer_with_passing_verification_ends_run() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    call = ToolCall(
+        id="1", name="answer", arguments={"content": "done", "citations": [], "verify": "true"}
+    )
+    client = ScriptedClient(
+        [[ToolCallReady(tool_call=call), GenerationComplete(finish_reason="tool_calls")]]
+    )
+
+    runner = LoopRunner(client, _echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    assert runner.final_answer == "done"
+    recorded = [event for event in session.events() if isinstance(event, ToolCallRecorded)][-1]
+    assert recorded.is_error is False
+    assert recorded.result == "done\n\nverified: true"
+
+
+def test_answer_with_failing_verification_is_rejected_and_run_continues() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    call = ToolCall(
+        id="1",
+        name="answer",
+        arguments={
+            "content": "done",
+            "citations": [],
+            "verify": "echo missing output >&2; exit 3",
+        },
+    )
+    client = ScriptedClient(
+        [
+            [ToolCallReady(tool_call=call), GenerationComplete(finish_reason="tool_calls")],
+            [TextDelta(text="fixing"), GenerationComplete(finish_reason="stop")],
+        ]
+    )
+
+    runner = LoopRunner(client, _echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    assert runner.final_answer is None
+    recorded = [event for event in session.events() if isinstance(event, ToolCallRecorded)][-1]
+    assert recorded.is_error is True
+    assert "verification failed (exit 3)" in recorded.result
+    assert "missing output" in recorded.result
+    assert list(session.events())[-1] == AssistantMessageRecorded(content="fixing", thinking="")
+
+
+def test_answer_verification_sees_the_working_directory(tmp_path: Path) -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    target = tmp_path / "greeting.txt"
+    call = ToolCall(
+        id="1",
+        name="answer",
+        arguments={
+            "content": "wrote it",
+            "citations": [],
+            "verify": f"test -f {target}",
+        },
+    )
+    client = ScriptedClient(
+        [
+            [ToolCallReady(tool_call=call), GenerationComplete(finish_reason="tool_calls")],
+            [TextDelta(text="fixing"), GenerationComplete(finish_reason="stop")],
+        ]
+    )
+
+    runner = LoopRunner(client, _echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    assert runner.final_answer is None
+
+    target.write_text("hello")
+    session = _session("s2")
+    session.append(UserMessageRecorded(content="hi"))
+    client = ScriptedClient(
+        [[ToolCallReady(tool_call=call), GenerationComplete(finish_reason="tool_calls")]]
+    )
+    runner = LoopRunner(client, _echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    assert runner.final_answer == "wrote it"
+
+
+def test_answer_without_verification_result_is_the_content_alone() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    call = ToolCall(id="1", name="answer", arguments={"content": "done", "citations": []})
+    client = ScriptedClient(
+        [[ToolCallReady(tool_call=call), GenerationComplete(finish_reason="tool_calls")]]
+    )
+
+    runner = LoopRunner(client, _echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    assert runner.final_answer == "done"
+    recorded = [event for event in session.events() if isinstance(event, ToolCallRecorded)][-1]
+    assert recorded.result == "done"
+    assert recorded.is_error is False
+
+
+def test_repeated_failing_verification_hits_stuckness_not_invalid_action_cap() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    turns: list[list[StreamEvent]] = [
+        [
+            ToolCallReady(
+                tool_call=ToolCall(
+                    id=str(index),
+                    name="answer",
+                    arguments={"content": f"done {index}", "citations": [], "verify": "false"},
+                )
+            ),
+            GenerationComplete(finish_reason="tool_calls"),
+        ]
+        for index in range(STUCK_THRESHOLD + 3)
+    ]
+    client = ScriptedClient(turns)
+
+    runner = LoopRunner(client, _echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    assert runner.final_answer is None
+    assert runner.invalid_action_attempts == 0
+    recorded = [event for event in session.events() if isinstance(event, ToolCallRecorded)]
+    assert len(recorded) == STUCK_THRESHOLD
+    assert all(event.is_error for event in recorded)
+
+
+def test_answer_verification_timeout_is_a_tool_error_not_an_invalid_action() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    call = ToolCall(
+        id="1", name="answer", arguments={"content": "done", "citations": [], "verify": "sleep 5"}
+    )
+    client = ScriptedClient(
+        [
+            [ToolCallReady(tool_call=call), GenerationComplete(finish_reason="tool_calls")],
+            [TextDelta(text="fixing"), GenerationComplete(finish_reason="stop")],
+        ]
+    )
+
+    runner = LoopRunner(client, _echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    with patch("pico.core.loop.Shell.run", side_effect=ToolError("command timed out after 30s")):
+        runner.execute()
+
+    assert runner.final_answer is None
+    assert runner.invalid_action_attempts == 0
+    recorded = [event for event in session.events() if isinstance(event, ToolCallRecorded)][-1]
+    assert recorded.is_error is True
+    assert "timed out" in recorded.result
+
+
+def test_delegate_answering_with_verify_is_rejected() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    delegate_call = ToolCall(id="1", name="delegate", arguments={"question": "what is x?"})
+    client = ScriptedClient(
+        [
+            [
+                ToolCallReady(tool_call=delegate_call),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            *[
+                [
+                    ToolCallReady(
+                        tool_call=ToolCall(
+                            id=f"c{index}",
+                            name="answer",
+                            arguments={
+                                "content": "x is 1",
+                                "citations": [],
+                                "verify": "touch escaped.txt",
+                            },
+                        )
+                    ),
+                    GenerationComplete(finish_reason="tool_calls"),
+                ]
+                for index in range(MAX_INVALID_ACTION_ATTEMPTS)
+            ],
+            [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
+        ]
+    )
+
+    runner = LoopRunner(client, _echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    child_events = [
+        event
+        for event in session.child("delegate/1").events()
+        if isinstance(event, ToolCallRecorded)
+    ]
+    assert all(event.is_error for event in child_events)
+    assert "delegate may not use 'verify'" in child_events[0].result
+    parent = [event for event in session.events() if isinstance(event, ToolCallRecorded)]
+    assert parent[0].is_error is True
+    assert "did not answer" in parent[0].result

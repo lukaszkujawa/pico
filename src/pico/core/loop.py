@@ -9,6 +9,7 @@ from pico.core.actions import (
     Answer,
     Delegate,
     InvalidActionError,
+    Shell,
     register_delegate_actions,
 )
 from pico.core.bus import Bus
@@ -87,6 +88,7 @@ class LoopRunner:
         config: LoopConfig,
         cancel: threading.Event | None = None,
         id_source: Iterator[int] | None = None,
+        can_verify: bool = True,
     ) -> None:
         self.llm = llm
         self.tools = tools
@@ -95,6 +97,7 @@ class LoopRunner:
         self.context_size = context_size
         self.config = config
         self.cancel = cancel if cancel is not None else threading.Event()
+        self.can_verify = can_verify
         self.pending_tool_calls: list[ToolCall] = []
         self.pending_nudge: str | None = None
         self.chars_per_token = DEFAULT_CHARS_PER_TOKEN
@@ -262,6 +265,7 @@ def _run_delegate(runner: LoopRunner, delegate: Delegate) -> tuple[str, bool]:
         child_session,
         runner.context_size,
         LoopConfig(steps=(stream_step, tool_call_step), max_steps=MAX_DELEGATE_STEPS),
+        can_verify=False,
     )
     child_runner.execute()
     if child_runner.final_answer is not None:
@@ -271,6 +275,17 @@ def _run_delegate(runner: LoopRunner, delegate: Delegate) -> tuple[str, bool]:
         f"{delegate.question!r}",
         True,
     )
+
+
+def _verified_answer(runner: LoopRunner, answer: Answer) -> tuple[str, bool]:
+    if answer.verify is None:
+        runner.final_answer = answer.content
+        return answer.content, False
+    code, output = Shell(command=answer.verify).run()
+    if code != 0:
+        return f"answer rejected — verification failed (exit {code}):\n{output}", True
+    runner.final_answer = answer.content
+    return f"{answer.content}\n\nverified: {answer.verify}", False
 
 
 def tool_call_step(runner: LoopRunner) -> StepOutcome:
@@ -287,13 +302,18 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
                 unknown = [citation for citation in answer.citations if citation not in known]
                 if unknown:
                     raise InvalidActionError(f"unknown fact citation(s): {unknown}")
-                output = answer.content
-                is_error = False
-                runner.final_answer = answer.content
+                if answer.verify is not None and not runner.can_verify:
+                    raise InvalidActionError(
+                        "a delegate may not use 'verify'; answer from what you have read"
+                    )
+                output, is_error = _verified_answer(runner, answer)
             except InvalidActionError as error:
                 output = str(error)
                 is_error = True
                 invalid = True
+            except ToolError as error:
+                output = str(error)
+                is_error = True
         elif call.name == "delegate":
             try:
                 delegate = Delegate.from_arguments(call.arguments)

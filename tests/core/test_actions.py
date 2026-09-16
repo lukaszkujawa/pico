@@ -155,6 +155,48 @@ def test_answer_from_arguments_citations_with_non_int_element() -> None:
         Answer.from_arguments({"content": "the answer", "citations": [0, "1"]})
 
 
+def test_answer_from_arguments_without_verify_is_none() -> None:
+    action = Answer.from_arguments({"content": "the answer", "citations": []})
+    assert action.verify is None
+
+
+def test_answer_from_arguments_with_verify_round_trips() -> None:
+    action = Answer.from_arguments(
+        {"content": "the answer", "citations": [], "verify": "test -f out.txt"}
+    )
+    assert action == Answer(content="the answer", citations=(), verify="test -f out.txt")
+
+
+def test_answer_from_arguments_verify_not_a_string() -> None:
+    with pytest.raises(InvalidActionError):
+        Answer.from_arguments({"content": "the answer", "citations": [], "verify": 1})
+
+
+def test_answer_from_arguments_verify_empty_string() -> None:
+    with pytest.raises(InvalidActionError, match="must not be empty"):
+        Answer.from_arguments({"content": "the answer", "citations": [], "verify": "   "})
+
+
+def test_answer_tool_spec_documents_verify() -> None:
+    registry = ToolRegistry()
+    register_actions(registry, _session_with_fact("x")[0])
+    spec = next(spec for spec in registry.specs() if spec.name == "answer")
+    properties = spec.parameters["properties"]
+    required = spec.parameters["required"]
+    assert isinstance(properties, dict)
+    assert isinstance(required, list)
+    assert "verify" in properties
+    assert "verify" not in required
+    assert "exits 0" in spec.description
+
+
+def test_shell_run_returns_exit_code_and_output() -> None:
+    assert Shell(command="echo hi").run() == (0, "hi\n")
+    code, output = Shell(command="echo boom >&2; exit 3").run()
+    assert code == 3
+    assert "boom" in output
+
+
 def test_delegate_from_arguments() -> None:
     action = Delegate.from_arguments({"question": "what is x?"})
     assert action == Delegate(question="what is x?")
