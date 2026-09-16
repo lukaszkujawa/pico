@@ -139,6 +139,7 @@ class PicoApp(App[None]):
         self.register_theme(PICO_THEME.to_textual())
         self.theme = PICO_THEME.name
         self.query_one("#user-input", ChatInput).focus()
+        self.query_one("#conversation", VerticalScroll).anchor()
         threading.Thread(target=self._consume_bus, daemon=True).start()
 
     def on_click(self, event: events.Click) -> None:
@@ -152,19 +153,14 @@ class PicoApp(App[None]):
             if message is not None:
                 self.post_message(message)
 
-    def _scroll_to_end(self) -> None:
-        self.query_one("#conversation", VerticalScroll).scroll_end(animate=False)
-
     def on_assistant_pane_create(self, message: AssistantPaneCreate) -> None:
         self.query_one(WaitingIndicator).stop()
         pane = AssistantPane(pane_id=message.pane_id)
         self._assistant_panes[message.pane_id] = pane
         self.query_one("#conversation", VerticalScroll).mount(pane)
-        self._scroll_to_end()
 
     def on_assistant_pane_delta(self, message: AssistantPaneDelta) -> None:
         self._assistant_panes[message.pane_id].append_delta(message.text)
-        self._scroll_to_end()
 
     def on_assistant_pane_close(self, message: AssistantPaneClose) -> None:
         self._assistant_panes[message.pane_id].finish()
@@ -174,11 +170,9 @@ class PicoApp(App[None]):
         pane = ThinkingPane(pane_id=message.pane_id)
         self._thinking_panes[message.pane_id] = pane
         self.query_one("#conversation", VerticalScroll).mount(pane)
-        self._scroll_to_end()
 
     def on_thinking_pane_delta(self, message: ThinkingPaneDelta) -> None:
         self._thinking_panes[message.pane_id].append_delta(message.text)
-        self._scroll_to_end()
 
     def on_thinking_pane_close(self, message: ThinkingPaneClose) -> None:
         self._thinking_panes[message.pane_id].finish()
@@ -187,7 +181,6 @@ class PicoApp(App[None]):
         pane = ToolCallPane(pane_id=message.pane_id, name=message.name, arguments=message.arguments)
         self._tool_call_panes[message.pane_id] = pane
         self.query_one("#conversation", VerticalScroll).mount(pane)
-        self._scroll_to_end()
 
     def on_tool_call_pane_close(self, message: ToolCallPaneClose) -> None:
         fact_index: int | None = None
@@ -197,7 +190,6 @@ class PicoApp(App[None]):
         self._tool_call_panes[message.pane_id].finish(
             result=message.result, is_error=message.is_error, fact_index=fact_index
         )
-        self._scroll_to_end()
 
     def on_answer_pane_create(self, message: AnswerPaneCreate) -> None:
         self._fact_count += 1
@@ -206,7 +198,6 @@ class PicoApp(App[None]):
             pending.remove()
         pane = AnswerPane(pane_id=message.pane_id, content=message.content)
         self.query_one("#conversation", VerticalScroll).mount(pane)
-        self._scroll_to_end()
 
     def on_run_started_message(self, message: RunStartedMessage) -> None:
         self._run_in_flight = True
@@ -235,7 +226,6 @@ class PicoApp(App[None]):
         self._run_in_flight = False
         self.query_one(WaitingIndicator).stop()
         self.query_one("#conversation", VerticalScroll).mount(ErrorPane(message.message))
-        self._scroll_to_end()
         self._advance_queue()
 
     def on_user_input_submitted(self, message: UserInputSubmitted) -> None:
@@ -248,7 +238,6 @@ class PicoApp(App[None]):
             pane.queued = True
         self._queued_user_panes.append(pane)
         conversation.mount(pane)
-        self._scroll_to_end()
         indicator = self.query_one(WaitingIndicator)
         conversation.move_child(indicator, after=-1)
         indicator.start()
