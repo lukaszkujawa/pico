@@ -5,12 +5,13 @@ set -uo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TASKS_DIR="$ROOT_DIR/tasks"
 TODO_DIR="$TASKS_DIR/todo"
-DONE_DIR="$TASKS_DIR/done"
-PROMPT_FILE="$TASKS_DIR/PROMPT.md"
 STOP_FILE="$ROOT_DIR/.stop_code"
 MAX_STEPS="${MAX_STEPS:-50}"
 SESSION="claude-pico"
 FORMAT_FILTER="$ROOT_DIR/bin/format_stream.jq"
+WORKTREE_DIR="$ROOT_DIR/agent-worktree"
+
+source "$ROOT_DIR/.venv/bin/activate"
 
 BOLD="\033[1m"
 DIM="\033[2m"
@@ -43,14 +44,15 @@ todo_count() {
 }
 
 run_claude_in_tmux() {
+  local work_dir="$1" prompt_file="$2"
   local exit_file done_channel
   exit_file="$(mktemp)"
   done_channel="${SESSION}_done_$$_${RANDOM}"
 
   tmux kill-session -t "$SESSION" 2>/dev/null || true
 
-  tmux new-session -d -s "$SESSION" -x 220 -y 50 bash -c \
-    "claude -p \"\$(cat '$PROMPT_FILE')\" --dangerously-skip-permissions --disallowedTools AskUserQuestion --verbose --output-format stream-json | jq -r -f '$FORMAT_FILTER'; echo \${PIPESTATUS[0]} > '$exit_file'; tmux wait-for -S '$done_channel'"
+  tmux new-session -d -s "$SESSION" -c "$work_dir" -x 220 -y 50 bash -c \
+    "claude -p \"\$(cat '$prompt_file')\" --dangerously-skip-permissions --disallowedTools AskUserQuestion --verbose --output-format stream-json | jq -r -f '$FORMAT_FILTER'; echo \${PIPESTATUS[0]} > '$exit_file'; tmux wait-for -S '$done_channel'"
 
   tmux wait-for "$done_channel"
 
@@ -66,6 +68,32 @@ run_claude_in_tmux() {
   fi
 
   return "$exit_code"
+}
+
+remove_worktree() {
+  git -C "$ROOT_DIR" worktree remove --force "$WORKTREE_DIR" 2>/dev/null || rm -rf "$WORKTREE_DIR"
+}
+
+branch_exists() {
+  git -C "$ROOT_DIR" show-ref --verify --quiet "refs/heads/$1"
+}
+
+prepare_worktree() {
+  local branch_name="$1"
+
+  remove_worktree
+
+  if branch_exists "$branch_name"; then
+    if git -C "$ROOT_DIR" merge-base --is-ancestor "$branch_name" master; then
+      git -C "$ROOT_DIR" branch -D "$branch_name" >/dev/null &&
+        git -C "$ROOT_DIR" worktree add -b "$branch_name" "$WORKTREE_DIR" master >/dev/null
+    else
+      echo -e "${DIM}Resuming existing branch $branch_name.${RESET}"
+      git -C "$ROOT_DIR" worktree add "$WORKTREE_DIR" "$branch_name" >/dev/null
+    fi
+  else
+    git -C "$ROOT_DIR" worktree add -b "$branch_name" "$WORKTREE_DIR" master >/dev/null
+  fi
 }
 
 cd "$ROOT_DIR"
@@ -85,6 +113,8 @@ for ((step = 1; step <= MAX_STEPS; step++)); do
   next_line="next: $task_name"
   attach_line="watch live: make cloude_attach"
 
+  branch_name="${task_name%.md}"
+
   echo
   box_border "┌" "┐"
   box_line "$step_line" "${BOLD}STEP $step/$MAX_STEPS${RESET}  ${DIM}·${RESET}  ${before_count} task(s) remaining"
@@ -93,7 +123,15 @@ for ((step = 1; step <= MAX_STEPS; step++)); do
   box_border "└" "┘"
   echo
 
-  run_claude_in_tmux
+  if ! prepare_worktree "$branch_name"; then
+    echo
+    echo -e "\033[31mFailed to create worktree for $branch_name.${RESET}"
+    exit 1
+  fi
+
+  ln -sf "$ROOT_DIR/.env" "$WORKTREE_DIR/.env"
+
+  run_claude_in_tmux "$WORKTREE_DIR" "$WORKTREE_DIR/tasks/PROMPT.md"
   claude_exit=$?
 
   if [[ -f "$STOP_FILE" ]]; then
@@ -105,27 +143,38 @@ for ((step = 1; step <= MAX_STEPS; step++)); do
 
   if (( claude_exit != 0 )); then
     echo
-    echo -e "\033[31mClaude exited with status $claude_exit.${RESET}"
+    echo -e "\033[31mClaude exited with status $claude_exit.${RESET} Worktree left at $WORKTREE_DIR for inspection."
     exit 1
   fi
 
-  after_count=$(todo_count)
+  worktree_done_file="$WORKTREE_DIR/tasks/done/$task_name"
+  worktree_todo_file="$WORKTREE_DIR/tasks/todo/$task_name"
 
-  if (( after_count == 0 )); then
-    echo
-    echo -e "${BOLD}All tasks complete.${RESET}"
-    exit 0
-  fi
+  if [[ -f "$worktree_done_file" ]] && [[ ! -f "$worktree_todo_file" ]]; then
+    if ! git -C "$ROOT_DIR" merge --ff-only "$branch_name" >/dev/null; then
+      echo
+      echo -e "\033[31mFailed to fast-forward master to $branch_name.${RESET} Worktree left at $WORKTREE_DIR for inspection."
+      exit 1
+    fi
 
-  if [[ -f "$DONE_DIR/$(basename "$before_task")" ]] && [[ ! -f "$before_task" ]]; then
+    remove_worktree
+
+    after_count=$(todo_count)
+
+    if (( after_count == 0 )); then
+      echo
+      echo -e "${BOLD}All tasks complete.${RESET}"
+      exit 0
+    fi
+
     echo
-    echo -e "\033[32m✓${RESET} $(basename "$before_task") ${DIM}->${RESET} done. $after_count task(s) remaining."
+    echo -e "\033[32m✓${RESET} $task_name ${DIM}->${RESET} done. $after_count task(s) remaining."
     continue
   fi
 
   echo
-  echo -e "\033[31mNo progress on $(basename "$before_task") this run.${RESET}"
-  echo "Still $after_count task(s) remaining. Stopping."
+  echo -e "\033[31mNo progress on $task_name this run.${RESET}"
+  echo "Worktree left at $WORKTREE_DIR for inspection. Branch: $branch_name"
   exit 1
 done
 

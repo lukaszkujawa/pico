@@ -37,6 +37,7 @@ Thumbs.db
 
 # Autonomous loop control
 .stop_code
+agent-worktree/
 
 # Session store
 *.db
