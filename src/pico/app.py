@@ -53,7 +53,7 @@ class CancelHandle:
             self._event.set()
 
 
-def _build_llm_client(config: Config) -> LLMClient:
+def build_llm_client(config: Config) -> LLMClient:
     if config.vendor != "ollama":
         raise UnsupportedVendorError(f"unsupported LLM vendor: {config.vendor}")
     return OllamaClient(model=config.model, base_url=config.base_url, api_key=config.api_key)
@@ -95,7 +95,7 @@ def _consume_bus_to_log(bus: Bus, run_log: RunLog) -> None:
 
 
 def run_pico(config: Config, debug: bool = False, session_id: str | None = None) -> None:
-    llm = _build_llm_client(config)
+    llm = build_llm_client(config)
     bus = Bus()
     conn = connect(config.session_path)
     session_handle = SessionHandle(Session(conn, session_id or new_session_id()))

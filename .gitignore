@@ -47,3 +47,6 @@ Thumbs.db
 
 # Debug run logs
 logs/
+
+# Eval reports
+eval_results/

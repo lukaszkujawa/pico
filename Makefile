@@ -1,4 +1,4 @@
-.PHONY: lint format typecheck test build check code cloude_attach run run_in_docker stop_code
+.PHONY: lint format typecheck test build check code claude_attach run run_in_docker evals stop_code
 
 lint:
 	uv run ruff check .
@@ -22,7 +22,7 @@ check: lint typecheck test build
 code:
 	bin/code.sh
 
-cloude_attach:
+claude_attach:
 	tmux attach -t claude-pico
 
 run:
@@ -30,6 +30,9 @@ run:
 
 run_in_docker:
 	bin/run_in_docker.sh
+
+evals:
+	uv run python -m pico.evals
 
 stop_code:
 	touch .stop_code

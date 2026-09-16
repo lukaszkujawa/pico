@@ -14,7 +14,7 @@ The suite needs a live LLM, so it stays out of `make check`; the *machinery* (he
 * **Report to read and to diff.** `uv run python -m pico.evals` runs the suite against the configured model (`load_config()`), prints a table — task, pass/fail, iterations, tool calls, tokens, seconds — and writes the same data plus config (model, context size) as JSON to `eval_results/<timestamp>.json` (directory gitignored). Exit code 0 regardless of pass rate; evals report, they don't gate. A `make evals` target wraps it.
 * **The suite must stress the harness, not just the model.** At least two tasks must produce tool output large enough to force handle truncation at a realistic `LLM_CONTEXT_SIZE`, so `read_fact` and the budget machinery are on the critical path; at least one must require multiple dependent steps (write code, run it, fix it) so stuckness and long-horizon behavior matter. A suite of one-shot trivia would measure the model, and the point is to measure the runtime.
 
-## [ ] T001 Headless turn runner
+## [X] T001 Headless turn runner
 
 ### Description
 
@@ -25,7 +25,7 @@ Implement `src/pico/headless.py` per the design decisions. Reuse existing wiring
 * `tests/test_headless.py` covers, all with scripted LLM clients: a turn ending in `answer` yields that answer with correct iteration/tool-call counts; a turn ending by stuckness or step cap yields `answer is None`; token totals sum multiple `GenerationComplete` events across a multi-call turn; an `LLMError` surfaces in `error`, not as an exception.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T002 Task model and eval runner
+## [X] T002 Task model and eval runner
 
 ### Description
 
@@ -36,7 +36,7 @@ Implement `EvalTask`, the per-task isolation (temp dir, fresh session, cwd swap)
 * `tests/evals/test_runner.py` covers, with fake tasks and a scripted client: `setup` runs before the turn in the task's own directory; `check` receives that directory and the final answer; a `check` returning `False` (and a `check` raising) records a fail without stopping the suite; the JSON report contains one entry per task with the `TurnResult` metrics; cwd is restored even when a task blows up.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T003 Initial suite
+## [X] T003 Initial suite
 
 ### Description
 
@@ -57,7 +57,7 @@ Register the first suite in `src/pico/evals/tasks.py` — roughly eight tasks, g
 * Tasks 5 and 6 are verified (in those same tests) to seed content whose rendered size exceeds `prompt_budget` at a documented reference context size.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T004 Make target and docs
+## [X] T004 Make target and docs
 
 ### Description
 
@@ -67,7 +67,7 @@ Add `make evals`. Document in `README.md`: what the suite is for, how to run it 
 
 * A reader with a working `.env` can run the suite and find their results file from the README alone.
 
-## [ ] T005 Verify and finalize
+## [X] T005 Verify and finalize
 
 ### Description
 

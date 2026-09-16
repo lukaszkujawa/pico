@@ -88,6 +88,7 @@ class LoopRunner:
         self.final_answer: str | None = None
         self.invalid_action_attempts = 0
         self.delegate_calls = 0
+        self.iterations = 0
         self._id_source = id_source if id_source is not None else itertools.count()
 
     def new_id(self) -> str:
@@ -95,10 +96,9 @@ class LoopRunner:
 
     def execute(self) -> None:
         self.bus.publish(RunStarted())
-        iterations = 0
         try:
-            while self.config.max_steps is None or iterations < self.config.max_steps:
-                iterations += 1
+            while self.config.max_steps is None or self.iterations < self.config.max_steps:
+                self.iterations += 1
                 outcome = self._run_iteration()
                 if outcome == "cancelled":
                     self.bus.publish(RunCancelled())
