@@ -56,6 +56,7 @@ class ToolCallStarted:
 @dataclass(frozen=True)
 class ToolCallArgumentsDelta:
     id: str
+    name: str
     text: str
 
 

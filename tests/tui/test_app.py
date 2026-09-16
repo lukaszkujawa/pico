@@ -91,6 +91,34 @@ async def test_app_renders_tool_call_pane_from_bus_events() -> None:
         assert pane.fact_index == 2
 
 
+async def test_tool_call_pane_created_lazily_when_delta_arrives_before_started() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        tool_call = ToolCall(id="1", name="search", arguments={"q": "pico"})
+        bus.publish(RunStarted())
+        bus.publish(ToolCallArgumentsDelta(id="1", name="search", text='{"q": "pico"}'))
+        bus.publish(ToolCallStarted(id="1", name="search", arguments={"q": "pico"}))
+        bus.publish(
+            ToolCallFinished(
+                id="1", tool_call=tool_call, result="found it", is_error=False, fact_id=2
+            )
+        )
+        bus.publish(RunFinished())
+
+        await pilot.pause(0.2)
+
+        panes = app.query(ToolCallPane)
+        assert len(panes) == 1
+        pane = panes.first()
+        assert pane.name_label == "search"
+        assert '"q": "pico"' in pane.render().plain
+        assert "found it" in pane.render().plain
+        assert pane.finished is True
+
+
 async def test_two_tool_calls_with_distinct_pane_ids_both_mount_without_crashing() -> None:
     bus = Bus()
     app = PicoApp(bus, queue.Queue())
@@ -246,12 +274,16 @@ async def test_no_raw_json_appears_for_an_answer_call() -> None:
 
         bus.publish(RunStarted())
         bus.publish(
-            ToolCallStarted(
-                id="1", name="answer", arguments={"content": "There are 17 dirs", "citations": []}
+            ToolCallArgumentsDelta(
+                id="1",
+                name="answer",
+                text='{"content": "There are 17 dirs", "citations": []}',
             )
         )
         bus.publish(
-            ToolCallArgumentsDelta(id="1", text='{"content": "There are 17 dirs", "citations": []}')
+            ToolCallStarted(
+                id="1", name="answer", arguments={"content": "There are 17 dirs", "citations": []}
+            )
         )
         bus.publish(
             AnswerSettled(

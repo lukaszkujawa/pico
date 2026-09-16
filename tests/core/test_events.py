@@ -75,8 +75,9 @@ def test_tool_call_started() -> None:
 
 
 def test_tool_call_arguments_delta() -> None:
-    event = ToolCallArgumentsDelta(id="1", text='{"path":')
+    event = ToolCallArgumentsDelta(id="1", name="read_file", text='{"path":')
     assert event.id == "1"
+    assert event.name == "read_file"
     assert event.text == '{"path":'
 
 
@@ -187,7 +188,10 @@ def test_bus_event_exhaustive_match() -> None:
     assert describe(AssistantThinkingDelta(id="1", text="hmm")) == "assistant_thinking_delta"
     assert describe(AssistantThinkingFinished(id="1")) == "assistant_thinking_finished"
     assert describe(ToolCallStarted(id="1", name="echo", arguments={})) == "tool_call_started"
-    assert describe(ToolCallArgumentsDelta(id="1", text="a")) == "tool_call_arguments_delta"
+    assert (
+        describe(ToolCallArgumentsDelta(id="1", name="echo", text="a"))
+        == "tool_call_arguments_delta"
+    )
     assert describe(ToolCallResultDelta(id="1", text="a")) == "tool_call_result_delta"
     call = ToolCall(id="1", name="echo", arguments={})
     assert describe(ToolCallFinished(id="1", tool_call=call, result="ok")) == "tool_call_finished"

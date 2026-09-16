@@ -245,13 +245,19 @@ class PicoApp(App[None]):
         self._stick_to_bottom()
 
     def on_tool_call_pane_create(self, message: ToolCallPaneCreate) -> None:
+        if message.pane_id in self._tool_call_panes:
+            return
         pane = ToolCallPane(pane_id=message.pane_id, name=message.name, arguments=message.arguments)
         self._tool_call_panes[message.pane_id] = pane
         self._mount_at_bottom(pane)
 
     def on_tool_call_pane_arguments_delta(self, message: ToolCallPaneArgumentsDelta) -> None:
-        answer_pane = self._answer_panes.get(message.pane_id)
-        if answer_pane is not None:
+        if message.name == "answer":
+            answer_pane = self._answer_panes.get(message.pane_id)
+            if answer_pane is None:
+                answer_pane = AnswerPane(pane_id=message.pane_id)
+                self._answer_panes[message.pane_id] = answer_pane
+                self._mount_at_bottom(answer_pane)
             raw = self._answer_arguments.get(message.pane_id, "") + message.text
             self._answer_arguments[message.pane_id] = raw
             content = extract_answer_content(raw)
@@ -259,7 +265,12 @@ class PicoApp(App[None]):
                 answer_pane.content_text = content
             self._stick_to_bottom()
             return
-        self._tool_call_panes[message.pane_id].append_arguments_delta(message.text)
+        pane = self._tool_call_panes.get(message.pane_id)
+        if pane is None:
+            pane = ToolCallPane(pane_id=message.pane_id, name=message.name)
+            self._tool_call_panes[message.pane_id] = pane
+            self._mount_at_bottom(pane)
+        pane.append_arguments_delta(message.text)
         self._stick_to_bottom()
 
     def on_tool_call_pane_result_delta(self, message: ToolCallPaneResultDelta) -> None:
@@ -275,6 +286,8 @@ class PicoApp(App[None]):
         )
 
     def on_answer_pane_create(self, message: AnswerPaneCreate) -> None:
+        if message.pane_id in self._answer_panes:
+            return
         pane = AnswerPane(pane_id=message.pane_id)
         self._answer_panes[message.pane_id] = pane
         self._mount_at_bottom(pane)

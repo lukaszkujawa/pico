@@ -225,12 +225,14 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
                     runner.bus.publish(AssistantTextStarted(id=text_id))
                 text += chunk
                 runner.bus.publish(AssistantTextDelta(id=text_id, text=chunk))
-            case ToolCallDelta(id=call_id, arguments_delta=arguments_delta):
+            case ToolCallDelta(id=call_id, name=name, arguments_delta=arguments_delta):
                 pane_id = runner.tool_call_pane_ids.get(call_id)
                 if pane_id is None:
                     pane_id = runner.new_id()
                     runner.tool_call_pane_ids[call_id] = pane_id
-                runner.bus.publish(ToolCallArgumentsDelta(id=pane_id, text=arguments_delta))
+                runner.bus.publish(
+                    ToolCallArgumentsDelta(id=pane_id, name=name, text=arguments_delta)
+                )
             case ToolCallReady(tool_call=tool_call):
                 tool_calls.append(tool_call)
             case GenerationComplete(

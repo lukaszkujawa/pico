@@ -576,7 +576,7 @@ def test_tool_call_delta_from_llm_is_forwarded_with_the_calls_pane_id() -> None:
     events = [next(subscriber) for _ in range(7)]
     assert events == [
         RunStarted(),
-        ToolCallArgumentsDelta(id="0", text='{"text":'),
+        ToolCallArgumentsDelta(id="0", name="echo", text='{"text":'),
         GenerationCompleted(),
         ToolCallStarted(id="0", name="echo", arguments={"text": "hi"}),
         ToolCallFinished(id="0", tool_call=call, result="hi", is_error=False, fact_id=3),

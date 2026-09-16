@@ -93,9 +93,10 @@ def test_translate_tool_call_started() -> None:
 
 
 def test_translate_tool_call_arguments_delta() -> None:
-    message = translate(ToolCallArgumentsDelta(id="1", text='{"q":'))
+    message = translate(ToolCallArgumentsDelta(id="1", name="search", text='{"q":'))
     assert isinstance(message, ToolCallPaneArgumentsDelta)
     assert message.pane_id == "1"
+    assert message.name == "search"
     assert message.text == '{"q":'
 
 

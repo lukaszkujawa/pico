@@ -86,8 +86,9 @@ class ToolCallPaneCreate(Message):
 
 
 class ToolCallPaneArgumentsDelta(Message):
-    def __init__(self, pane_id: str, text: str) -> None:
+    def __init__(self, pane_id: str, name: str, text: str) -> None:
         self.pane_id = pane_id
+        self.name = name
         self.text = text
         super().__init__()
 
@@ -205,8 +206,8 @@ def translate(event: BusEvent) -> TuiMessage | None:
             return ToolCallPaneCreate(
                 pane_id=pane_id, name=name, arguments=format_arguments(arguments)
             )
-        case ToolCallArgumentsDelta(id=pane_id, text=text):
-            return ToolCallPaneArgumentsDelta(pane_id=pane_id, text=text)
+        case ToolCallArgumentsDelta(id=pane_id, name=name, text=text):
+            return ToolCallPaneArgumentsDelta(pane_id=pane_id, name=name, text=text)
         case ToolCallResultDelta(id=pane_id, text=text):
             return ToolCallPaneResultDelta(pane_id=pane_id, text=text)
         case AnswerSettled(
