@@ -19,6 +19,7 @@ from pico.core.events import (
 )
 from pico.core.loop import (
     DEFAULT_LOOP_CONFIG,
+    MAX_INVALID_ACTION_ATTEMPTS,
     LoopConfig,
     LoopRunner,
     StepOutcome,
@@ -498,3 +499,97 @@ def test_cancelled_turn_does_not_publish_run_finished() -> None:
 def test_default_loop_config_is_stream_then_tool_call() -> None:
     assert DEFAULT_LOOP_CONFIG.steps == (stream_step, tool_call_step)
     assert DEFAULT_LOOP_CONFIG.max_steps is None
+
+
+def test_valid_answer_call_ends_run_and_records_result() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    call = ToolCall(id="1", name="answer", arguments={"content": "the answer"})
+    client = ScriptedClient(
+        [[ToolCallReady(tool_call=call), GenerationComplete(finish_reason="tool_calls")]]
+    )
+
+    runner = LoopRunner(client, _echo_registry(), bus, session, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    events = [next(subscriber) for _ in range(4)]
+    assert events == [
+        RunStarted(),
+        ToolCallStarted(id="1", name="answer"),
+        ToolCallFinished(id="1", tool_call=call, result="the answer", is_error=False),
+        RunFinished(),
+    ]
+    assert runner.final_answer == "the answer"
+    assert list(session.events())[-1] == ToolCallRecorded(
+        name="answer", arguments={"content": "the answer"}, result="the answer", is_error=False
+    )
+
+
+def test_invalid_answer_call_continues_run_instead_of_ending() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    bad_call = ToolCall(id="1", name="answer", arguments={})
+    client = ScriptedClient(
+        [
+            [ToolCallReady(tool_call=bad_call), GenerationComplete(finish_reason="tool_calls")],
+            [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
+        ]
+    )
+
+    runner = LoopRunner(client, _echo_registry(), bus, session, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    events = [next(subscriber) for _ in range(3)]
+    assert events[:2] == [RunStarted(), ToolCallStarted(id="1", name="answer")]
+    finished = events[2]
+    assert isinstance(finished, ToolCallFinished)
+    assert finished.is_error is True
+    assert runner.final_answer is None
+
+
+def test_repeated_invalid_actions_stop_run_at_max_attempts() -> None:
+    bus = Bus()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    turns: list[list[StreamEvent]] = [
+        [
+            ToolCallReady(tool_call=ToolCall(id=str(i), name="missing", arguments={})),
+            GenerationComplete(finish_reason="tool_calls"),
+        ]
+        for i in range(MAX_INVALID_ACTION_ATTEMPTS + 5)
+    ]
+    client = ScriptedClient(turns)
+
+    runner = LoopRunner(client, ToolRegistry(), bus, session, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    error_events = [
+        event
+        for event in session.events()
+        if isinstance(event, ToolCallRecorded) and event.is_error
+    ]
+    assert len(error_events) == MAX_INVALID_ACTION_ATTEMPTS
+
+
+def test_fewer_than_cap_invalid_actions_do_not_end_run_early() -> None:
+    bus = Bus()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    client = ScriptedClient(
+        [
+            [
+                ToolCallReady(tool_call=ToolCall(id="1", name="missing", arguments={})),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
+        ]
+    )
+
+    runner = LoopRunner(client, ToolRegistry(), bus, session, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    assert list(session.events())[-1] == AssistantMessageRecorded(content="done", thinking="")

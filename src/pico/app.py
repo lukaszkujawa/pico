@@ -2,6 +2,7 @@ import queue
 import threading
 
 from pico.config import Config
+from pico.core.actions import register_actions
 from pico.core.bus import Bus
 from pico.core.loop import DEFAULT_LOOP_CONFIG, LoopRunner
 from pico.core.tools import ToolRegistry
@@ -65,6 +66,7 @@ def _turn_loop(
 def run_pico(config: Config) -> None:
     llm = _build_llm_client(config)
     tools = ToolRegistry()
+    register_actions(tools)
     bus = Bus()
     conn = connect(config.session_path)
     session = Session(conn, DEFAULT_SESSION_ID)

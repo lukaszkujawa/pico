@@ -1,3 +1,12 @@
+from pico.core.actions import (
+    Action,
+    Answer,
+    InvalidActionError,
+    ReadFile,
+    Shell,
+    WriteFile,
+    register_actions,
+)
 from pico.core.bus import Bus
 from pico.core.errors import UnknownToolError
 from pico.core.events import (
@@ -18,6 +27,7 @@ from pico.core.events import (
 )
 from pico.core.loop import (
     DEFAULT_LOOP_CONFIG,
+    MAX_INVALID_ACTION_ATTEMPTS,
     LoopConfig,
     LoopRunner,
     StepOutcome,
@@ -28,6 +38,9 @@ from pico.core.tools import Tool, ToolRegistry
 
 __all__ = [
     "DEFAULT_LOOP_CONFIG",
+    "MAX_INVALID_ACTION_ATTEMPTS",
+    "Action",
+    "Answer",
     "AssistantTextDelta",
     "AssistantTextFinished",
     "AssistantTextStarted",
@@ -37,11 +50,14 @@ __all__ = [
     "Bus",
     "BusEvent",
     "ErrorOccurred",
+    "InvalidActionError",
     "LoopConfig",
     "LoopRunner",
+    "ReadFile",
     "RunCancelled",
     "RunFinished",
     "RunStarted",
+    "Shell",
     "StepOutcome",
     "Tool",
     "ToolCallArgumentsDelta",
@@ -49,6 +65,8 @@ __all__ = [
     "ToolCallStarted",
     "ToolRegistry",
     "UnknownToolError",
+    "WriteFile",
+    "register_actions",
     "stream_step",
     "tool_call_step",
 ]

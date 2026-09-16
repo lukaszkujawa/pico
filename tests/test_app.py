@@ -89,9 +89,11 @@ def test_stopping_tui_does_not_leave_core_thread_running(
 class RecordingClient:
     def __init__(self) -> None:
         self.seen_messages: list[list[Message]] = []
+        self.seen_tools: list[list[ToolSpec]] = []
 
     def stream(self, messages: list[Message], tools: list[ToolSpec]) -> Iterator[StreamEvent]:
         self.seen_messages.append(list(messages))
+        self.seen_tools.append(list(tools))
         yield TextDelta(text="hi")
         yield GenerationComplete(finish_reason="stop")
 
@@ -138,6 +140,12 @@ def test_turn_loop_runs_one_turn_per_queued_message(
     assert [m.content for m in client.seen_messages[0]] == ["hello"]
     assert [m.content for m in client.seen_messages[1]] == ["hello", "hi", "world"]
     assert [m.role for m in client.seen_messages[1]] == [Role.USER, Role.ASSISTANT, Role.USER]
+    assert {spec.name for spec in client.seen_tools[0]} == {
+        "read_file",
+        "write_file",
+        "shell",
+        "answer",
+    }
 
 
 def test_cancelling_mid_turn_stops_run_and_allows_next_turn(

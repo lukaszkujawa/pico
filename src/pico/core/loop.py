@@ -3,6 +3,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
+from pico.core.actions import Answer, InvalidActionError
 from pico.core.bus import Bus
 from pico.core.errors import UnknownToolError
 from pico.core.events import (
@@ -37,6 +38,8 @@ StepOutcome = Literal["continue", "done", "cancelled"]
 
 Step = Callable[["LoopRunner"], StepOutcome]
 
+MAX_INVALID_ACTION_ATTEMPTS = 5
+
 
 @dataclass(frozen=True)
 class LoopConfig:
@@ -61,6 +64,8 @@ class LoopRunner:
         self.config = config
         self.cancel = cancel if cancel is not None else threading.Event()
         self.pending_tool_calls: list[ToolCall] = []
+        self.final_answer: str | None = None
+        self.invalid_action_attempts = 0
         self._next_id = 0
 
     def new_id(self) -> str:
@@ -148,14 +153,25 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
 def tool_call_step(runner: LoopRunner) -> StepOutcome:
     tool_calls = runner.pending_tool_calls
     runner.pending_tool_calls = []
+    outcome: StepOutcome = "continue"
     for call in tool_calls:
         runner.bus.publish(ToolCallStarted(id=call.id, name=call.name))
-        try:
-            output = runner.tools.execute(call)
-            is_error = False
-        except UnknownToolError as error:
-            output = str(error)
-            is_error = True
+        if call.name == "answer":
+            try:
+                answer = Answer.from_arguments(call.arguments)
+                output = answer.content
+                is_error = False
+                runner.final_answer = answer.content
+            except InvalidActionError as error:
+                output = str(error)
+                is_error = True
+        else:
+            try:
+                output = runner.tools.execute(call)
+                is_error = False
+            except UnknownToolError as error:
+                output = str(error)
+                is_error = True
         runner.bus.publish(
             ToolCallFinished(id=call.id, tool_call=call, result=output, is_error=is_error)
         )
@@ -164,7 +180,13 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
                 name=call.name, arguments=call.arguments, result=output, is_error=is_error
             )
         )
-    return "continue"
+        if is_error:
+            runner.invalid_action_attempts += 1
+            if runner.invalid_action_attempts >= MAX_INVALID_ACTION_ATTEMPTS:
+                outcome = "done"
+        elif runner.final_answer is not None:
+            outcome = "done"
+    return outcome
 
 
 DEFAULT_LOOP_CONFIG = LoopConfig(steps=(stream_step, tool_call_step))
