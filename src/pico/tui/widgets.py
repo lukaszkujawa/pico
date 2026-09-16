@@ -129,6 +129,29 @@ class WaitingIndicator(Static):
         return Text(WAITING_FRAMES[self.frame_index], style=self._theme.waiting)
 
 
+ROBOT_ART = r"""
+ ╭───────╮
+ │ ◉   ◉ │
+ │   ▾   │
+ ╰┬─────┬╯
+  ┴     ┴
+"""
+
+
+class Splash(Static):
+    def __init__(self, theme: Theme = PICO_THEME) -> None:
+        super().__init__(id="splash")
+        self._theme = theme
+        self.styles.color = theme.primary
+        self.styles.padding = (1, 0, 1, 2)
+
+    def render(self) -> Text:
+        lines = [line for line in ROBOT_ART.splitlines() if line.strip()]
+        art = Text("\n".join(lines), style=f"bold {self._theme.primary}")
+        caption = Text("Pico", style=f"bold {self._theme.text}")
+        return Text("\n").join([art, caption])
+
+
 class ErrorPane(Static):
     def __init__(self, message: str, theme: Theme = PICO_THEME) -> None:
         super().__init__(id="error-pane")

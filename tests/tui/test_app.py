@@ -1,7 +1,5 @@
 import queue
 
-from textual.widgets import Input
-
 from pico.core.bus import Bus
 from pico.core.events import (
     AssistantTextDelta,
@@ -19,11 +17,12 @@ from pico.core.events import (
     ToolCallStarted,
 )
 from pico.llm.types import ToolCall
-from pico.tui.app import InputBar, PicoApp, StatusHeader
+from pico.tui.app import ChatInput, InputBar, PicoApp
 from pico.tui.messages import UserInputSubmitted
 from pico.tui.widgets import (
     AssistantPane,
     ErrorPane,
+    Splash,
     ThinkingPane,
     ToolCallPane,
     UserPane,
@@ -171,27 +170,12 @@ async def test_app_handles_multiple_panes_and_error() -> None:
         assert len(error_panes) == 1
 
 
-async def test_header_reflects_run_state_transitions() -> None:
+async def test_splash_renders_on_startup() -> None:
     bus = Bus()
     app = PicoApp(bus, queue.Queue())
     async with app.run_test() as pilot:
         await pilot.pause()
-        header = app.query_one(StatusHeader)
-        assert header.status == "idle"
-
-        bus.publish(RunStarted())
-        await pilot.pause(0.2)
-        assert header.status == "running"
-
-        bus.publish(RunFinished())
-        await pilot.pause(0.2)
-        assert header.status == "idle"
-
-        bus.publish(RunStarted())
-        await pilot.pause(0.2)
-        bus.publish(RunFinished(error="boom"))
-        await pilot.pause(0.2)
-        assert header.status == "error"
+        assert len(app.query(Splash)) == 1
 
 
 async def test_layout_renders_at_small_and_large_terminal_sizes() -> None:
@@ -200,9 +184,7 @@ async def test_layout_renders_at_small_and_large_terminal_sizes() -> None:
         app = PicoApp(bus, queue.Queue())
         async with app.run_test(size=size) as pilot:
             await pilot.pause()
-            header = app.query_one(StatusHeader)
             input_bar = app.query_one(InputBar)
-            assert header.region.width == size[0]
             assert input_bar.region.width == size[0]
 
 
@@ -217,14 +199,54 @@ async def test_input_bar_submission_emits_message_and_clears_field() -> None:
     app = TrackingApp(bus, queue.Queue())
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.query_one("#user-input", Input).focus()
+        app.query_one("#user-input", ChatInput).focus()
         await pilot.pause()
         await pilot.press(*"hello pico")
         await pilot.press("enter")
         await pilot.pause(0.2)
 
         assert submitted == ["hello pico"]
-        assert app.query_one("#user-input", Input).value == ""
+        assert app.query_one("#user-input", ChatInput).text == ""
+
+
+async def test_ctrl_j_inserts_newline_without_submitting() -> None:
+    bus = Bus()
+    submitted: list[str] = []
+
+    class TrackingApp(PicoApp):
+        def on_user_input_submitted(self, message: UserInputSubmitted) -> None:
+            submitted.append(message.text)
+
+    app = TrackingApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#user-input", ChatInput).focus()
+        await pilot.pause()
+        await pilot.press(*"line one")
+        await pilot.press("ctrl+j")
+        await pilot.press(*"line two")
+        await pilot.pause()
+
+        assert submitted == []
+        assert app.query_one("#user-input", ChatInput).text == "line one\nline two"
+
+
+async def test_clicking_outside_input_keeps_focus_on_input() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        text_input = app.query_one("#user-input", ChatInput)
+        assert text_input.has_focus is True
+
+        await pilot.click("#conversation")
+        await pilot.pause()
+
+        assert text_input.has_focus is True
+
+        await pilot.press(*"still typing")
+        await pilot.pause()
+        assert text_input.text == "still typing"
 
 
 async def test_submitting_input_mounts_user_pane_immediately() -> None:
@@ -232,7 +254,7 @@ async def test_submitting_input_mounts_user_pane_immediately() -> None:
     app = PicoApp(bus, queue.Queue())
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.query_one("#user-input", Input).focus()
+        app.query_one("#user-input", ChatInput).focus()
         await pilot.pause()
         await pilot.press(*"hello pico")
         await pilot.press("enter")
@@ -249,7 +271,7 @@ async def test_submitting_input_enqueues_text() -> None:
     app = PicoApp(bus, input_queue)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.query_one("#user-input", Input).focus()
+        app.query_one("#user-input", ChatInput).focus()
         await pilot.pause()
         await pilot.press(*"hello pico")
         await pilot.press("enter")
@@ -264,7 +286,7 @@ async def test_submitting_blank_input_does_not_enqueue() -> None:
     app = PicoApp(bus, input_queue)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.query_one("#user-input", Input).focus()
+        app.query_one("#user-input", ChatInput).focus()
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
@@ -277,7 +299,7 @@ async def test_submitting_input_starts_waiting_indicator() -> None:
     app = PicoApp(bus, queue.Queue())
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.query_one("#user-input", Input).focus()
+        app.query_one("#user-input", ChatInput).focus()
         await pilot.pause()
         await pilot.press(*"hello")
         await pilot.press("enter")
@@ -291,7 +313,7 @@ async def test_first_pane_create_stops_waiting_indicator() -> None:
     app = PicoApp(bus, queue.Queue())
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.query_one("#user-input", Input).focus()
+        app.query_one("#user-input", ChatInput).focus()
         await pilot.pause()
         await pilot.press(*"hello")
         await pilot.press("enter")
@@ -310,7 +332,7 @@ async def test_error_before_any_pane_stops_waiting_indicator() -> None:
     app = PicoApp(bus, queue.Queue())
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.query_one("#user-input", Input).focus()
+        app.query_one("#user-input", ChatInput).focus()
         await pilot.pause()
         await pilot.press(*"hello")
         await pilot.press("enter")
@@ -361,12 +383,12 @@ async def test_escape_while_idle_does_nothing() -> None:
         assert cancel_handle.trigger_count == 0
 
 
-async def test_run_cancelled_stops_waiting_indicator_and_resets_status() -> None:
+async def test_run_cancelled_stops_waiting_indicator() -> None:
     bus = Bus()
     app = PicoApp(bus, queue.Queue())
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.query_one("#user-input", Input).focus()
+        app.query_one("#user-input", ChatInput).focus()
         await pilot.pause()
         await pilot.press(*"hello")
         await pilot.press("enter")
@@ -378,4 +400,3 @@ async def test_run_cancelled_stops_waiting_indicator_and_resets_status() -> None
         await pilot.pause(0.2)
 
         assert app.query_one(WaitingIndicator).running is False
-        assert app.query_one(StatusHeader).status == "idle"

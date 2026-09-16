@@ -1,12 +1,12 @@
 import queue
 import threading
-from typing import ClassVar, Literal, Protocol
+from typing import ClassVar, Protocol
 
-from rich.text import Text
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Input, Rule, Static
+from textual.widgets import Rule, Static, TextArea
 
 from pico.core.bus import Bus
 from pico.tui.messages import (
@@ -30,43 +30,33 @@ from pico.tui.theme import PICO_THEME, Theme
 from pico.tui.widgets import (
     AssistantPane,
     ErrorPane,
+    Splash,
     ThinkingPane,
     ToolCallPane,
     UserPane,
     WaitingIndicator,
 )
 
-RunStatus = Literal["idle", "running", "error"]
-
 
 class CancelHandle(Protocol):
     def trigger(self) -> None: ...
 
 
-class StatusHeader(Static):
-    def __init__(self, theme: Theme = PICO_THEME) -> None:
-        super().__init__(id="status-header")
-        self._theme = theme
-        self.status: RunStatus = "idle"
-        self.styles.background = theme.surface
-        self.styles.color = theme.text
-        self.styles.padding = (0, 1)
+NEWLINE_KEYS = {"ctrl+j", "shift+enter"}
 
-    def set_status(self, status: RunStatus) -> None:
-        self.status = status
-        self.refresh()
 
-    def render(self) -> Text:
-        color = {
-            "idle": self._theme.idle,
-            "running": self._theme.running,
-            "error": self._theme.error,
-        }[self.status]
-        return Text.assemble(
-            ("pico", f"bold {self._theme.primary}"),
-            "  ",
-            (self.status, f"bold {color}"),
-        )
+class ChatInput(TextArea):
+    async def _on_key(self, event: events.Key) -> None:
+        if event.key == "enter":
+            event.stop()
+            event.prevent_default()
+            text = self.text
+            self.clear()
+            self.post_message(UserInputSubmitted(text=text))
+            return
+        if event.key in NEWLINE_KEYS:
+            event.key = "enter"
+        await super()._on_key(event)
 
 
 class InputBar(Horizontal):
@@ -74,22 +64,19 @@ class InputBar(Horizontal):
         super().__init__(id="input-bar")
         self._theme = theme
         self.styles.background = theme.background
-        self.styles.height = 1
 
     def compose(self) -> ComposeResult:
         prompt = Static(">", id="input-prompt")
         prompt.styles.color = self._theme.input_prompt
         prompt.styles.width = 2
         yield prompt
-        text_input = Input(placeholder="Type a message...", id="user-input")
-        text_input.add_class("-textual-compact")
+        text_input = ChatInput(
+            placeholder="Type a message...",
+            id="user-input",
+            show_line_numbers=False,
+            soft_wrap=True,
+        )
         yield text_input
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        event.stop()
-        text = event.value
-        event.input.value = ""
-        self.post_message(UserInputSubmitted(text=text))
 
 
 class PicoApp(App[None]):
@@ -99,14 +86,21 @@ class PicoApp(App[None]):
     }
     #footer {
         dock: bottom;
-        height: 2;
+        height: auto;
     }
     #input-bar {
-        height: 1;
+        height: auto;
     }
-    #user-input, #user-input:focus {
+    #user-input {
+        height: auto;
+        max-height: 10;
         background: $background;
-        background-tint: $background 0%;
+        border: none;
+        padding: 0;
+    }
+    #user-input:focus {
+        background: $background;
+        border: none;
     }
     Rule {
         margin: 0;
@@ -130,8 +124,8 @@ class PicoApp(App[None]):
         self._tool_call_panes: dict[str, ToolCallPane] = {}
 
     def compose(self) -> ComposeResult:
-        yield StatusHeader()
         with VerticalScroll(id="conversation"):
+            yield Splash()
             yield WaitingIndicator()
         yield Rule()
         with Vertical(id="footer"):
@@ -141,8 +135,13 @@ class PicoApp(App[None]):
     def on_mount(self) -> None:
         self.register_theme(PICO_THEME.to_textual())
         self.theme = PICO_THEME.name
-        self.query_one("#user-input", Input).focus()
+        self.query_one("#user-input", ChatInput).focus()
         threading.Thread(target=self._consume_bus, daemon=True).start()
+
+    def on_click(self, event: events.Click) -> None:
+        text_input = self.query_one("#user-input", ChatInput)
+        if event.widget is not text_input:
+            text_input.focus()
 
     def _consume_bus(self) -> None:
         for event in self._bus.subscribe():
@@ -187,17 +186,14 @@ class PicoApp(App[None]):
 
     def on_run_started_message(self, message: RunStartedMessage) -> None:
         self._run_in_flight = True
-        self.query_one(StatusHeader).set_status("running")
 
     def on_run_finished_message(self, message: RunFinishedMessage) -> None:
         self._run_in_flight = False
         self.query_one(WaitingIndicator).stop()
-        self.query_one(StatusHeader).set_status("error" if message.error else "idle")
 
     def on_run_cancelled_message(self, message: RunCancelledMessage) -> None:
         self._run_in_flight = False
         self.query_one(WaitingIndicator).stop()
-        self.query_one(StatusHeader).set_status("idle")
 
     def action_cancel_run(self) -> None:
         if self._run_in_flight and self._cancel_handle is not None:
@@ -206,7 +202,6 @@ class PicoApp(App[None]):
     def on_error_message(self, message: ErrorMessage) -> None:
         self._run_in_flight = False
         self.query_one(WaitingIndicator).stop()
-        self.query_one(StatusHeader).set_status("error")
         self.query_one("#conversation", VerticalScroll).mount(ErrorPane(message.message))
 
     def on_user_input_submitted(self, message: UserInputSubmitted) -> None:
