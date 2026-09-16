@@ -6,6 +6,7 @@ from pico.core.actions import register_actions
 from pico.core.bus import Bus
 from pico.core.loop import DEFAULT_LOOP_CONFIG, LoopRunner
 from pico.core.tools import ToolRegistry
+from pico.debug.log import LoggingLLMClient, RunLog
 from pico.llm.client import LLMClient
 from pico.llm.ollama import OllamaClient
 from pico.session import Session, UserMessageRecorded, connect
@@ -63,7 +64,12 @@ def _turn_loop(
         cancel_handle.disarm()
 
 
-def run_pico(config: Config) -> None:
+def _consume_bus_to_log(bus: Bus, run_log: RunLog) -> None:
+    for event in bus.subscribe():
+        run_log.log(repr(event))
+
+
+def run_pico(config: Config, debug: bool = False) -> None:
     llm = _build_llm_client(config)
     tools = ToolRegistry()
     register_actions(tools)
@@ -73,6 +79,14 @@ def run_pico(config: Config) -> None:
     input_queue: queue.Queue[str] = queue.Queue()
     shutdown = threading.Event()
     cancel_handle = CancelHandle()
+
+    if debug:
+        run_log = RunLog.create()
+        run_log.log(
+            f"vendor={config.vendor} model={config.model} context_size={config.context_size}"
+        )
+        llm = LoggingLLMClient(llm, run_log)
+        threading.Thread(target=_consume_bus_to_log, args=(bus, run_log), daemon=True).start()
 
     core_thread = threading.Thread(
         target=_turn_loop,

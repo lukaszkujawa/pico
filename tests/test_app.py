@@ -261,3 +261,84 @@ def test_turn_persists_to_session_file_on_disk(
         UserMessageRecorded(content="hello"),
         AssistantMessageRecorded(content="hi", thinking=""),
     ]
+
+
+def test_debug_true_writes_run_log(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    client = RecordingClient()
+
+    def factory(*, model: str, base_url: str, api_key: str | None) -> RecordingClient:
+        return client
+
+    monkeypatch.setattr(app_module, "OllamaClient", factory)
+    monkeypatch.chdir(tmp_path)
+
+    queues: list[queue.Queue[str]] = []
+
+    def driving_run(self: PicoApp) -> None:
+        input_queue = queues[0]
+        input_queue.put("hello")
+        deadline = time.monotonic() + 5
+        while len(client.seen_messages) < 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+    original_init = PicoApp.__init__
+
+    def tracking_init(
+        self: PicoApp,
+        bus: Bus,
+        input_queue: "queue.Queue[str]",
+        cancel_handle: app_module.CancelHandle | None = None,
+    ) -> None:
+        queues.append(input_queue)
+        original_init(self, bus, input_queue, cancel_handle)
+
+    monkeypatch.setattr(PicoApp, "__init__", tracking_init)
+    monkeypatch.setattr(PicoApp, "run", driving_run)
+
+    run_pico(_config(tmp_path), debug=True)
+
+    logs_root = tmp_path / "logs"
+    assert logs_root.is_dir()
+    run_dirs = list(logs_root.iterdir())
+    assert len(run_dirs) == 1
+    run_dir = run_dirs[0]
+    assert (run_dir / "prompt-1.txt").exists()
+    assert (run_dir / "resp-1.txt").exists()
+    assert (run_dir / "session.log").exists()
+
+
+def test_debug_false_creates_no_logs_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    client = RecordingClient()
+
+    def factory(*, model: str, base_url: str, api_key: str | None) -> RecordingClient:
+        return client
+
+    monkeypatch.setattr(app_module, "OllamaClient", factory)
+    monkeypatch.chdir(tmp_path)
+
+    queues: list[queue.Queue[str]] = []
+
+    def driving_run(self: PicoApp) -> None:
+        input_queue = queues[0]
+        input_queue.put("hello")
+        deadline = time.monotonic() + 5
+        while len(client.seen_messages) < 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+    original_init = PicoApp.__init__
+
+    def tracking_init(
+        self: PicoApp,
+        bus: Bus,
+        input_queue: "queue.Queue[str]",
+        cancel_handle: app_module.CancelHandle | None = None,
+    ) -> None:
+        queues.append(input_queue)
+        original_init(self, bus, input_queue, cancel_handle)
+
+    monkeypatch.setattr(PicoApp, "__init__", tracking_init)
+    monkeypatch.setattr(PicoApp, "run", driving_run)
+
+    run_pico(_config(tmp_path), debug=False)
+
+    assert not (tmp_path / "logs").exists()

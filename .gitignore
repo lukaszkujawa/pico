@@ -41,3 +41,6 @@ Thumbs.db
 # Session store
 *.db
 *.db-*
+
+# Debug run logs
+logs/

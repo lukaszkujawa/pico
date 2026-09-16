@@ -4,7 +4,7 @@ Independent of the `0009`-`0014` declarative-loop arc — this is an observabili
 
 Today a run's prompts, responses, and loop behaviour are visible only by watching the TUI live; nothing is written to disk, so a bad run can't be inspected afterwards. This milestone adds an opt-in `--debug` flag that, when passed, writes everything sent to and received from the LLM, plus loop-level facts, to a per-run directory under `./logs/`.
 
-## [ ] T001 `--debug` CLI flag
+## [X] T001 `--debug` CLI flag
 
 ### Description
 
@@ -17,7 +17,7 @@ In `src/pico/app.py`, `run_pico` gains a `debug: bool = False` parameter.
 * `tests/test_main.py` covers: `--debug` present sets `debug=True` on the call to `run_pico`; absent defaults to `False`.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T002 `RunLog`: per-run log directory
+## [X] T002 `RunLog`: per-run log directory
 
 ### Description
 
@@ -35,7 +35,7 @@ Keep this a small, self-contained domain object: no import of `pico.core`, `pico
 * `tests/debug/test_log.py` covers: `create` makes `logs/` if absent; the run subdirectory name matches the readable-timestamp format; two `create()` calls within the same second produce distinct, non-colliding directories; `write_prompt`/`write_response` share one incrementing counter starting at 1, each file's first line is a timestamp and the rest is the full content passed in; `log` appends timestamped lines to `session.log` without truncating prior lines.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T003 Wire `RunLog` into a run
+## [X] T003 Wire `RunLog` into a run
 
 ### Description
 
@@ -54,7 +54,7 @@ When `debug=False`, none of this runs — `run_pico`'s existing behavior is unch
 * `tests/test_app.py` covers: `debug=True` creates a run directory under a temp `logs/` root (monkeypatch the root or cwd) containing at least one `prompt-1.txt`, `resp-1.txt`, and `session.log` after a turn completes; `debug=False` creates no `logs/` directory.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T004 Ignore `logs/`
+## [X] T004 Ignore `logs/`
 
 ### Description
 
@@ -64,7 +64,7 @@ Add `logs/` to `.gitignore`.
 
 * `git check-ignore logs/anything` succeeds.
 
-## [ ] T005 Verify and finalize
+## [X] T005 Verify and finalize
 
 ### Description
 

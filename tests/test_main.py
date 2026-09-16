@@ -1,4 +1,5 @@
 import runpy
+import sys
 
 import pytest
 
@@ -19,17 +20,34 @@ def _config() -> Config:
 
 def test_main_calls_run_pico_with_loaded_config(monkeypatch: pytest.MonkeyPatch) -> None:
     config = _config()
-    received: list[Config] = []
+    received: list[tuple[Config, bool]] = []
 
-    def fake_run_pico(cfg: Config) -> None:
-        received.append(cfg)
+    def fake_run_pico(cfg: Config, debug: bool = False) -> None:
+        received.append((cfg, debug))
 
     monkeypatch.setattr(pico, "load_config", lambda: config)
     monkeypatch.setattr(pico, "run_pico", fake_run_pico)
+    monkeypatch.setattr(sys, "argv", ["pico"])
 
     pico.main()
 
-    assert received == [config]
+    assert received == [(config, False)]
+
+
+def test_main_passes_debug_flag_when_present(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = _config()
+    received: list[tuple[Config, bool]] = []
+
+    def fake_run_pico(cfg: Config, debug: bool = False) -> None:
+        received.append((cfg, debug))
+
+    monkeypatch.setattr(pico, "load_config", lambda: config)
+    monkeypatch.setattr(pico, "run_pico", fake_run_pico)
+    monkeypatch.setattr(sys, "argv", ["pico", "--debug"])
+
+    pico.main()
+
+    assert received == [(config, True)]
 
 
 def test_main_exits_cleanly_on_config_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -37,6 +55,7 @@ def test_main_exits_cleanly_on_config_error(monkeypatch: pytest.MonkeyPatch) -> 
         raise ConfigError("missing required environment variable: LLM_MODEL")
 
     monkeypatch.setattr(pico, "load_config", fail)
+    monkeypatch.setattr(sys, "argv", ["pico"])
 
     with pytest.raises(SystemExit) as excinfo:
         pico.main()
