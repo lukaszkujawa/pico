@@ -13,7 +13,7 @@ The `Splash` widget (`src/pico/tui/widgets.py`) currently stacks everything in o
 * **No change to the blinking cursor behavior** inside the art (`LOGO_CURSOR`, the `blink` style on `>_`) — purely a layout change, not a content or animation change.
 * **`LOGO_INDENT`/`LABEL_INDENT` become unnecessary** once the label is no longer centered under the art — remove them rather than leaving dead code, and recompute any layout spacing needed for the new two-column composition directly in `Splash.render()` or via Textual layout (see T001 for the choice).
 
-## [ ] T001 Two-column render
+## [X] T001 Two-column render
 
 ### Description
 
@@ -27,7 +27,7 @@ Remove `LOGO_INDENT` and `LABEL_INDENT`. Add a `local_directory` (or equivalent)
 * `tests/tui/test_app.py`'s existing `Splash` assertions (`session-1`, `session-2`, absent-session count) continue to pass unmodified in intent, updated only for whatever `Splash(...)` constructor signature results from this task.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T002 Verify and finalize
+## [X] T002 Verify and finalize
 
 ### Description
 

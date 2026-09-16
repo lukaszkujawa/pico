@@ -1,6 +1,7 @@
 import json
 import queue
 import threading
+from pathlib import Path
 from typing import ClassVar, Protocol, cast
 
 from textual import events
@@ -166,9 +167,17 @@ class PicoApp(App[None]):
     def _session_id(self) -> str:
         return "" if self._session_handle is None else self._session_handle.session_id
 
+    def _local_directory(self) -> str:
+        cwd = Path.cwd()
+        home = Path.home()
+        try:
+            return f"~/{cwd.relative_to(home)}" if cwd != home else "~"
+        except ValueError:
+            return str(cwd)
+
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="conversation"):
-            yield Splash(self._session_id())
+            yield Splash(self._session_id(), self._local_directory())
         yield Rule()
         with Vertical(id="footer"):
             yield StatusLine()

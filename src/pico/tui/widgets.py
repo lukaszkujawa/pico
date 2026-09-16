@@ -345,36 +345,55 @@ LOGO_BOTTOM = "╰────────╯"
 LOGO_LABEL = "PICO"
 TAGLINE = "Small model. Real agency."
 LOGO_WIDTH = len(LOGO_TOP)
-LOGO_INDENT = " " * ((len(TAGLINE) - LOGO_WIDTH) // 2)
-LABEL_INDENT = " " * ((len(TAGLINE) - len(LOGO_LABEL)) // 2)
+LOGO_HEIGHT = 4
+COLUMN_GAP = " " * 2
 
 
 class Splash(Static):
     session_id: reactive[str] = reactive("", repaint=True)
 
-    def __init__(self, session_id: str = "", theme: Theme = PICO_THEME) -> None:
+    def __init__(
+        self, session_id: str = "", local_directory: str = "", theme: Theme = PICO_THEME
+    ) -> None:
         super().__init__(id="splash")
         self._theme = theme
+        self._local_directory = local_directory
         self.styles.padding = (1, 0, 1, 2)
         self.set_reactive(Splash.session_id, session_id)
 
     def render(self) -> Text:
         border = f"bold {self._theme.primary}"
-        lines = [
-            Text(LOGO_INDENT + LOGO_TOP, style=border),
+        art_lines = [
+            Text(LOGO_TOP, style=border),
             Text.assemble(
-                (LOGO_INDENT + LOGO_PROMPT, border),
+                (LOGO_PROMPT, border),
                 (">", f"bold {self._theme.success}"),
                 (LOGO_CURSOR, f"bold {self._theme.success} blink"),
                 (LOGO_PROMPT_END, border),
             ),
-            Text(LOGO_INDENT + LOGO_MID, style=border),
-            Text(LOGO_INDENT + LOGO_BOTTOM, style=border),
-            Text(LABEL_INDENT + LOGO_LABEL, style=f"bold {self._theme.text}"),
-            Text(TAGLINE, style=f"italic {self._theme.muted_text}"),
+            Text(LOGO_MID, style=border),
+            Text(LOGO_BOTTOM, style=border),
+        ]
+
+        right_lines = [
+            Text(LOGO_LABEL, style=f"bold {self._theme.text}"),
+            Text(TAGLINE, style=self._theme.muted_text),
         ]
         if self.session_id:
-            lines.append(Text(f"session {self.session_id}", style=self._theme.muted_text))
+            right_lines.append(Text(f"session {self.session_id}", style=self._theme.muted_text))
+        right_lines.append(Text(self._local_directory, style=self._theme.muted_text))
+
+        pad_top = (LOGO_HEIGHT - len(right_lines)) // 2
+        right_column = (
+            [Text("")] * pad_top
+            + right_lines
+            + [Text("")] * (LOGO_HEIGHT - len(right_lines) - pad_top)
+        )
+
+        lines = [
+            art_line + Text(COLUMN_GAP) + right_line
+            for art_line, right_line in zip(art_lines, right_column, strict=True)
+        ]
         return Text("\n").join(lines)
 
 

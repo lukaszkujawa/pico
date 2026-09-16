@@ -1,7 +1,9 @@
 import pytest
+from rich.console import Console
 from textual.app import App, ComposeResult
 
 from pico.tui import widgets
+from pico.tui.theme import PICO_THEME
 from pico.tui.widgets import (
     ERROR_GLYPH,
     SUCCESS_GLYPH,
@@ -503,3 +505,64 @@ def test_splash_renders_session_id_when_given() -> None:
 
 def test_splash_omits_session_line_when_id_is_empty() -> None:
     assert "session " not in Splash().render().plain
+
+
+def test_splash_art_shares_rows_with_right_column_text() -> None:
+    lines = Splash("abc123", "~/projects/pico").render().split("\n")
+    plain_lines = [line.plain for line in lines]
+    assert any(widgets.LOGO_TOP in line and "PICO" in line for line in plain_lines)
+    assert any(widgets.LOGO_MID in line and "session abc123" in line for line in plain_lines)
+    assert any(widgets.LOGO_BOTTOM in line and "~/projects/pico" in line for line in plain_lines)
+
+
+def test_splash_label_is_bold_theme_text() -> None:
+    lines = Splash("abc123").render().split("\n")
+    label_line = next(line for line in lines if "PICO" in line.plain)
+    start = label_line.plain.index("PICO")
+    style = label_line.get_style_at_offset(Console(), start)
+    assert style.bold
+    assert style.color is not None
+    assert style.color.name == PICO_THEME.text
+
+
+def test_splash_tagline_is_muted_and_not_italic() -> None:
+    lines = Splash("abc123").render().split("\n")
+    tagline_line = next(line for line in lines if widgets.TAGLINE in line.plain)
+    start = tagline_line.plain.index(widgets.TAGLINE)
+    style = tagline_line.get_style_at_offset(Console(), start)
+    assert not style.italic
+    assert style.color is not None
+    assert style.color.name == PICO_THEME.muted_text
+
+
+def test_splash_local_directory_renders_with_home_shorthand() -> None:
+    lines = Splash("abc123", "~/projects/pico").render().split("\n")
+    directory_line = next(line for line in lines if "~/projects/pico" in line.plain)
+    start = directory_line.plain.index("~/projects/pico")
+    style = directory_line.get_style_at_offset(Console(), start)
+    assert style.color is not None
+    assert style.color.name == PICO_THEME.muted_text
+
+
+def test_splash_right_column_centers_against_four_line_art_with_session() -> None:
+    lines = Splash("abc123", "~/projects/pico").render().split("\n")
+    assert len(lines) == widgets.LOGO_HEIGHT
+    right_texts = [line.plain[widgets.LOGO_WIDTH + len(widgets.COLUMN_GAP) :] for line in lines]
+    assert right_texts == [
+        "PICO",
+        widgets.TAGLINE,
+        "session abc123",
+        "~/projects/pico",
+    ]
+
+
+def test_splash_right_column_centers_against_four_line_art_without_session() -> None:
+    lines = Splash("", "~/projects/pico").render().split("\n")
+    assert len(lines) == widgets.LOGO_HEIGHT
+    right_texts = [line.plain[widgets.LOGO_WIDTH + len(widgets.COLUMN_GAP) :] for line in lines]
+    assert right_texts == [
+        "PICO",
+        widgets.TAGLINE,
+        "~/projects/pico",
+        "",
+    ]
