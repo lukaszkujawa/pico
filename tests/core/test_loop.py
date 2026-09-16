@@ -436,7 +436,7 @@ def test_single_tool_call_round_trip() -> None:
         RunStarted(),
         GenerationCompleted(),
         ToolCallStarted(id="1", name="echo", arguments={"text": "hi"}),
-        ToolCallFinished(id="1", tool_call=call, result="hi", is_error=False),
+        ToolCallFinished(id="1", tool_call=call, result="hi", is_error=False, fact_id=3),
         AssistantTextStarted(id="0"),
         AssistantTextDelta(id="0", text="done"),
         GenerationCompleted(),
@@ -476,7 +476,7 @@ def test_tool_call_delta_from_llm_is_ignored() -> None:
         RunStarted(),
         GenerationCompleted(),
         ToolCallStarted(id="1", name="echo", arguments={"text": "hi"}),
-        ToolCallFinished(id="1", tool_call=call, result="hi", is_error=False),
+        ToolCallFinished(id="1", tool_call=call, result="hi", is_error=False, fact_id=3),
         GenerationCompleted(),
         RunFinished(),
     ]
@@ -645,6 +645,51 @@ def test_valid_answer_call_ends_run_and_records_result() -> None:
         result="the answer",
         is_error=False,
     )
+
+
+def test_tool_call_finished_fact_id_matches_facts_after_interleaved_events() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    session.append(ToolCallRecorded(name="earlier", arguments={}, result="r", is_error=False))
+    call = ToolCall(id="1", name="echo", arguments={"text": "hi"})
+    client = ScriptedClient(
+        [
+            [ToolCallReady(tool_call=call), GenerationComplete(finish_reason="tool_calls")],
+            [GenerationComplete(finish_reason="stop")],
+        ]
+    )
+
+    runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    events = [next(subscriber) for _ in range(4)]
+    finished = events[3]
+    assert isinstance(finished, ToolCallFinished)
+    assert finished.fact_id == facts(session)[-1].id
+
+
+def test_failed_tool_call_has_no_fact_id() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    call = ToolCall(id="1", name="missing", arguments={})
+    client = ScriptedClient(
+        [
+            [ToolCallReady(tool_call=call), GenerationComplete(finish_reason="tool_calls")],
+            [GenerationComplete(finish_reason="stop")],
+        ]
+    )
+
+    runner = LoopRunner(client, ToolRegistry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    events = [next(subscriber) for _ in range(4)]
+    finished = events[3]
+    assert isinstance(finished, ToolCallFinished)
+    assert finished.fact_id is None
 
 
 def test_invalid_answer_call_continues_run_instead_of_ending() -> None:
@@ -981,7 +1026,9 @@ def test_delegate_child_stream_events_do_not_appear_on_parent_bus() -> None:
         RunStarted(),
         GenerationCompleted(),
         ToolCallStarted(id="1", name="delegate", arguments={"question": "what is x?"}),
-        ToolCallFinished(id="1", tool_call=delegate_call, result="x is 1", is_error=False),
+        ToolCallFinished(
+            id="1", tool_call=delegate_call, result="x is 1", is_error=False, fact_id=None
+        ),
         AssistantTextStarted(id="0"),
         AssistantTextDelta(id="0", text="done"),
         GenerationCompleted(),

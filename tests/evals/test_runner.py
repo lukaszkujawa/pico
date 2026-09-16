@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from pico.config import Config
-from pico.evals.runner import EvalOutcome, render_table, run_suite, write_report
+from pico.evals.runner import EvalOutcome, render_table, run_suite, run_task, write_report
 from pico.evals.tasks import EvalTask
 from pico.headless import TurnResult
 from pico.llm.types import (
@@ -99,25 +99,31 @@ def test_check_receives_the_task_directory_and_final_answer() -> None:
     assert seen[0][1] == "the answer"
 
 
-def test_failing_and_raising_checks_record_fails_without_stopping_the_suite() -> None:
-    def raising(directory: Path, answer: str) -> bool:
-        raise RuntimeError("checker exploded")
-
+def test_failing_check_records_fail_without_stopping_the_suite() -> None:
     outcomes = run_suite(
         AnsweringClient(),
         _config(),
         [
             _task("falsy", check=_always_fail),
-            _task("raising", check=raising),
             _task("passing"),
         ],
     )
 
     assert [(outcome.name, outcome.passed) for outcome in outcomes] == [
         ("falsy", False),
-        ("raising", False),
         ("passing", True),
     ]
+
+
+def test_raising_check_propagates_instead_of_recording_a_fail() -> None:
+    def raising(directory: Path, answer: str) -> bool:
+        raise RuntimeError("checker exploded")
+
+    with pytest.raises(RuntimeError, match="checker exploded"):
+        run_task(AnsweringClient(), _config(), _task("raising", check=raising))
+
+    with pytest.raises(RuntimeError, match="checker exploded"):
+        run_suite(AnsweringClient(), _config(), [_task("raising", check=raising)])
 
 
 def test_cwd_is_restored_even_when_a_task_blows_up() -> None:

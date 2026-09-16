@@ -45,7 +45,7 @@ from pico.core.events import (
     ToolCallFinished,
     ToolCallStarted,
 )
-from pico.core.ledger import Fact, Goal, Plan, PlanStep, facts, goal, plan, render_plan
+from pico.core.ledger import Fact, Plan, PlanStep, facts, plan, render_plan
 from pico.core.loop import (
     DEFAULT_CHARS_PER_TOKEN,
     DEFAULT_LOOP_CONFIG,
@@ -97,7 +97,6 @@ __all__ = [
     "Delegate",
     "ErrorOccurred",
     "Fact",
-    "Goal",
     "InvalidActionError",
     "LoopConfig",
     "LoopRunner",
@@ -126,7 +125,6 @@ __all__ = [
     "estimate_tokens",
     "fact_recall_tool",
     "facts",
-    "goal",
     "message_text",
     "plan",
     "prompt_budget",

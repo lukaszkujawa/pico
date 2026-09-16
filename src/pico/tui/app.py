@@ -145,7 +145,6 @@ class PicoApp(App[None]):
         self._thinking_panes: dict[str, ThinkingPane] = {}
         self._tool_call_panes: dict[str, ToolCallPane] = {}
         self._queued_user_panes: list[UserPane] = []
-        self._fact_count = 0
 
     def _session_id(self) -> str:
         return "" if self._session_handle is None else self._session_handle.session_id
@@ -215,16 +214,11 @@ class PicoApp(App[None]):
         self.query_one("#conversation", VerticalScroll).mount(pane)
 
     def on_tool_call_pane_close(self, message: ToolCallPaneClose) -> None:
-        fact_index: int | None = None
-        if not message.is_error:
-            fact_index = self._fact_count
-            self._fact_count += 1
         self._tool_call_panes[message.pane_id].finish(
-            result=message.result, is_error=message.is_error, fact_index=fact_index
+            result=message.result, is_error=message.is_error, fact_index=message.fact_id
         )
 
     def on_answer_pane_create(self, message: AnswerPaneCreate) -> None:
-        self._fact_count += 1
         pending = self._tool_call_panes.pop(message.pane_id, None)
         if pending is not None:
             pending.remove()
@@ -266,7 +260,6 @@ class PicoApp(App[None]):
         self._thinking_panes.clear()
         self._tool_call_panes.clear()
         self._queued_user_panes.clear()
-        self._fact_count = 0
         conversation = self.query_one("#conversation", VerticalScroll)
         status = self.query_one(StatusLine)
         status.stop()

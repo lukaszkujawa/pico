@@ -70,7 +70,9 @@ async def test_app_renders_tool_call_pane_from_bus_events() -> None:
         bus.publish(RunStarted())
         bus.publish(ToolCallStarted(id="1", name="search", arguments={"q": "pico"}))
         bus.publish(
-            ToolCallFinished(id="1", tool_call=tool_call, result="found it", is_error=False)
+            ToolCallFinished(
+                id="1", tool_call=tool_call, result="found it", is_error=False, fact_id=2
+            )
         )
         bus.publish(RunFinished())
 
@@ -84,10 +86,10 @@ async def test_app_renders_tool_call_pane_from_bus_events() -> None:
         assert "found it" in pane.render().plain
         assert pane.finished is True
         assert pane.is_error is False
-        assert pane.fact_index == 0
+        assert pane.fact_index == 2
 
 
-async def test_fact_index_increments_across_successful_tool_calls_only() -> None:
+async def test_fact_index_reflects_real_non_contiguous_fact_ids() -> None:
     bus = Bus()
     app = PicoApp(bus, queue.Queue())
     async with app.run_test() as pilot:
@@ -96,20 +98,30 @@ async def test_fact_index_increments_across_successful_tool_calls_only() -> None
         tool_call = ToolCall(id="1", name="search", arguments={})
         bus.publish(RunStarted())
         bus.publish(ToolCallStarted(id="1", name="search", arguments={}))
-        bus.publish(ToolCallFinished(id="1", tool_call=tool_call, result="first", is_error=False))
+        bus.publish(
+            ToolCallFinished(id="1", tool_call=tool_call, result="first", is_error=False, fact_id=2)
+        )
         bus.publish(ToolCallStarted(id="2", name="search", arguments={}))
-        bus.publish(ToolCallFinished(id="2", tool_call=tool_call, result="oops", is_error=True))
+        bus.publish(
+            ToolCallFinished(
+                id="2", tool_call=tool_call, result="oops", is_error=True, fact_id=None
+            )
+        )
         bus.publish(ToolCallStarted(id="3", name="search", arguments={}))
-        bus.publish(ToolCallFinished(id="3", tool_call=tool_call, result="second", is_error=False))
+        bus.publish(
+            ToolCallFinished(
+                id="3", tool_call=tool_call, result="second", is_error=False, fact_id=7
+            )
+        )
         bus.publish(RunFinished())
 
         await pilot.pause(0.2)
 
         panes = app.query(ToolCallPane)
         assert len(panes) == 3
-        assert panes[0].fact_index == 0
+        assert panes[0].fact_index == 2
         assert panes[1].fact_index is None
-        assert panes[2].fact_index == 1
+        assert panes[2].fact_index == 7
 
 
 async def test_successful_answer_renders_as_answer_pane_not_tool_call() -> None:
@@ -825,7 +837,7 @@ async def test_new_session_action_is_a_no_op_during_a_run() -> None:
         assert session_handle.start_count == 0
 
 
-async def test_new_session_action_resets_fact_numbering() -> None:
+async def test_new_session_action_shows_fact_ids_from_new_session_events() -> None:
     bus = Bus()
     session_handle = RecordingSessionHandle()
     app = PicoApp(bus, queue.Queue(), None, session_handle)
@@ -834,7 +846,9 @@ async def test_new_session_action_resets_fact_numbering() -> None:
         tool_call = ToolCall(id="1", name="search", arguments={"q": "pico"})
         bus.publish(RunStarted())
         bus.publish(ToolCallStarted(id="1", name="search", arguments={"q": "pico"}))
-        bus.publish(ToolCallFinished(id="1", tool_call=tool_call, result="ok", is_error=False))
+        bus.publish(
+            ToolCallFinished(id="1", tool_call=tool_call, result="ok", is_error=False, fact_id=1)
+        )
         bus.publish(RunFinished())
         await pilot.pause(0.2)
 
@@ -849,12 +863,13 @@ async def test_new_session_action_resets_fact_numbering() -> None:
                 tool_call=ToolCall(id="2", name="search", arguments={"q": "pico"}),
                 result="ok",
                 is_error=False,
+                fact_id=1,
             )
         )
         bus.publish(RunFinished())
         await pilot.pause(0.2)
 
-        assert app.query_one(ToolCallPane).fact_index == 0
+        assert app.query_one(ToolCallPane).fact_index == 1
 
 
 async def test_splash_shows_active_session_id_and_updates_after_new_session() -> None:

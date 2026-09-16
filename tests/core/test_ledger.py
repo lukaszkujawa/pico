@@ -1,4 +1,4 @@
-from pico.core.ledger import Fact, Goal, Plan, PlanStep, facts, goal, plan
+from pico.core.ledger import Fact, Plan, PlanStep, facts, plan
 from pico.session import (
     AssistantMessageRecorded,
     PlanSet,
@@ -57,22 +57,6 @@ def test_facts_ids_are_unchanged_by_interleaved_error_calls() -> None:
     session.append(ToolCallRecorded(name="shell", arguments={}, result="last", is_error=False))
 
     assert [fact.id for fact in facts(session)] == [1, 3]
-
-
-def test_goal_returns_none_when_no_user_messages() -> None:
-    session = _session()
-    session.append(AssistantMessageRecorded(content="hi", thinking=""))
-
-    assert goal(session) is None
-
-
-def test_goal_returns_latest_user_message() -> None:
-    session = _session()
-    session.append(UserMessageRecorded(content="first"))
-    session.append(AssistantMessageRecorded(content="ok", thinking=""))
-    session.append(UserMessageRecorded(content="second"))
-
-    assert goal(session) == Goal(content="second")
 
 
 def test_plan_returns_none_without_plan_events() -> None:

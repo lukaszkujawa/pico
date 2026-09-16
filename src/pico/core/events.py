@@ -59,6 +59,7 @@ class ToolCallFinished:
     tool_call: ToolCall
     result: str
     is_error: bool = False
+    fact_id: int | None = None
 
 
 @dataclass(frozen=True)

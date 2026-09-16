@@ -333,12 +333,17 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
                 output = str(error)
                 is_error = True
                 invalid = True
-        runner.bus.publish(
-            ToolCallFinished(id=call.id, tool_call=call, result=output, is_error=is_error)
-        )
         runner.session.append(
             ToolCallRecorded(
                 name=call.name, arguments=call.arguments, result=output, is_error=is_error
+            )
+        )
+        fact_id = None
+        if not is_error and call.name not in ("answer", "delegate"):
+            fact_id = facts(runner.session)[-1].id
+        runner.bus.publish(
+            ToolCallFinished(
+                id=call.id, tool_call=call, result=output, is_error=is_error, fact_id=fact_id
             )
         )
         if invalid:
