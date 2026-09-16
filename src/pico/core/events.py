@@ -68,6 +68,13 @@ class GenerationCompleted:
 
 
 @dataclass(frozen=True)
+class BudgetExceeded:
+    estimated: int
+    actual: int
+    budget: int
+
+
+@dataclass(frozen=True)
 class ErrorOccurred:
     message: str
 
@@ -89,6 +96,7 @@ BusEvent = (
     | ToolCallStarted
     | ToolCallFinished
     | GenerationCompleted
+    | BudgetExceeded
     | ErrorOccurred
     | RunCancelled
 )

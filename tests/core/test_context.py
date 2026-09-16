@@ -1,12 +1,16 @@
+from itertools import pairwise
+
 from pico.core.context import (
+    COMPLETION_RESERVE_CAP,
     COMPLETION_RESERVE_FRACTION,
     estimate_tokens,
+    message_text,
     prompt_budget,
     render_messages,
     render_tool_result,
 )
 from pico.core.ledger import facts
-from pico.llm.types import Message, Role
+from pico.llm.types import Message, Role, ToolCall
 from pico.session import (
     AssistantMessageRecorded,
     Session,
@@ -186,3 +190,111 @@ def test_render_messages_leaves_error_results_intact_among_truncated_facts() -> 
         if m.role is Role.TOOL and m.tool_result is not None and m.tool_result.is_error
     ]
     assert errors == ["e" * 4_000]
+
+
+def test_tool_call_arguments_no_longer_cost_zero() -> None:
+    call = ToolCall(id="1", name="write_file", arguments={"content": "z" * 10_000})
+    message = Message(role=Role.ASSISTANT, tool_calls=(call,))
+
+    assert estimate_tokens(message_text(message)) > 2_000
+
+
+def test_render_messages_truncates_when_tool_call_argument_blows_budget() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hello"))
+    session.append(
+        ToolCallRecorded(
+            name="write_file", arguments={"content": "z" * 40_000}, result="ok", is_error=False
+        )
+    )
+
+    rendered = render_messages(session, context_size=2_000)
+
+    tool_messages = [m for m in rendered if m.role is Role.TOOL]
+    assert tool_messages[0].tool_result is not None
+    assert "fact 2" in tool_messages[0].tool_result.content
+
+
+def test_render_messages_overhead_shrinks_budget_by_exactly_its_value() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hello"))
+    session.append(
+        ToolCallRecorded(name="read_file", arguments={}, result="a" * 4_000, is_error=False)
+    )
+    messages = session.messages()
+    total = sum(estimate_tokens(message_text(message)) for message in messages)
+    context_size = 8_000
+    slack = prompt_budget(context_size) - total
+
+    assert render_messages(session, context_size, overhead_tokens=slack) == messages
+
+    tight = render_messages(session, context_size, overhead_tokens=slack + 1)
+    tool_messages = [m for m in tight if m.role is Role.TOOL]
+    assert tool_messages[0].tool_result is not None
+    assert "fact 2" in tool_messages[0].tool_result.content
+
+
+def test_render_messages_zero_overhead_reproduces_prior_behaviour() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hello"))
+    session.append(
+        ToolCallRecorded(name="read_file", arguments={}, result="a" * 5_000, is_error=False)
+    )
+
+    assert render_messages(session, 1_500, overhead_tokens=0) == render_messages(session, 1_500)
+
+
+def test_prompt_budget_small_context_uses_fraction() -> None:
+    assert prompt_budget(8192) == int(8192 * (1 - COMPLETION_RESERVE_FRACTION))
+
+
+def test_prompt_budget_large_context_caps_the_reserve() -> None:
+    assert prompt_budget(65536) == 65536 - COMPLETION_RESERVE_CAP
+
+
+def test_prompt_budget_is_continuous_across_the_crossover() -> None:
+    crossover = int(COMPLETION_RESERVE_CAP / COMPLETION_RESERVE_FRACTION)
+    budgets = [prompt_budget(size) for size in range(crossover - 4, crossover + 5)]
+
+    assert budgets == sorted(budgets)
+    assert all(later - earlier <= 1 for earlier, later in pairwise(budgets))
+
+
+def test_prompt_budget_never_reserves_more_than_the_cap() -> None:
+    for size in (1_000, 8_192, 16_384, 32_768, 131_072):
+        assert size - prompt_budget(size) <= COMPLETION_RESERVE_CAP
+
+
+def test_estimate_tokens_default_ratio_matches_floor_division() -> None:
+    for text in ("", "a", "abcdefgh", "x" * 4_001):
+        assert estimate_tokens(text) == (0 if not text else max(1, len(text) // 4))
+
+
+def test_estimate_tokens_honours_a_denser_ratio() -> None:
+    text = "x" * 300
+
+    assert estimate_tokens(text, 3.0) == 100
+    assert estimate_tokens(text, 3.0) > estimate_tokens(text, 4.0)
+
+
+def test_estimate_tokens_keeps_the_minimum_of_one() -> None:
+    assert estimate_tokens("ab", 6.0) == 1
+
+
+def test_message_text_includes_tool_call_names_and_arguments() -> None:
+    call = ToolCall(id="1", name="write_file", arguments={"path": "a.txt"})
+    message = Message(role=Role.ASSISTANT, content="here", tool_calls=(call,))
+
+    text = message_text(message)
+
+    assert "here" in text
+    assert "write_file" in text
+    assert "a.txt" in text
+
+
+def test_message_text_of_tool_message_is_its_result_content() -> None:
+    session = _session()
+    session.append(ToolCallRecorded(name="echo", arguments={}, result="out", is_error=False))
+    tool_message = next(m for m in session.messages() if m.role is Role.TOOL)
+
+    assert message_text(tool_message) == "out"

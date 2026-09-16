@@ -4,7 +4,13 @@ from collections.abc import Iterator, Mapping
 
 from pico.core.actions import register_actions
 from pico.core.bus import Bus
-from pico.core.context import SYSTEM_PROMPT
+from pico.core.context import (
+    SYSTEM_PROMPT,
+    estimate_tokens,
+    message_text,
+    prompt_budget,
+    render_messages,
+)
 from pico.core.errors import ToolError
 from pico.core.events import (
     AssistantTextDelta,
@@ -13,6 +19,7 @@ from pico.core.events import (
     AssistantThinkingDelta,
     AssistantThinkingFinished,
     AssistantThinkingStarted,
+    BudgetExceeded,
     ErrorOccurred,
     GenerationCompleted,
     RunCancelled,
@@ -23,12 +30,16 @@ from pico.core.events import (
 )
 from pico.core.ledger import facts
 from pico.core.loop import (
+    DEFAULT_CHARS_PER_TOKEN,
     DEFAULT_LOOP_CONFIG,
+    MAX_CHARS_PER_TOKEN,
     MAX_DELEGATE_STEPS,
     MAX_INVALID_ACTION_ATTEMPTS,
+    MIN_CHARS_PER_TOKEN,
     LoopConfig,
     LoopRunner,
     StepOutcome,
+    specs_text,
     stream_step,
     stuckness_step,
     tool_call_step,
@@ -1322,3 +1333,247 @@ def test_plan_message_is_never_persisted_to_the_session() -> None:
         for event in events
     )
     assert not any(isinstance(event, PlanStepCompleted) for event in events)
+
+
+class RecordingClient:
+    def __init__(self, turns: list[list[StreamEvent]]) -> None:
+        self._turns = turns
+        self.seen_messages: list[list[Message]] = []
+        self.seen_specs: list[list[ToolSpec]] = []
+        self.seen_ratios: list[float] = []
+        self.runner: LoopRunner | None = None
+
+    def stream(self, messages: list[Message], tools: list[ToolSpec]) -> Iterator[StreamEvent]:
+        self.seen_messages.append(messages)
+        self.seen_specs.append(tools)
+        if self.runner is not None:
+            self.seen_ratios.append(self.runner.chars_per_token)
+        yield from self._turns.pop(0)
+
+
+def _sent_overhead(client: RecordingClient, index: int) -> int:
+    messages = client.seen_messages[index]
+    framing = [
+        message
+        for message in messages
+        if message.role is Role.SYSTEM
+        or (
+            message.role is Role.USER
+            and message.content.startswith(("Your current plan:", "you've repeated"))
+        )
+    ]
+    text = specs_text(client.seen_specs[index]) + "".join(
+        message_text(message) for message in framing
+    )
+    return estimate_tokens(text, DEFAULT_CHARS_PER_TOKEN)
+
+
+def _context_size_for_budget(budget: int) -> int:
+    size = budget
+    while prompt_budget(size) < budget:
+        size += 1
+    return size
+
+
+def _stop_turn() -> list[StreamEvent]:
+    return [TextDelta(text="hello"), GenerationComplete(finish_reason="stop")]
+
+
+def test_overhead_reflects_the_registered_tool_specs() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    client = RecordingClient([_stop_turn()])
+    registry = _echo_registry()
+
+    LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
+
+    assert client.seen_specs[0] == registry.specs()
+    assert _sent_overhead(client, 0) > estimate_tokens(SYSTEM_PROMPT)
+
+
+def test_overhead_grows_when_a_plan_message_is_present() -> None:
+    plain_session = _session()
+    plain_session.append(UserMessageRecorded(content="hi"))
+    plain_client = RecordingClient([_stop_turn()])
+    LoopRunner(
+        plain_client, _echo_registry(), Bus(), plain_session, 128_000, DEFAULT_LOOP_CONFIG
+    ).execute()
+
+    plan_session = _session("s2")
+    plan_session.append(UserMessageRecorded(content="hi"))
+    plan_session.append(PlanSet(steps=("one", "two")))
+    plan_client = RecordingClient([_stop_turn()])
+    LoopRunner(
+        plan_client, _echo_registry(), Bus(), plan_session, 128_000, DEFAULT_LOOP_CONFIG
+    ).execute()
+
+    assert _sent_overhead(plan_client, 0) > _sent_overhead(plain_client, 0)
+
+
+def test_overhead_grows_when_a_nudge_is_present() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    turns: list[list[StreamEvent]] = [
+        [
+            ToolCallReady(tool_call=ToolCall(id=str(i), name="echo", arguments={"text": "same"})),
+            GenerationComplete(finish_reason="tool_calls"),
+        ]
+        for i in range(NUDGE_THRESHOLD)
+    ]
+    turns.append(_stop_turn())
+    client = RecordingClient(turns)
+
+    LoopRunner(client, _echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
+
+    assert client.seen_messages[-1][-1].role is Role.USER
+    assert "repeated" in client.seen_messages[-1][-1].content
+    assert _sent_overhead(client, len(client.seen_messages) - 1) > _sent_overhead(client, 0)
+
+
+def test_overhead_shrinks_the_conversation_budget() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    session.append(ToolCallRecorded(name="echo", arguments={}, result="a" * 3_000, is_error=False))
+    registry = _echo_registry()
+    overhead = estimate_tokens(
+        specs_text(registry.specs()) + SYSTEM_PROMPT, DEFAULT_CHARS_PER_TOKEN
+    )
+    conversation = sum(
+        estimate_tokens(message_text(message), DEFAULT_CHARS_PER_TOKEN)
+        for message in session.messages()
+    )
+    context_size = _context_size_for_budget(conversation + overhead - 1)
+    client = ScriptedClient([_stop_turn()])
+
+    LoopRunner(client, registry, Bus(), session, context_size, DEFAULT_LOOP_CONFIG).execute()
+
+    sent = next(m for m in client.seen_messages[0] if m.role is Role.TOOL)
+    unaware = next(m for m in render_messages(session, context_size) if m.role is Role.TOOL)
+    assert sent.tool_result is not None
+    assert unaware.tool_result is not None
+    assert "fact 2" in sent.tool_result.content
+    assert unaware.tool_result.content == "a" * 3_000
+
+
+def test_ratio_moves_toward_the_observed_value() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="x" * 3_000))
+    client = ScriptedClient(
+        [
+            [
+                ToolCallReady(tool_call=ToolCall(id="1", name="echo", arguments={"text": "hi"})),
+                GenerationComplete(finish_reason="tool_calls", prompt_tokens=1_000),
+            ],
+            [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
+        ]
+    )
+    runner = LoopRunner(client, _echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+
+    runner.execute()
+
+    assert MIN_CHARS_PER_TOKEN <= runner.chars_per_token <= MAX_CHARS_PER_TOKEN
+    assert runner.chars_per_token != DEFAULT_CHARS_PER_TOKEN
+
+
+def test_ratio_clamps_at_the_lower_bound() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    client = ScriptedClient(
+        [
+            [
+                TextDelta(text="done"),
+                GenerationComplete(finish_reason="stop", prompt_tokens=1_000_000),
+            ]
+        ]
+    )
+    runner = LoopRunner(client, _echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+
+    runner.execute()
+
+    assert runner.chars_per_token == MIN_CHARS_PER_TOKEN
+
+
+def test_ratio_clamps_at_the_upper_bound() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="x" * 10_000))
+    client = ScriptedClient(
+        [[TextDelta(text="done"), GenerationComplete(finish_reason="stop", prompt_tokens=1)]]
+    )
+    runner = LoopRunner(client, _echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+
+    runner.execute()
+
+    assert runner.chars_per_token == MAX_CHARS_PER_TOKEN
+
+
+def test_missing_prompt_tokens_leaves_the_ratio_untouched() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    client = ScriptedClient([[TextDelta(text="done"), GenerationComplete(finish_reason="stop")]])
+    runner = LoopRunner(client, _echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+
+    runner.execute()
+
+    assert runner.chars_per_token == DEFAULT_CHARS_PER_TOKEN
+
+
+def test_second_call_estimates_with_the_updated_ratio() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    session.append(ToolCallRecorded(name="echo", arguments={}, result="a" * 3_600, is_error=False))
+    client = RecordingClient(
+        [
+            [
+                ToolCallReady(tool_call=ToolCall(id="1", name="echo", arguments={"text": "hi"})),
+                GenerationComplete(finish_reason="tool_calls", prompt_tokens=1_000_000),
+            ],
+            [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
+        ]
+    )
+    runner = LoopRunner(client, _echo_registry(), Bus(), session, 2_400, DEFAULT_LOOP_CONFIG)
+    client.runner = runner
+
+    runner.execute()
+
+    assert client.seen_ratios[0] == DEFAULT_CHARS_PER_TOKEN
+    assert client.seen_ratios[1] == MIN_CHARS_PER_TOKEN
+    first = [m for m in client.seen_messages[0] if m.role is Role.TOOL]
+    second = [m for m in client.seen_messages[1] if m.role is Role.TOOL]
+    assert first[0].tool_result is not None
+    assert second[0].tool_result is not None
+    assert first[0].tool_result.content == "a" * 3_600
+    assert "fact 2" in second[0].tool_result.content
+
+
+def test_overflowing_prompt_publishes_budget_exceeded() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    client = ScriptedClient(
+        [[TextDelta(text="done"), GenerationComplete(finish_reason="stop", prompt_tokens=9_000)]]
+    )
+
+    LoopRunner(client, _echo_registry(), bus, session, 8_192, DEFAULT_LOOP_CONFIG).execute()
+
+    events = [next(subscriber) for _ in range(6)]
+    exceeded = [event for event in events if isinstance(event, BudgetExceeded)]
+    assert len(exceeded) == 1
+    assert exceeded[0].actual == 9_000
+    assert exceeded[0].budget == prompt_budget(8_192)
+    assert exceeded[0].estimated < exceeded[0].actual
+
+
+def test_fitting_prompt_publishes_no_budget_exceeded() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    client = ScriptedClient(
+        [[TextDelta(text="done"), GenerationComplete(finish_reason="stop", prompt_tokens=100)]]
+    )
+
+    LoopRunner(client, _echo_registry(), bus, session, 8_192, DEFAULT_LOOP_CONFIG).execute()
+
+    events = [next(subscriber) for _ in range(5)]
+    assert not any(isinstance(event, BudgetExceeded) for event in events)

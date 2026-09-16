@@ -1,4 +1,5 @@
 import itertools
+import json
 import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -11,7 +12,13 @@ from pico.core.actions import (
     register_delegate_actions,
 )
 from pico.core.bus import Bus
-from pico.core.context import SYSTEM_PROMPT, render_messages
+from pico.core.context import (
+    SYSTEM_PROMPT,
+    estimate_tokens,
+    message_text,
+    prompt_budget,
+    render_messages,
+)
 from pico.core.errors import ToolError, UnknownToolError
 from pico.core.events import (
     AssistantTextDelta,
@@ -20,6 +27,7 @@ from pico.core.events import (
     AssistantThinkingDelta,
     AssistantThinkingFinished,
     AssistantThinkingStarted,
+    BudgetExceeded,
     ErrorOccurred,
     GenerationCompleted,
     RunCancelled,
@@ -42,6 +50,7 @@ from pico.llm.types import (
     ToolCall,
     ToolCallDelta,
     ToolCallReady,
+    ToolSpec,
 )
 from pico.session import (
     AssistantMessageRecorded,
@@ -56,6 +65,9 @@ Step = Callable[["LoopRunner"], StepOutcome]
 
 MAX_INVALID_ACTION_ATTEMPTS = 5
 MAX_DELEGATE_STEPS = 10
+DEFAULT_CHARS_PER_TOKEN = 4.0
+MIN_CHARS_PER_TOKEN = 2.0
+MAX_CHARS_PER_TOKEN = 6.0
 
 
 @dataclass(frozen=True)
@@ -85,6 +97,7 @@ class LoopRunner:
         self.cancel = cancel if cancel is not None else threading.Event()
         self.pending_tool_calls: list[ToolCall] = []
         self.pending_nudge: str | None = None
+        self.chars_per_token = DEFAULT_CHARS_PER_TOKEN
         self.final_answer: str | None = None
         self.invalid_action_attempts = 0
         self.delegate_calls = 0
@@ -137,6 +150,24 @@ def _plan_message(current: Plan) -> Message:
     )
 
 
+def specs_text(specs: list[ToolSpec]) -> str:
+    return json.dumps(
+        [
+            {"name": spec.name, "description": spec.description, "parameters": spec.parameters}
+            for spec in specs
+        ],
+        sort_keys=True,
+    )
+
+
+def _reconcile(runner: LoopRunner, estimated: int, sent_chars: int, prompt_tokens: int) -> None:
+    observed = sent_chars / prompt_tokens
+    runner.chars_per_token = min(MAX_CHARS_PER_TOKEN, max(MIN_CHARS_PER_TOKEN, observed))
+    budget = prompt_budget(runner.context_size)
+    if prompt_tokens > budget:
+        runner.bus.publish(BudgetExceeded(estimated=estimated, actual=prompt_tokens, budget=budget))
+
+
 def stream_step(runner: LoopRunner) -> StepOutcome:
     text = ""
     thinking = ""
@@ -146,15 +177,30 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
     cancelled = False
 
     current_plan = plan(runner.session)
-    messages = [
+    specs = runner.tools.specs()
+    preamble = [
         Message(role=Role.SYSTEM, content=SYSTEM_PROMPT),
         *([] if current_plan is None else [_plan_message(current_plan)]),
-        *render_messages(runner.session, runner.context_size),
     ]
-    if runner.pending_nudge is not None:
-        messages = [*messages, Message(role=Role.USER, content=runner.pending_nudge)]
+    postamble = (
+        []
+        if runner.pending_nudge is None
+        else [Message(role=Role.USER, content=runner.pending_nudge)]
+    )
+    overhead_text = specs_text(specs) + "".join(
+        message_text(message) for message in [*preamble, *postamble]
+    )
+    overhead_tokens = estimate_tokens(overhead_text, runner.chars_per_token)
+    conversation = render_messages(
+        runner.session, runner.context_size, overhead_tokens, runner.chars_per_token
+    )
+    messages = [*preamble, *conversation, *postamble]
+    estimated = overhead_tokens + sum(
+        estimate_tokens(message_text(message), runner.chars_per_token) for message in conversation
+    )
+    sent_chars = len(overhead_text) + sum(len(message_text(message)) for message in conversation)
 
-    for event in runner.llm.stream(messages, runner.tools.specs()):
+    for event in runner.llm.stream(messages, specs):
         if runner.cancel.is_set():
             cancelled = True
             break
@@ -183,6 +229,8 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
                         prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
                     )
                 )
+                if prompt_tokens:
+                    _reconcile(runner, estimated, sent_chars, prompt_tokens)
 
     if thinking_id is not None:
         runner.bus.publish(AssistantThinkingFinished(id=thinking_id))

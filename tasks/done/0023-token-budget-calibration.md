@@ -16,7 +16,7 @@ This milestone lands before `0024` (compaction) on purpose: elision drops whole 
 * **Calibrate from observed truth, transiently.** `estimate_tokens` gains a `chars_per_token: float = 4.0` parameter (default preserving current behavior: `len(text) // 4` stays the floor-division semantics via `int(len(text) / chars_per_token)`, minimum 1). `LoopRunner` holds `chars_per_token: float` as transient runner state (the `pending_nudge` pattern): after each `GenerationComplete` carrying `prompt_tokens`, `stream_step` computes the actual ratio — total characters it sent (messages plus overhead, the same accounting as above) divided by reported `prompt_tokens` — and updates the runner's value, clamped to `[2.0, 6.0]`. Subsequent estimates in that run use it. Nothing is persisted; every run relearns from its first call, which costs one slightly-off estimate and keeps the session log free of derived state.
 * **Alarm on the lie that matters.** When reported `prompt_tokens` exceeds `context_size` minus the (capped) reserve — the estimate approved a prompt that actually overflowed the budget — publish a new bus event `BudgetExceeded(estimated: int, actual: int, budget: int)` (`src/pico/core/events.py`). No behavior change on the event yet: it exists so the debug `RunLog` (`0015`) records it and eval runs surface it; reacting to it is compaction's business (`0024`) once the arithmetic beneath it is trustworthy.
 
-## [ ] T001 Honest message and overhead accounting
+## [X] T001 Honest message and overhead accounting
 
 ### Description
 
@@ -28,7 +28,7 @@ Extend `_message_tokens` to count tool-call names and serialized arguments; add 
 * `tests/core/test_loop.py` covers, with a recording client: the overhead passed by `stream_step` grows when a nudge or plan message is present and reflects the registered tool specs.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T002 Capped completion reserve
+## [X] T002 Capped completion reserve
 
 ### Description
 
@@ -39,7 +39,7 @@ Implement the capped reserve in `prompt_budget` per the design decisions.
 * `tests/core/test_context.py` covers: at a small context size (e.g. 8192) the budget equals today's fractional value exactly; at a large one (e.g. 65536) the reserve is `COMPLETION_RESERVE_CAP`, not the fraction; the crossover point behaves continuously (no off-by-one cliff).
 * Fully annotated, passes strict Pyright.
 
-## [ ] T003 Ratio calibration and the `BudgetExceeded` alarm
+## [X] T003 Ratio calibration and the `BudgetExceeded` alarm
 
 ### Description
 
@@ -51,7 +51,7 @@ Add the `chars_per_token` parameter to `estimate_tokens`, the transient runner r
 * `tests/core/test_loop.py` covers, with scripted `GenerationComplete` token counts: the runner's ratio moves toward the observed value and clamps at both bounds; a second LLM call in the same run estimates with the updated ratio (assert via the recording client on a scenario the default ratio would have trimmed differently); absent `prompt_tokens` changes nothing; a scripted overflow publishes `BudgetExceeded` with the right fields, and a fitting prompt publishes none.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T004 Verify and finalize
+## [X] T004 Verify and finalize
 
 ### Description
 

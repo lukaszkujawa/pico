@@ -10,6 +10,7 @@ from pico.core.events import (
     AssistantThinkingDelta,
     AssistantThinkingFinished,
     AssistantThinkingStarted,
+    BudgetExceeded,
     BusEvent,
     ErrorOccurred,
     GenerationCompleted,
@@ -174,3 +175,5 @@ def translate(event: BusEvent) -> TuiMessage | None:
             )
         case ErrorOccurred(message=message):
             return ErrorMessage(message=message)
+        case BudgetExceeded():
+            return None

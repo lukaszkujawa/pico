@@ -5,6 +5,7 @@ from pico.core.events import (
     AssistantThinkingDelta,
     AssistantThinkingFinished,
     AssistantThinkingStarted,
+    BudgetExceeded,
     BusEvent,
     ErrorOccurred,
     GenerationCompleted,
@@ -99,6 +100,12 @@ def test_run_cancelled() -> None:
     assert RunCancelled() == RunCancelled()
 
 
+def test_budget_exceeded_carries_estimate_actual_and_budget() -> None:
+    event = BudgetExceeded(estimated=900, actual=1500, budget=1200)
+
+    assert (event.estimated, event.actual, event.budget) == (900, 1500, 1200)
+
+
 def test_bus_event_exhaustive_match() -> None:
     def describe(event: BusEvent) -> str:
         match event:
@@ -128,6 +135,8 @@ def test_bus_event_exhaustive_match() -> None:
                 return "error_occurred"
             case RunCancelled():
                 return "run_cancelled"
+            case BudgetExceeded():
+                return "budget_exceeded"
 
     assert describe(RunStarted()) == "run_started"
     assert describe(RunFinished()) == "run_finished"
@@ -143,3 +152,4 @@ def test_bus_event_exhaustive_match() -> None:
     assert describe(GenerationCompleted()) == "generation_completed"
     assert describe(ErrorOccurred(message="boom")) == "error_occurred"
     assert describe(RunCancelled()) == "run_cancelled"
+    assert describe(BudgetExceeded(estimated=1, actual=2, budget=1)) == "budget_exceeded"
