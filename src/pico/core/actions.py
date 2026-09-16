@@ -1,7 +1,7 @@
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Self
+from typing import Self, cast
 
 from pico.core.tools import Tool, ToolRegistry
 from pico.llm.types import ToolSpec
@@ -20,6 +20,23 @@ def _require[T](arguments: Mapping[str, object], field: str, expected: type[T]) 
             f"field {field!r} must be a {expected.__name__}, got {type(value).__name__}"
         )
     return value
+
+
+def _require_int_list(arguments: Mapping[str, object], field: str) -> tuple[int, ...]:
+    if field not in arguments:
+        raise InvalidActionError(f"missing required field {field!r}")
+    value = arguments[field]
+    if not isinstance(value, list):
+        raise InvalidActionError(f"field {field!r} must be a list, got {type(value).__name__}")
+    raw = cast(list[object], value)
+    elements: list[int] = []
+    for element in raw:
+        if not isinstance(element, int):
+            raise InvalidActionError(
+                f"field {field!r} must be a list of integers, got {type(element).__name__} element"
+            )
+        elements.append(element)
+    return tuple(elements)
 
 
 @dataclass(frozen=True)
@@ -88,11 +105,13 @@ class Shell:
 @dataclass(frozen=True)
 class Answer:
     content: str
+    citations: tuple[int, ...]
 
     @classmethod
     def from_arguments(cls, arguments: Mapping[str, object]) -> Self:
         content = _require(arguments, "content", str)
-        return cls(content=content)
+        citations = _require_int_list(arguments, "citations")
+        return cls(content=content, citations=citations)
 
 
 Action = ReadFile | WriteFile | Shell | Answer
@@ -133,8 +152,11 @@ _TOOL_SPECS = {
         description="Give the final answer to the user and end the run.",
         parameters={
             "type": "object",
-            "properties": {"content": {"type": "string"}},
-            "required": ["content"],
+            "properties": {
+                "content": {"type": "string"},
+                "citations": {"type": "array", "items": {"type": "integer"}},
+            },
+            "required": ["content", "citations"],
         },
     ),
 }

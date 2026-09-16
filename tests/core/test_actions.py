@@ -106,13 +106,28 @@ def test_shell_execute_timeout_returns_error_string() -> None:
 
 
 def test_answer_from_arguments() -> None:
-    action = Answer.from_arguments({"content": "the answer"})
-    assert action == Answer(content="the answer")
+    action = Answer.from_arguments({"content": "the answer", "citations": [0, 1]})
+    assert action == Answer(content="the answer", citations=(0, 1))
 
 
-def test_answer_from_arguments_missing_field() -> None:
+def test_answer_from_arguments_missing_content() -> None:
     with pytest.raises(InvalidActionError):
-        Answer.from_arguments({})
+        Answer.from_arguments({"citations": []})
+
+
+def test_answer_from_arguments_missing_citations() -> None:
+    with pytest.raises(InvalidActionError):
+        Answer.from_arguments({"content": "the answer"})
+
+
+def test_answer_from_arguments_citations_not_a_list() -> None:
+    with pytest.raises(InvalidActionError):
+        Answer.from_arguments({"content": "the answer", "citations": "0"})
+
+
+def test_answer_from_arguments_citations_with_non_int_element() -> None:
+    with pytest.raises(InvalidActionError):
+        Answer.from_arguments({"content": "the answer", "citations": [0, "1"]})
 
 
 def test_register_actions_populates_all_four_names() -> None:

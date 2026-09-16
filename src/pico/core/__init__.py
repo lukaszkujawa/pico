@@ -25,6 +25,7 @@ from pico.core.events import (
     ToolCallFinished,
     ToolCallStarted,
 )
+from pico.core.ledger import Fact, Goal, facts, goal
 from pico.core.loop import (
     DEFAULT_LOOP_CONFIG,
     MAX_INVALID_ACTION_ATTEMPTS,
@@ -50,6 +51,8 @@ __all__ = [
     "Bus",
     "BusEvent",
     "ErrorOccurred",
+    "Fact",
+    "Goal",
     "InvalidActionError",
     "LoopConfig",
     "LoopRunner",
@@ -66,6 +69,8 @@ __all__ = [
     "ToolRegistry",
     "UnknownToolError",
     "WriteFile",
+    "facts",
+    "goal",
     "register_actions",
     "stream_step",
     "tool_call_step",

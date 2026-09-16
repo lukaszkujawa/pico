@@ -21,6 +21,7 @@ from pico.core.events import (
     ToolCallFinished,
     ToolCallStarted,
 )
+from pico.core.ledger import facts
 from pico.core.tools import ToolRegistry
 from pico.llm.client import LLMClient
 from pico.llm.errors import LLMError
@@ -159,6 +160,10 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
         if call.name == "answer":
             try:
                 answer = Answer.from_arguments(call.arguments)
+                known = {fact.index for fact in facts(runner.session)}
+                unknown = [index for index in answer.citations if index not in known]
+                if unknown:
+                    raise InvalidActionError(f"unknown fact citation(s): {unknown}")
                 output = answer.content
                 is_error = False
                 runner.final_answer = answer.content

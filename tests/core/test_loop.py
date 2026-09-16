@@ -506,7 +506,7 @@ def test_valid_answer_call_ends_run_and_records_result() -> None:
     subscriber = bus.subscribe()
     session = _session()
     session.append(UserMessageRecorded(content="hi"))
-    call = ToolCall(id="1", name="answer", arguments={"content": "the answer"})
+    call = ToolCall(id="1", name="answer", arguments={"content": "the answer", "citations": []})
     client = ScriptedClient(
         [[ToolCallReady(tool_call=call), GenerationComplete(finish_reason="tool_calls")]]
     )
@@ -523,7 +523,10 @@ def test_valid_answer_call_ends_run_and_records_result() -> None:
     ]
     assert runner.final_answer == "the answer"
     assert list(session.events())[-1] == ToolCallRecorded(
-        name="answer", arguments={"content": "the answer"}, result="the answer", is_error=False
+        name="answer",
+        arguments={"content": "the answer", "citations": []},
+        result="the answer",
+        is_error=False,
     )
 
 
@@ -549,6 +552,47 @@ def test_invalid_answer_call_continues_run_instead_of_ending() -> None:
     assert isinstance(finished, ToolCallFinished)
     assert finished.is_error is True
     assert runner.final_answer is None
+
+
+def test_answer_citing_known_fact_ends_run() -> None:
+    bus = Bus()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    session.append(
+        ToolCallRecorded(name="read_file", arguments={}, result="content", is_error=False)
+    )
+    call = ToolCall(id="1", name="answer", arguments={"content": "the answer", "citations": [0]})
+    client = ScriptedClient(
+        [[ToolCallReady(tool_call=call), GenerationComplete(finish_reason="tool_calls")]]
+    )
+
+    runner = LoopRunner(client, _echo_registry(), bus, session, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    assert runner.final_answer == "the answer"
+
+
+def test_answer_citing_unknown_fact_continues_run() -> None:
+    bus = Bus()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    call = ToolCall(id="1", name="answer", arguments={"content": "the answer", "citations": [0]})
+    client = ScriptedClient(
+        [
+            [ToolCallReady(tool_call=call), GenerationComplete(finish_reason="tool_calls")],
+            [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
+        ]
+    )
+
+    runner = LoopRunner(client, _echo_registry(), bus, session, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    assert runner.final_answer is None
+    last_tool_event = [event for event in session.events() if isinstance(event, ToolCallRecorded)][
+        -1
+    ]
+    assert last_tool_event.is_error is True
+    assert "unknown fact citation" in last_tool_event.result
 
 
 def test_repeated_invalid_actions_stop_run_at_max_attempts() -> None:
