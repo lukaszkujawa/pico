@@ -44,7 +44,16 @@ from pico.core.loop import (
     LoopRunner,
     StepOutcome,
     stream_step,
+    stuckness_step,
     tool_call_step,
+)
+from pico.core.stuckness import (
+    NUDGE_THRESHOLD,
+    STUCK_THRESHOLD,
+    Stuckness,
+    assess,
+    repeated_action_streak,
+    tool_failure_streak,
 )
 from pico.core.tools import Tool, ToolRegistry
 
@@ -53,6 +62,8 @@ __all__ = [
     "DEFAULT_LOOP_CONFIG",
     "MAX_DELEGATE_STEPS",
     "MAX_INVALID_ACTION_ATTEMPTS",
+    "NUDGE_THRESHOLD",
+    "STUCK_THRESHOLD",
     "Action",
     "Answer",
     "AssistantTextDelta",
@@ -77,6 +88,7 @@ __all__ = [
     "RunStarted",
     "Shell",
     "StepOutcome",
+    "Stuckness",
     "Tool",
     "ToolCallArgumentsDelta",
     "ToolCallFinished",
@@ -84,6 +96,7 @@ __all__ = [
     "ToolRegistry",
     "UnknownToolError",
     "WriteFile",
+    "assess",
     "estimate_tokens",
     "facts",
     "goal",
@@ -92,6 +105,9 @@ __all__ = [
     "register_delegate_actions",
     "render_messages",
     "render_tool_result",
+    "repeated_action_streak",
     "stream_step",
+    "stuckness_step",
     "tool_call_step",
+    "tool_failure_streak",
 ]

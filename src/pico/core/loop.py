@@ -28,11 +28,14 @@ from pico.core.events import (
     ToolCallStarted,
 )
 from pico.core.ledger import facts
+from pico.core.stuckness import assess
 from pico.core.tools import ToolRegistry
 from pico.llm.client import LLMClient
 from pico.llm.errors import LLMError
 from pico.llm.types import (
     GenerationComplete,
+    Message,
+    Role,
     TextDelta,
     ThinkingDelta,
     ToolCall,
@@ -79,6 +82,7 @@ class LoopRunner:
         self.config = config
         self.cancel = cancel if cancel is not None else threading.Event()
         self.pending_tool_calls: list[ToolCall] = []
+        self.pending_nudge: str | None = None
         self.final_answer: str | None = None
         self.invalid_action_attempts = 0
         self.delegate_calls = 0
@@ -115,6 +119,14 @@ class LoopRunner:
         return "continue"
 
 
+def stuckness_step(runner: LoopRunner) -> StepOutcome:
+    result = assess(runner.session)
+    if result.stuck:
+        return "done"
+    runner.pending_nudge = result.nudge
+    return "continue"
+
+
 def stream_step(runner: LoopRunner) -> StepOutcome:
     text = ""
     thinking = ""
@@ -123,9 +135,11 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
     thinking_id: str | None = None
     cancelled = False
 
-    for event in runner.llm.stream(
-        render_messages(runner.session, runner.context_size), runner.tools.specs()
-    ):
+    messages = render_messages(runner.session, runner.context_size)
+    if runner.pending_nudge is not None:
+        messages = [*messages, Message(role=Role.USER, content=runner.pending_nudge)]
+
+    for event in runner.llm.stream(messages, runner.tools.specs()):
         if runner.cancel.is_set():
             cancelled = True
             break
@@ -242,4 +256,4 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
     return outcome
 
 
-DEFAULT_LOOP_CONFIG = LoopConfig(steps=(stream_step, tool_call_step))
+DEFAULT_LOOP_CONFIG = LoopConfig(steps=(stuckness_step, stream_step, tool_call_step))

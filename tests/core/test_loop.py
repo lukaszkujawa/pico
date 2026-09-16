@@ -26,13 +26,16 @@ from pico.core.loop import (
     LoopRunner,
     StepOutcome,
     stream_step,
+    stuckness_step,
     tool_call_step,
 )
+from pico.core.stuckness import NUDGE_THRESHOLD, STUCK_THRESHOLD
 from pico.core.tools import Tool, ToolRegistry
 from pico.llm.errors import LLMError
 from pico.llm.types import (
     GenerationComplete,
     Message,
+    Role,
     StreamEvent,
     TextDelta,
     ThinkingDelta,
@@ -522,8 +525,8 @@ def test_cancelled_turn_does_not_publish_run_finished() -> None:
     assert not any(isinstance(event, RunFinished) for event in events)
 
 
-def test_default_loop_config_is_stream_then_tool_call() -> None:
-    assert DEFAULT_LOOP_CONFIG.steps == (stream_step, tool_call_step)
+def test_default_loop_config_is_stuckness_then_stream_then_tool_call() -> None:
+    assert DEFAULT_LOOP_CONFIG.steps == (stuckness_step, stream_step, tool_call_step)
     assert DEFAULT_LOOP_CONFIG.max_steps is None
 
 
@@ -627,7 +630,7 @@ def test_repeated_invalid_actions_stop_run_at_max_attempts() -> None:
     session.append(UserMessageRecorded(content="hi"))
     turns: list[list[StreamEvent]] = [
         [
-            ToolCallReady(tool_call=ToolCall(id=str(i), name="missing", arguments={})),
+            ToolCallReady(tool_call=ToolCall(id=str(i), name="missing", arguments={"n": i})),
             GenerationComplete(finish_reason="tool_calls"),
         ]
         for i in range(MAX_INVALID_ACTION_ATTEMPTS + 5)
@@ -863,3 +866,65 @@ def test_delegate_child_stream_events_do_not_appear_on_parent_bus() -> None:
         AssistantTextDelta(id="0", text="done"),
         AssistantTextFinished(id="0"),
     ]
+
+
+def test_repeated_identical_action_hits_hard_stuckness_before_max_steps() -> None:
+    bus = Bus()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    turns: list[list[StreamEvent]] = [
+        [
+            ToolCallReady(tool_call=ToolCall(id=str(i), name="echo", arguments={"text": "same"})),
+            GenerationComplete(finish_reason="tool_calls"),
+        ]
+        for i in range(STUCK_THRESHOLD + 5)
+    ]
+    client = ScriptedClient(turns)
+
+    runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    tool_events = [event for event in session.events() if isinstance(event, ToolCallRecorded)]
+    assert len(tool_events) == STUCK_THRESHOLD
+
+
+def test_nudge_below_stuck_threshold_is_appended_as_user_message_not_persisted() -> None:
+    bus = Bus()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    turns: list[list[StreamEvent]] = [
+        [
+            ToolCallReady(tool_call=ToolCall(id=str(i), name="echo", arguments={"text": "same"})),
+            GenerationComplete(finish_reason="tool_calls"),
+        ]
+        for i in range(NUDGE_THRESHOLD)
+    ]
+    turns.append([TextDelta(text="done"), GenerationComplete(finish_reason="stop")])
+    client = ScriptedClient(turns)
+
+    runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    last_call_messages = client.seen_messages[-1]
+    assert last_call_messages[-1].role is Role.USER
+    assert "repeated" in last_call_messages[-1].content
+
+    assert not any(
+        isinstance(event, UserMessageRecorded) and "repeated" in event.content
+        for event in session.events()
+    )
+
+
+def test_no_nudge_below_threshold_behaves_as_before() -> None:
+    bus = Bus()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    client = ScriptedClient([[TextDelta(text="hello"), GenerationComplete(finish_reason="stop")]])
+
+    runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    sent_messages = client.seen_messages[0]
+    assert all(
+        message.role is not Role.USER or message.content == "hi" for message in sent_messages
+    )
