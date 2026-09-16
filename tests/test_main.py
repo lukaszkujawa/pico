@@ -13,6 +13,7 @@ def _config() -> Config:
         model="qwen3",
         api_key=None,
         context_size=1024,
+        session_path="pico.db",
     )
 
 

@@ -10,6 +10,7 @@ REQUIRED_VARS = {
     "LLM_MODEL": "qwen3.8:latest",
     "LLM_API_KEY": "secret",
     "LLM_CONTEXT_SIZE": "128000",
+    "SESSION_DB_PATH": "pico.db",
 }
 
 ENV_KEYS = [
@@ -18,6 +19,7 @@ ENV_KEYS = [
     "LLM_MODEL",
     "LLM_API_KEY",
     "LLM_CONTEXT_SIZE",
+    "SESSION_DB_PATH",
 ]
 
 
@@ -46,10 +48,13 @@ def test_load_config_returns_populated_config(monkeypatch: pytest.MonkeyPatch) -
         model="qwen3.8:latest",
         api_key="secret",
         context_size=128000,
+        session_path="pico.db",
     )
 
 
-@pytest.mark.parametrize("missing", ["LLM_BASE_URL", "LLM_MODEL", "LLM_CONTEXT_SIZE"])
+@pytest.mark.parametrize(
+    "missing", ["LLM_BASE_URL", "LLM_MODEL", "LLM_CONTEXT_SIZE", "SESSION_DB_PATH"]
+)
 def test_missing_required_variable_raises_config_error(
     monkeypatch: pytest.MonkeyPatch, missing: str
 ) -> None:

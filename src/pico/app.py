@@ -2,13 +2,15 @@ import queue
 import threading
 
 from pico.config import Config
-from pico.core.agent import Run
 from pico.core.bus import Bus
+from pico.core.loop import DEFAULT_LOOP_CONFIG, LoopRunner
 from pico.core.tools import ToolRegistry
 from pico.llm.client import LLMClient
 from pico.llm.ollama import OllamaClient
-from pico.llm.types import Message, Role
+from pico.session import Session, UserMessageRecorded, connect
 from pico.tui import PicoApp
+
+DEFAULT_SESSION_ID = "default"
 
 
 class UnsupportedVendorError(Exception):
@@ -40,11 +42,11 @@ def _turn_loop(
     llm: LLMClient,
     tools: ToolRegistry,
     bus: Bus,
+    session: Session,
     input_queue: "queue.Queue[str]",
     shutdown: threading.Event,
     cancel_handle: CancelHandle,
 ) -> None:
-    run = Run(llm, tools, bus, [])
     while True:
         try:
             text = input_queue.get(timeout=0.1)
@@ -52,11 +54,11 @@ def _turn_loop(
             if shutdown.is_set():
                 return
             continue
-        run.messages.append(Message(role=Role.USER, content=text))
+        session.append(UserMessageRecorded(content=text))
         cancel = threading.Event()
-        run.cancel = cancel
         cancel_handle.arm(cancel)
-        run.execute()
+        runner = LoopRunner(llm, tools, bus, session, DEFAULT_LOOP_CONFIG, cancel)
+        runner.execute()
         cancel_handle.disarm()
 
 
@@ -64,13 +66,15 @@ def run_pico(config: Config) -> None:
     llm = _build_llm_client(config)
     tools = ToolRegistry()
     bus = Bus()
+    conn = connect(config.session_path)
+    session = Session(conn, DEFAULT_SESSION_ID)
     input_queue: queue.Queue[str] = queue.Queue()
     shutdown = threading.Event()
     cancel_handle = CancelHandle()
 
     core_thread = threading.Thread(
         target=_turn_loop,
-        args=(llm, tools, bus, input_queue, shutdown, cancel_handle),
+        args=(llm, tools, bus, session, input_queue, shutdown, cancel_handle),
         daemon=True,
     )
     core_thread.start()

@@ -1,4 +1,3 @@
-from pico.core.agent import Run
 from pico.core.bus import Bus
 from pico.core.errors import UnknownToolError
 from pico.core.events import (
@@ -17,9 +16,18 @@ from pico.core.events import (
     ToolCallFinished,
     ToolCallStarted,
 )
+from pico.core.loop import (
+    DEFAULT_LOOP_CONFIG,
+    LoopConfig,
+    LoopRunner,
+    StepOutcome,
+    stream_step,
+    tool_call_step,
+)
 from pico.core.tools import Tool, ToolRegistry
 
 __all__ = [
+    "DEFAULT_LOOP_CONFIG",
     "AssistantTextDelta",
     "AssistantTextFinished",
     "AssistantTextStarted",
@@ -29,14 +37,18 @@ __all__ = [
     "Bus",
     "BusEvent",
     "ErrorOccurred",
-    "Run",
+    "LoopConfig",
+    "LoopRunner",
     "RunCancelled",
     "RunFinished",
     "RunStarted",
+    "StepOutcome",
     "Tool",
     "ToolCallArgumentsDelta",
     "ToolCallFinished",
     "ToolCallStarted",
     "ToolRegistry",
     "UnknownToolError",
+    "stream_step",
+    "tool_call_step",
 ]

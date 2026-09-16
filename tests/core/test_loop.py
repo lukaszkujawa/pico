@@ -1,7 +1,6 @@
 import threading
 from collections.abc import Iterator
 
-from pico.core.agent import Run
 from pico.core.bus import Bus
 from pico.core.events import (
     AssistantTextDelta,
@@ -18,12 +17,19 @@ from pico.core.events import (
     ToolCallFinished,
     ToolCallStarted,
 )
+from pico.core.loop import (
+    DEFAULT_LOOP_CONFIG,
+    LoopConfig,
+    LoopRunner,
+    StepOutcome,
+    stream_step,
+    tool_call_step,
+)
 from pico.core.tools import Tool, ToolRegistry
 from pico.llm.errors import LLMError
 from pico.llm.types import (
     GenerationComplete,
     Message,
-    Role,
     StreamEvent,
     TextDelta,
     ThinkingDelta,
@@ -31,6 +37,13 @@ from pico.llm.types import (
     ToolCallDelta,
     ToolCallReady,
     ToolSpec,
+)
+from pico.session import (
+    AssistantMessageRecorded,
+    Session,
+    ToolCallRecorded,
+    UserMessageRecorded,
+    connect,
 )
 
 
@@ -74,9 +87,146 @@ def _echo_registry() -> ToolRegistry:
     return registry
 
 
+def _session(session_id: str = "s1") -> Session:
+    conn = connect(":memory:")
+    return Session(conn, session_id)
+
+
+def test_step_outcome_accepts_each_literal_value() -> None:
+    def make(value: StepOutcome) -> StepOutcome:
+        return value
+
+    assert make("continue") == "continue"
+    assert make("done") == "done"
+    assert make("cancelled") == "cancelled"
+
+
+def test_loop_config_holds_ordered_steps_and_max_steps() -> None:
+    def a(runner: LoopRunner) -> StepOutcome:
+        return "done"
+
+    def b(runner: LoopRunner) -> StepOutcome:
+        return "done"
+
+    config = LoopConfig(steps=(a, b), max_steps=5)
+
+    assert config.steps == (a, b)
+    assert config.max_steps == 5
+
+
+def test_single_always_done_step_publishes_started_and_finished() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+
+    def always_done(runner: LoopRunner) -> StepOutcome:
+        return "done"
+
+    runner = LoopRunner(
+        FailingClient(), _echo_registry(), bus, _session(), LoopConfig(steps=(always_done,))
+    )
+    runner.execute()
+
+    assert next(subscriber) == RunStarted()
+    assert next(subscriber) == RunFinished()
+
+
+def test_continue_n_times_then_done_runs_n_plus_one_iterations() -> None:
+    bus = Bus()
+    calls: list[int] = []
+
+    def counting(runner: LoopRunner) -> StepOutcome:
+        calls.append(1)
+        return "continue" if len(calls) <= 2 else "done"
+
+    runner = LoopRunner(
+        FailingClient(), _echo_registry(), bus, _session(), LoopConfig(steps=(counting,))
+    )
+    runner.execute()
+
+    assert len(calls) == 3
+
+
+def test_cancelled_outcome_publishes_cancelled_not_finished() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+
+    def always_cancelled(runner: LoopRunner) -> StepOutcome:
+        return "cancelled"
+
+    runner = LoopRunner(
+        FailingClient(), _echo_registry(), bus, _session(), LoopConfig(steps=(always_cancelled,))
+    )
+    runner.execute()
+
+    assert next(subscriber) == RunStarted()
+    assert next(subscriber) == RunCancelled()
+
+
+def test_step_raising_llm_error_surfaces_as_error_occurred() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+
+    def raising(runner: LoopRunner) -> StepOutcome:
+        raise LLMError("connection lost")
+
+    runner = LoopRunner(
+        FailingClient(), _echo_registry(), bus, _session(), LoopConfig(steps=(raising,))
+    )
+    runner.execute()
+
+    assert next(subscriber) == RunStarted()
+    assert next(subscriber) == ErrorOccurred(message="connection lost")
+    assert next(subscriber) == RunFinished(error="connection lost")
+
+
+def test_max_steps_reached_without_terminal_outcome_publishes_finished() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+    calls: list[int] = []
+
+    def always_continue(runner: LoopRunner) -> StepOutcome:
+        calls.append(1)
+        return "continue"
+
+    runner = LoopRunner(
+        FailingClient(),
+        _echo_registry(),
+        bus,
+        _session(),
+        LoopConfig(steps=(always_continue,), max_steps=3),
+    )
+    runner.execute()
+
+    assert len(calls) == 3
+    assert next(subscriber) == RunStarted()
+    assert next(subscriber) == RunFinished()
+
+
+def test_steps_after_non_continue_step_are_not_called() -> None:
+    bus = Bus()
+    calls: list[str] = []
+
+    def first(runner: LoopRunner) -> StepOutcome:
+        calls.append("first")
+        return "done"
+
+    def second(runner: LoopRunner) -> StepOutcome:
+        calls.append("second")
+        return "done"
+
+    runner = LoopRunner(
+        FailingClient(), _echo_registry(), bus, _session(), LoopConfig(steps=(first, second))
+    )
+    runner.execute()
+
+    assert calls == ["first"]
+
+
 def test_plain_text_run() -> None:
     bus = Bus()
     subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
     client = ScriptedClient(
         [
             [
@@ -87,8 +237,8 @@ def test_plain_text_run() -> None:
         ]
     )
 
-    run = Run(client, _echo_registry(), bus, [Message(role=Role.USER, content="hi")])
-    run.execute()
+    runner = LoopRunner(client, _echo_registry(), bus, session, DEFAULT_LOOP_CONFIG)
+    runner.execute()
 
     events = [next(subscriber) for _ in range(6)]
     assert events == [
@@ -99,11 +249,17 @@ def test_plain_text_run() -> None:
         AssistantTextFinished(id="0"),
         RunFinished(),
     ]
+    assert list(session.events()) == [
+        UserMessageRecorded(content="hi"),
+        AssistantMessageRecorded(content="hello world", thinking=""),
+    ]
 
 
-def test_thinking_then_text_published_in_order_with_shared_ids() -> None:
+def test_thinking_then_text_published_in_order_with_shared_ids_across_two_turns() -> None:
     bus = Bus()
     subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
     client = ScriptedClient(
         [
             [
@@ -113,14 +269,19 @@ def test_thinking_then_text_published_in_order_with_shared_ids() -> None:
                 TextDelta(text="world"),
                 GenerationComplete(finish_reason="stop"),
             ],
+            [
+                ThinkingDelta(text="second thought"),
+                TextDelta(text="second answer"),
+                GenerationComplete(finish_reason="stop"),
+            ],
         ]
     )
 
-    run = Run(client, _echo_registry(), bus, [Message(role=Role.USER, content="hi")])
-    run.execute()
+    runner = LoopRunner(client, _echo_registry(), bus, session, DEFAULT_LOOP_CONFIG)
+    runner.execute()
 
-    events = [next(subscriber) for _ in range(10)]
-    assert events == [
+    first_events = [next(subscriber) for _ in range(10)]
+    assert first_events == [
         RunStarted(),
         AssistantThinkingStarted(id="0"),
         AssistantThinkingDelta(id="0", text="pondering "),
@@ -133,61 +294,7 @@ def test_thinking_then_text_published_in_order_with_shared_ids() -> None:
         RunFinished(),
     ]
 
-
-def test_text_only_step_publishes_no_thinking_events() -> None:
-    bus = Bus()
-    subscriber = bus.subscribe()
-    client = ScriptedClient(
-        [
-            [TextDelta(text="hi"), GenerationComplete(finish_reason="stop")],
-        ]
-    )
-
-    run = Run(client, _echo_registry(), bus, [Message(role=Role.USER, content="hi")])
-    run.execute()
-
-    events = [next(subscriber) for _ in range(5)]
-    assert events == [
-        RunStarted(),
-        AssistantTextStarted(id="0"),
-        AssistantTextDelta(id="0", text="hi"),
-        AssistantTextFinished(id="0"),
-        RunFinished(),
-    ]
-    assert not any(isinstance(event, AssistantThinkingStarted) for event in events)
-
-
-def test_stream_ids_unique_across_two_turns_on_same_run() -> None:
-    bus = Bus()
-    subscriber = bus.subscribe()
-    messages = [Message(role=Role.USER, content="hi")]
-    client = ScriptedClient(
-        [
-            [
-                ThinkingDelta(text="first thought"),
-                TextDelta(text="first answer"),
-                GenerationComplete(finish_reason="stop"),
-            ],
-            [
-                ThinkingDelta(text="second thought"),
-                TextDelta(text="second answer"),
-                GenerationComplete(finish_reason="stop"),
-            ],
-        ]
-    )
-
-    run = Run(client, _echo_registry(), bus, messages)
-    run.execute()
-
-    first_events = [next(subscriber) for _ in range(7)]
-    started_ids_first = [
-        event.id
-        for event in first_events
-        if isinstance(event, AssistantThinkingStarted | AssistantTextStarted)
-    ]
-    assert started_ids_first == ["0", "1"]
-
-    run.execute()
+    runner.execute()
 
     second_events = [next(subscriber) for _ in range(7)]
     started_ids_second = [
@@ -196,12 +303,19 @@ def test_stream_ids_unique_across_two_turns_on_same_run() -> None:
         if isinstance(event, AssistantThinkingStarted | AssistantTextStarted)
     ]
     assert started_ids_second == ["2", "3"]
-    assert set(started_ids_first).isdisjoint(started_ids_second)
+
+    assert list(session.events()) == [
+        UserMessageRecorded(content="hi"),
+        AssistantMessageRecorded(content="hello world", thinking="pondering more"),
+        AssistantMessageRecorded(content="second answer", thinking="second thought"),
+    ]
 
 
 def test_single_tool_call_round_trip() -> None:
     bus = Bus()
     subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
     call = ToolCall(id="1", name="echo", arguments={"text": "hi"})
     client = ScriptedClient(
         [
@@ -210,8 +324,8 @@ def test_single_tool_call_round_trip() -> None:
         ]
     )
 
-    run = Run(client, _echo_registry(), bus, [Message(role=Role.USER, content="hi")])
-    run.execute()
+    runner = LoopRunner(client, _echo_registry(), bus, session, DEFAULT_LOOP_CONFIG)
+    runner.execute()
 
     events = [next(subscriber) for _ in range(7)]
     assert events == [
@@ -223,11 +337,19 @@ def test_single_tool_call_round_trip() -> None:
         AssistantTextFinished(id="0"),
         RunFinished(),
     ]
+    assert list(session.events()) == [
+        UserMessageRecorded(content="hi"),
+        AssistantMessageRecorded(content="", thinking=""),
+        ToolCallRecorded(name="echo", arguments={"text": "hi"}, result="hi", is_error=False),
+        AssistantMessageRecorded(content="done", thinking=""),
+    ]
 
 
 def test_tool_call_arguments_delta_forwarded() -> None:
     bus = Bus()
     subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
     call = ToolCall(id="1", name="echo", arguments={"text": "hi"})
     client = ScriptedClient(
         [
@@ -240,8 +362,8 @@ def test_tool_call_arguments_delta_forwarded() -> None:
         ]
     )
 
-    run = Run(client, _echo_registry(), bus, [Message(role=Role.USER, content="hi")])
-    run.execute()
+    runner = LoopRunner(client, _echo_registry(), bus, session, DEFAULT_LOOP_CONFIG)
+    runner.execute()
 
     events = [next(subscriber) for _ in range(5)]
     assert events == [
@@ -256,6 +378,8 @@ def test_tool_call_arguments_delta_forwarded() -> None:
 def test_unknown_tool_call_surfaced_as_tool_error() -> None:
     bus = Bus()
     subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
     call = ToolCall(id="1", name="missing", arguments={})
     client = ScriptedClient(
         [
@@ -264,8 +388,8 @@ def test_unknown_tool_call_surfaced_as_tool_error() -> None:
         ]
     )
 
-    run = Run(client, ToolRegistry(), bus, [Message(role=Role.USER, content="hi")])
-    run.execute()
+    runner = LoopRunner(client, ToolRegistry(), bus, session, DEFAULT_LOOP_CONFIG)
+    runner.execute()
 
     events = [next(subscriber) for _ in range(4)]
     assert events == [
@@ -274,15 +398,20 @@ def test_unknown_tool_call_surfaced_as_tool_error() -> None:
         ToolCallFinished(id="1", tool_call=call, result="missing", is_error=True),
         RunFinished(),
     ]
+    assert ToolCallRecorded(name="missing", arguments={}, result="missing", is_error=True) in list(
+        session.events()
+    )
 
 
 def test_llm_error_surfaced_as_error_occurred() -> None:
     bus = Bus()
     subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
     client = FailingClient()
 
-    run = Run(client, _echo_registry(), bus, [Message(role=Role.USER, content="hi")])
-    run.execute()
+    runner = LoopRunner(client, _echo_registry(), bus, session, DEFAULT_LOOP_CONFIG)
+    runner.execute()
 
     events = [next(subscriber) for _ in range(3)]
     assert events == [
@@ -295,6 +424,8 @@ def test_llm_error_surfaced_as_error_occurred() -> None:
 def test_cancel_set_before_streaming_stops_immediately() -> None:
     bus = Bus()
     subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
     cancel = threading.Event()
     cancel.set()
     client = CancellingClient(
@@ -303,16 +434,19 @@ def test_cancel_set_before_streaming_stops_immediately() -> None:
         cancel_after=-1,
     )
 
-    run = Run(client, _echo_registry(), bus, [Message(role=Role.USER, content="hi")], cancel)
-    run.execute()
+    runner = LoopRunner(client, _echo_registry(), bus, session, DEFAULT_LOOP_CONFIG, cancel)
+    runner.execute()
 
     events = [next(subscriber) for _ in range(2)]
     assert events == [RunStarted(), RunCancelled()]
+    assert list(session.events()) == [UserMessageRecorded(content="hi")]
 
 
 def test_cancel_mid_stream_stops_consuming_and_closes_open_panes() -> None:
     bus = Bus()
     subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
     cancel = threading.Event()
     client = CancellingClient(
         events=[
@@ -325,8 +459,8 @@ def test_cancel_mid_stream_stops_consuming_and_closes_open_panes() -> None:
         cancel_after=2,
     )
 
-    run = Run(client, _echo_registry(), bus, [Message(role=Role.USER, content="hi")], cancel)
-    run.execute()
+    runner = LoopRunner(client, _echo_registry(), bus, session, DEFAULT_LOOP_CONFIG, cancel)
+    runner.execute()
 
     events = [next(subscriber) for _ in range(6)]
     assert events == [
@@ -344,6 +478,8 @@ def test_cancel_mid_stream_stops_consuming_and_closes_open_panes() -> None:
 def test_cancelled_turn_does_not_publish_run_finished() -> None:
     bus = Bus()
     subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
     cancel = threading.Event()
     client = CancellingClient(
         events=[TextDelta(text="hi"), GenerationComplete(finish_reason="stop")],
@@ -351,9 +487,14 @@ def test_cancelled_turn_does_not_publish_run_finished() -> None:
         cancel_after=0,
     )
 
-    run = Run(client, _echo_registry(), bus, [Message(role=Role.USER, content="hi")], cancel)
-    run.execute()
+    runner = LoopRunner(client, _echo_registry(), bus, session, DEFAULT_LOOP_CONFIG, cancel)
+    runner.execute()
 
     events = [next(subscriber) for _ in range(2)]
     assert events == [RunStarted(), RunCancelled()]
     assert not any(isinstance(event, RunFinished) for event in events)
+
+
+def test_default_loop_config_is_stream_then_tool_call() -> None:
+    assert DEFAULT_LOOP_CONFIG.steps == (stream_step, tool_call_step)
+    assert DEFAULT_LOOP_CONFIG.max_steps is None
