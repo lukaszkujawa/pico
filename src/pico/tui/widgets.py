@@ -181,14 +181,17 @@ class WaitingIndicator(Static):
         return Text(WAITING_FRAMES[self.frame_index], style=self._theme.waiting)
 
 
-LOGO_TOP = " ╭────────╮"
-LOGO_PROMPT = " │  "
+LOGO_TOP = "╭────────╮"
+LOGO_PROMPT = "│  "
 LOGO_CURSOR = "_"
 LOGO_PROMPT_END = "    │"
-LOGO_MID = " │        │"
-LOGO_BOTTOM = " ╰────────╯"
-LOGO_LABEL = "    PICO"
+LOGO_MID = "│        │"
+LOGO_BOTTOM = "╰────────╯"
+LOGO_LABEL = "PICO"
 TAGLINE = "Small model. Real agency."
+LOGO_WIDTH = len(LOGO_TOP)
+LOGO_INDENT = " " * ((len(TAGLINE) - LOGO_WIDTH) // 2)
+LABEL_INDENT = " " * ((len(TAGLINE) - len(LOGO_LABEL)) // 2)
 
 
 class Splash(Static):
@@ -200,16 +203,16 @@ class Splash(Static):
     def render(self) -> Text:
         border = f"bold {self._theme.primary}"
         lines = [
-            Text(LOGO_TOP, style=border),
+            Text(LOGO_INDENT + LOGO_TOP, style=border),
             Text.assemble(
-                (LOGO_PROMPT, border),
+                (LOGO_INDENT + LOGO_PROMPT, border),
                 (">", f"bold {self._theme.success}"),
                 (LOGO_CURSOR, f"bold {self._theme.success} blink"),
                 (LOGO_PROMPT_END, border),
             ),
-            Text(LOGO_MID, style=border),
-            Text(LOGO_BOTTOM, style=border),
-            Text(LOGO_LABEL, style=f"bold {self._theme.text}"),
+            Text(LOGO_INDENT + LOGO_MID, style=border),
+            Text(LOGO_INDENT + LOGO_BOTTOM, style=border),
+            Text(LABEL_INDENT + LOGO_LABEL, style=f"bold {self._theme.text}"),
             Text(TAGLINE, style=f"italic {self._theme.muted_text}"),
         ]
         return Text("\n").join(lines)
