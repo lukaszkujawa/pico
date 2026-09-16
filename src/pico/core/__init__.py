@@ -8,6 +8,14 @@ from pico.core.actions import (
     register_actions,
 )
 from pico.core.bus import Bus
+from pico.core.context import (
+    COMPLETION_RESERVE_FRACTION,
+    RenderLevel,
+    estimate_tokens,
+    prompt_budget,
+    render_messages,
+    render_tool_result,
+)
 from pico.core.errors import UnknownToolError
 from pico.core.events import (
     AssistantTextDelta,
@@ -38,6 +46,7 @@ from pico.core.loop import (
 from pico.core.tools import Tool, ToolRegistry
 
 __all__ = [
+    "COMPLETION_RESERVE_FRACTION",
     "DEFAULT_LOOP_CONFIG",
     "MAX_INVALID_ACTION_ATTEMPTS",
     "Action",
@@ -57,6 +66,7 @@ __all__ = [
     "LoopConfig",
     "LoopRunner",
     "ReadFile",
+    "RenderLevel",
     "RunCancelled",
     "RunFinished",
     "RunStarted",
@@ -69,9 +79,13 @@ __all__ = [
     "ToolRegistry",
     "UnknownToolError",
     "WriteFile",
+    "estimate_tokens",
     "facts",
     "goal",
+    "prompt_budget",
     "register_actions",
+    "render_messages",
+    "render_tool_result",
     "stream_step",
     "tool_call_step",
 ]

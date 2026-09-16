@@ -5,6 +5,7 @@ from typing import Literal
 
 from pico.core.actions import Answer, InvalidActionError
 from pico.core.bus import Bus
+from pico.core.context import render_messages
 from pico.core.errors import UnknownToolError
 from pico.core.events import (
     AssistantTextDelta,
@@ -55,6 +56,7 @@ class LoopRunner:
         tools: ToolRegistry,
         bus: Bus,
         session: Session,
+        context_size: int,
         config: LoopConfig,
         cancel: threading.Event | None = None,
     ) -> None:
@@ -62,6 +64,7 @@ class LoopRunner:
         self.tools = tools
         self.bus = bus
         self.session = session
+        self.context_size = context_size
         self.config = config
         self.cancel = cancel if cancel is not None else threading.Event()
         self.pending_tool_calls: list[ToolCall] = []
@@ -108,7 +111,9 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
     thinking_id: str | None = None
     cancelled = False
 
-    for event in runner.llm.stream(runner.session.messages(), runner.tools.specs()):
+    for event in runner.llm.stream(
+        render_messages(runner.session, runner.context_size), runner.tools.specs()
+    ):
         if runner.cancel.is_set():
             cancelled = True
             break

@@ -45,6 +45,7 @@ def _turn_loop(
     tools: ToolRegistry,
     bus: Bus,
     session: Session,
+    context_size: int,
     input_queue: "queue.Queue[str]",
     shutdown: threading.Event,
     cancel_handle: CancelHandle,
@@ -59,7 +60,7 @@ def _turn_loop(
         session.append(UserMessageRecorded(content=text))
         cancel = threading.Event()
         cancel_handle.arm(cancel)
-        runner = LoopRunner(llm, tools, bus, session, DEFAULT_LOOP_CONFIG, cancel)
+        runner = LoopRunner(llm, tools, bus, session, context_size, DEFAULT_LOOP_CONFIG, cancel)
         runner.execute()
         cancel_handle.disarm()
 
@@ -90,7 +91,7 @@ def run_pico(config: Config, debug: bool = False) -> None:
 
     core_thread = threading.Thread(
         target=_turn_loop,
-        args=(llm, tools, bus, session, input_queue, shutdown, cancel_handle),
+        args=(llm, tools, bus, session, config.context_size, input_queue, shutdown, cancel_handle),
         daemon=True,
     )
     core_thread.start()

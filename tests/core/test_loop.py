@@ -51,8 +51,10 @@ from pico.session import (
 class ScriptedClient:
     def __init__(self, turns: list[list[StreamEvent]]) -> None:
         self._turns = turns
+        self.seen_messages: list[list[Message]] = []
 
     def stream(self, messages: list[Message], tools: list[ToolSpec]) -> Iterator[StreamEvent]:
+        self.seen_messages.append(messages)
         yield from self._turns.pop(0)
 
 
@@ -123,7 +125,12 @@ def test_single_always_done_step_publishes_started_and_finished() -> None:
         return "done"
 
     runner = LoopRunner(
-        FailingClient(), _echo_registry(), bus, _session(), LoopConfig(steps=(always_done,))
+        FailingClient(),
+        _echo_registry(),
+        bus,
+        _session(),
+        128_000,
+        LoopConfig(steps=(always_done,)),
     )
     runner.execute()
 
@@ -140,7 +147,7 @@ def test_continue_n_times_then_done_runs_n_plus_one_iterations() -> None:
         return "continue" if len(calls) <= 2 else "done"
 
     runner = LoopRunner(
-        FailingClient(), _echo_registry(), bus, _session(), LoopConfig(steps=(counting,))
+        FailingClient(), _echo_registry(), bus, _session(), 128_000, LoopConfig(steps=(counting,))
     )
     runner.execute()
 
@@ -155,7 +162,12 @@ def test_cancelled_outcome_publishes_cancelled_not_finished() -> None:
         return "cancelled"
 
     runner = LoopRunner(
-        FailingClient(), _echo_registry(), bus, _session(), LoopConfig(steps=(always_cancelled,))
+        FailingClient(),
+        _echo_registry(),
+        bus,
+        _session(),
+        128_000,
+        LoopConfig(steps=(always_cancelled,)),
     )
     runner.execute()
 
@@ -171,7 +183,7 @@ def test_step_raising_llm_error_surfaces_as_error_occurred() -> None:
         raise LLMError("connection lost")
 
     runner = LoopRunner(
-        FailingClient(), _echo_registry(), bus, _session(), LoopConfig(steps=(raising,))
+        FailingClient(), _echo_registry(), bus, _session(), 128_000, LoopConfig(steps=(raising,))
     )
     runner.execute()
 
@@ -194,6 +206,7 @@ def test_max_steps_reached_without_terminal_outcome_publishes_finished() -> None
         _echo_registry(),
         bus,
         _session(),
+        128_000,
         LoopConfig(steps=(always_continue,), max_steps=3),
     )
     runner.execute()
@@ -216,7 +229,12 @@ def test_steps_after_non_continue_step_are_not_called() -> None:
         return "done"
 
     runner = LoopRunner(
-        FailingClient(), _echo_registry(), bus, _session(), LoopConfig(steps=(first, second))
+        FailingClient(),
+        _echo_registry(),
+        bus,
+        _session(),
+        128_000,
+        LoopConfig(steps=(first, second)),
     )
     runner.execute()
 
@@ -238,7 +256,7 @@ def test_plain_text_run() -> None:
         ]
     )
 
-    runner = LoopRunner(client, _echo_registry(), bus, session, DEFAULT_LOOP_CONFIG)
+    runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
     events = [next(subscriber) for _ in range(6)]
@@ -278,7 +296,7 @@ def test_thinking_then_text_published_in_order_with_shared_ids_across_two_turns(
         ]
     )
 
-    runner = LoopRunner(client, _echo_registry(), bus, session, DEFAULT_LOOP_CONFIG)
+    runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
     first_events = [next(subscriber) for _ in range(10)]
@@ -325,7 +343,7 @@ def test_single_tool_call_round_trip() -> None:
         ]
     )
 
-    runner = LoopRunner(client, _echo_registry(), bus, session, DEFAULT_LOOP_CONFIG)
+    runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
     events = [next(subscriber) for _ in range(7)]
@@ -363,7 +381,7 @@ def test_tool_call_arguments_delta_forwarded() -> None:
         ]
     )
 
-    runner = LoopRunner(client, _echo_registry(), bus, session, DEFAULT_LOOP_CONFIG)
+    runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
     events = [next(subscriber) for _ in range(5)]
@@ -389,7 +407,7 @@ def test_unknown_tool_call_surfaced_as_tool_error() -> None:
         ]
     )
 
-    runner = LoopRunner(client, ToolRegistry(), bus, session, DEFAULT_LOOP_CONFIG)
+    runner = LoopRunner(client, ToolRegistry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
     events = [next(subscriber) for _ in range(4)]
@@ -411,7 +429,7 @@ def test_llm_error_surfaced_as_error_occurred() -> None:
     session.append(UserMessageRecorded(content="hi"))
     client = FailingClient()
 
-    runner = LoopRunner(client, _echo_registry(), bus, session, DEFAULT_LOOP_CONFIG)
+    runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
     events = [next(subscriber) for _ in range(3)]
@@ -435,7 +453,9 @@ def test_cancel_set_before_streaming_stops_immediately() -> None:
         cancel_after=-1,
     )
 
-    runner = LoopRunner(client, _echo_registry(), bus, session, DEFAULT_LOOP_CONFIG, cancel)
+    runner = LoopRunner(
+        client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG, cancel
+    )
     runner.execute()
 
     events = [next(subscriber) for _ in range(2)]
@@ -460,7 +480,9 @@ def test_cancel_mid_stream_stops_consuming_and_closes_open_panes() -> None:
         cancel_after=2,
     )
 
-    runner = LoopRunner(client, _echo_registry(), bus, session, DEFAULT_LOOP_CONFIG, cancel)
+    runner = LoopRunner(
+        client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG, cancel
+    )
     runner.execute()
 
     events = [next(subscriber) for _ in range(6)]
@@ -488,7 +510,9 @@ def test_cancelled_turn_does_not_publish_run_finished() -> None:
         cancel_after=0,
     )
 
-    runner = LoopRunner(client, _echo_registry(), bus, session, DEFAULT_LOOP_CONFIG, cancel)
+    runner = LoopRunner(
+        client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG, cancel
+    )
     runner.execute()
 
     events = [next(subscriber) for _ in range(2)]
@@ -511,7 +535,7 @@ def test_valid_answer_call_ends_run_and_records_result() -> None:
         [[ToolCallReady(tool_call=call), GenerationComplete(finish_reason="tool_calls")]]
     )
 
-    runner = LoopRunner(client, _echo_registry(), bus, session, DEFAULT_LOOP_CONFIG)
+    runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
     events = [next(subscriber) for _ in range(4)]
@@ -543,7 +567,7 @@ def test_invalid_answer_call_continues_run_instead_of_ending() -> None:
         ]
     )
 
-    runner = LoopRunner(client, _echo_registry(), bus, session, DEFAULT_LOOP_CONFIG)
+    runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
     events = [next(subscriber) for _ in range(3)]
@@ -566,7 +590,7 @@ def test_answer_citing_known_fact_ends_run() -> None:
         [[ToolCallReady(tool_call=call), GenerationComplete(finish_reason="tool_calls")]]
     )
 
-    runner = LoopRunner(client, _echo_registry(), bus, session, DEFAULT_LOOP_CONFIG)
+    runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
     assert runner.final_answer == "the answer"
@@ -584,7 +608,7 @@ def test_answer_citing_unknown_fact_continues_run() -> None:
         ]
     )
 
-    runner = LoopRunner(client, _echo_registry(), bus, session, DEFAULT_LOOP_CONFIG)
+    runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
     assert runner.final_answer is None
@@ -608,7 +632,7 @@ def test_repeated_invalid_actions_stop_run_at_max_attempts() -> None:
     ]
     client = ScriptedClient(turns)
 
-    runner = LoopRunner(client, ToolRegistry(), bus, session, DEFAULT_LOOP_CONFIG)
+    runner = LoopRunner(client, ToolRegistry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
     error_events = [
@@ -633,7 +657,25 @@ def test_fewer_than_cap_invalid_actions_do_not_end_run_early() -> None:
         ]
     )
 
-    runner = LoopRunner(client, ToolRegistry(), bus, session, DEFAULT_LOOP_CONFIG)
+    runner = LoopRunner(client, ToolRegistry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
     assert list(session.events())[-1] == AssistantMessageRecorded(content="done", thinking="")
+
+
+def test_stream_step_sends_budget_rendered_messages_to_llm() -> None:
+    bus = Bus()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    session.append(
+        ToolCallRecorded(name="read_file", arguments={}, result="x" * 10_000, is_error=False)
+    )
+    client = ScriptedClient([[TextDelta(text="ok"), GenerationComplete(finish_reason="stop")]])
+
+    runner = LoopRunner(client, ToolRegistry(), bus, session, 100, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    sent_tool_messages = [m for m in client.seen_messages[0] if m.role.value == "tool"]
+    assert sent_tool_messages[0].tool_result is not None
+    assert sent_tool_messages[0].tool_result.content != "x" * 10_000
+    assert "fact 0" in sent_tool_messages[0].tool_result.content
