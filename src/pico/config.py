@@ -28,7 +28,7 @@ def _require(name: str) -> str:
 def load_config() -> Config:
     load_dotenv(find_dotenv(usecwd=True))
 
-    vendor = _require("LLM_VENDER")
+    vendor = _require("LLM_VENDOR")
     base_url = _require("LLM_BASE_URL")
     model = _require("LLM_MODEL")
 

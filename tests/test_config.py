@@ -5,7 +5,7 @@ import pytest
 from pico.config import Config, ConfigError, load_config
 
 REQUIRED_VARS = {
-    "LLM_VENDER": "ollama",
+    "LLM_VENDOR": "ollama",
     "LLM_BASE_URL": "http://localhost:11434/v1",
     "LLM_MODEL": "qwen3.8:latest",
     "LLM_API_KEY": "secret",
@@ -14,7 +14,7 @@ REQUIRED_VARS = {
 }
 
 ENV_KEYS = [
-    "LLM_VENDER",
+    "LLM_VENDOR",
     "LLM_BASE_URL",
     "LLM_MODEL",
     "LLM_API_KEY",
