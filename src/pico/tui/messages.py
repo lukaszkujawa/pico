@@ -12,6 +12,7 @@ from pico.core.events import (
     AssistantThinkingStarted,
     BusEvent,
     ErrorOccurred,
+    GenerationCompleted,
     RunCancelled,
     RunFinished,
     RunStarted,
@@ -95,6 +96,13 @@ class AnswerPaneCreate(Message):
         super().__init__()
 
 
+class GenerationCompletedMessage(Message):
+    def __init__(self, prompt_tokens: int | None, completion_tokens: int | None) -> None:
+        self.prompt_tokens = prompt_tokens
+        self.completion_tokens = completion_tokens
+        super().__init__()
+
+
 class ErrorMessage(Message):
     def __init__(self, message: str) -> None:
         self.message = message
@@ -120,6 +128,7 @@ TuiMessage = (
     | ToolCallPaneCreate
     | ToolCallPaneClose
     | AnswerPaneCreate
+    | GenerationCompletedMessage
     | ErrorMessage
     | UserInputSubmitted
 )
@@ -159,5 +168,9 @@ def translate(event: BusEvent) -> TuiMessage | None:
             return AnswerPaneCreate(pane_id=pane_id, content=result)
         case ToolCallFinished(id=pane_id, result=result, is_error=is_error):
             return ToolCallPaneClose(pane_id=pane_id, result=result, is_error=is_error)
+        case GenerationCompleted(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens):
+            return GenerationCompletedMessage(
+                prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
+            )
         case ErrorOccurred(message=message):
             return ErrorMessage(message=message)

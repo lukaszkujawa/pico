@@ -11,6 +11,7 @@ from pico.core.events import (
     AssistantThinkingFinished,
     AssistantThinkingStarted,
     ErrorOccurred,
+    GenerationCompleted,
     RunCancelled,
     RunFinished,
     RunStarted,
@@ -264,12 +265,13 @@ def test_plain_text_run() -> None:
     runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    events = [next(subscriber) for _ in range(6)]
+    events = [next(subscriber) for _ in range(7)]
     assert events == [
         RunStarted(),
         AssistantTextStarted(id="0"),
         AssistantTextDelta(id="0", text="hello "),
         AssistantTextDelta(id="0", text="world"),
+        GenerationCompleted(),
         AssistantTextFinished(id="0"),
         RunFinished(),
     ]
@@ -304,7 +306,7 @@ def test_thinking_then_text_published_in_order_with_shared_ids_across_two_turns(
     runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    first_events = [next(subscriber) for _ in range(10)]
+    first_events = [next(subscriber) for _ in range(11)]
     assert first_events == [
         RunStarted(),
         AssistantThinkingStarted(id="0"),
@@ -313,6 +315,7 @@ def test_thinking_then_text_published_in_order_with_shared_ids_across_two_turns(
         AssistantTextStarted(id="1"),
         AssistantTextDelta(id="1", text="hello "),
         AssistantTextDelta(id="1", text="world"),
+        GenerationCompleted(),
         AssistantThinkingFinished(id="0"),
         AssistantTextFinished(id="1"),
         RunFinished(),
@@ -320,7 +323,7 @@ def test_thinking_then_text_published_in_order_with_shared_ids_across_two_turns(
 
     runner.execute()
 
-    second_events = [next(subscriber) for _ in range(7)]
+    second_events = [next(subscriber) for _ in range(8)]
     started_ids_second = [
         event.id
         for event in second_events
@@ -370,7 +373,7 @@ def test_shared_id_source_keeps_ids_unique_across_separate_runners() -> None:
     )
     second_runner.execute()
 
-    all_events = [next(subscriber) for _ in range(16)]
+    all_events = [next(subscriber) for _ in range(18)]
     started_ids = [
         event.id
         for event in all_events
@@ -396,13 +399,15 @@ def test_single_tool_call_round_trip() -> None:
     runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    events = [next(subscriber) for _ in range(7)]
+    events = [next(subscriber) for _ in range(9)]
     assert events == [
         RunStarted(),
+        GenerationCompleted(),
         ToolCallStarted(id="1", name="echo", arguments={"text": "hi"}),
         ToolCallFinished(id="1", tool_call=call, result="hi", is_error=False),
         AssistantTextStarted(id="0"),
         AssistantTextDelta(id="0", text="done"),
+        GenerationCompleted(),
         AssistantTextFinished(id="0"),
         RunFinished(),
     ]
@@ -434,11 +439,13 @@ def test_tool_call_delta_from_llm_is_ignored() -> None:
     runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    events = [next(subscriber) for _ in range(4)]
+    events = [next(subscriber) for _ in range(6)]
     assert events == [
         RunStarted(),
+        GenerationCompleted(),
         ToolCallStarted(id="1", name="echo", arguments={"text": "hi"}),
         ToolCallFinished(id="1", tool_call=call, result="hi", is_error=False),
+        GenerationCompleted(),
         RunFinished(),
     ]
 
@@ -459,11 +466,13 @@ def test_unknown_tool_call_surfaced_as_tool_error() -> None:
     runner = LoopRunner(client, ToolRegistry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    events = [next(subscriber) for _ in range(4)]
+    events = [next(subscriber) for _ in range(6)]
     assert events == [
         RunStarted(),
+        GenerationCompleted(),
         ToolCallStarted(id="1", name="missing", arguments={}),
         ToolCallFinished(id="1", tool_call=call, result="missing", is_error=True),
+        GenerationCompleted(),
         RunFinished(),
     ]
     assert ToolCallRecorded(name="missing", arguments={}, result="missing", is_error=True) in list(
@@ -587,9 +596,10 @@ def test_valid_answer_call_ends_run_and_records_result() -> None:
     runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    events = [next(subscriber) for _ in range(4)]
+    events = [next(subscriber) for _ in range(5)]
     assert events == [
         RunStarted(),
+        GenerationCompleted(),
         ToolCallStarted(
             id="1", name="answer", arguments={"content": "the answer", "citations": []}
         ),
@@ -621,12 +631,13 @@ def test_invalid_answer_call_continues_run_instead_of_ending() -> None:
     runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    events = [next(subscriber) for _ in range(3)]
-    assert events[:2] == [
+    events = [next(subscriber) for _ in range(4)]
+    assert events[:3] == [
         RunStarted(),
+        GenerationCompleted(),
         ToolCallStarted(id="1", name="answer", arguments={}),
     ]
-    finished = events[2]
+    finished = events[3]
     assert isinstance(finished, ToolCallFinished)
     assert finished.is_error is True
     assert runner.final_answer is None
@@ -906,13 +917,15 @@ def test_delegate_child_stream_events_do_not_appear_on_parent_bus() -> None:
     runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    events = [next(subscriber) for _ in range(6)]
+    events = [next(subscriber) for _ in range(8)]
     assert events == [
         RunStarted(),
+        GenerationCompleted(),
         ToolCallStarted(id="1", name="delegate", arguments={"question": "what is x?"}),
         ToolCallFinished(id="1", tool_call=delegate_call, result="x is 1", is_error=False),
         AssistantTextStarted(id="0"),
         AssistantTextDelta(id="0", text="done"),
+        GenerationCompleted(),
         AssistantTextFinished(id="0"),
     ]
 
@@ -977,3 +990,35 @@ def test_no_nudge_below_threshold_behaves_as_before() -> None:
     assert all(
         message.role is not Role.USER or message.content == "hi" for message in sent_messages
     )
+
+
+def test_each_llm_call_publishes_its_own_token_counts() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    call = ToolCall(id="1", name="echo", arguments={"text": "hi"})
+    client = ScriptedClient(
+        [
+            [
+                ToolCallReady(tool_call=call),
+                GenerationComplete(
+                    finish_reason="tool_calls", prompt_tokens=120, completion_tokens=17
+                ),
+            ],
+            [
+                TextDelta(text="done"),
+                GenerationComplete(finish_reason="stop", prompt_tokens=160, completion_tokens=4),
+            ],
+        ]
+    )
+
+    runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    events = [next(subscriber) for _ in range(9)]
+    completions = [event for event in events if isinstance(event, GenerationCompleted)]
+    assert completions == [
+        GenerationCompleted(prompt_tokens=120, completion_tokens=17),
+        GenerationCompleted(prompt_tokens=160, completion_tokens=4),
+    ]

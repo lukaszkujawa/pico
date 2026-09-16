@@ -62,6 +62,12 @@ class ToolCallFinished:
 
 
 @dataclass(frozen=True)
+class GenerationCompleted:
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+
+
+@dataclass(frozen=True)
 class ErrorOccurred:
     message: str
 
@@ -82,6 +88,7 @@ BusEvent = (
     | AssistantThinkingFinished
     | ToolCallStarted
     | ToolCallFinished
+    | GenerationCompleted
     | ErrorOccurred
     | RunCancelled
 )

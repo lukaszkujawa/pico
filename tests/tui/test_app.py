@@ -1,5 +1,8 @@
 import queue
 
+import pytest
+from textual.pilot import Pilot
+
 from pico.core.bus import Bus
 from pico.core.events import (
     AssistantTextDelta,
@@ -8,7 +11,9 @@ from pico.core.events import (
     AssistantThinkingDelta,
     AssistantThinkingFinished,
     AssistantThinkingStarted,
+    BusEvent,
     ErrorOccurred,
+    GenerationCompleted,
     RunCancelled,
     RunFinished,
     RunStarted,
@@ -21,9 +26,12 @@ from pico.tui.messages import UserInputSubmitted
 from pico.tui.widgets import (
     AnswerPane,
     AssistantPane,
+    ElapsedTimer,
     ErrorPane,
     Splash,
+    StatusLine,
     ThinkingPane,
+    TokenCounter,
     ToolCallPane,
     UserPane,
     WaitingIndicator,
@@ -554,3 +562,204 @@ async def test_run_cancelled_stops_waiting_indicator() -> None:
         await pilot.pause(0.2)
 
         assert app.query_one(WaitingIndicator).running is False
+
+
+async def _submit(app: PicoApp, pilot: Pilot[None]) -> None:
+    app.query_one("#user-input", ChatInput).focus()
+    await pilot.pause()
+    await pilot.press(*"hello")
+    await pilot.press("enter")
+    await pilot.pause()
+
+
+async def test_streaming_deltas_climb_the_token_estimate() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _submit(app, pilot)
+        counter = app.query_one(TokenCounter)
+        assert counter.render().plain == "~0 tokens"
+
+        bus.publish(RunStarted())
+        bus.publish(AssistantThinkingStarted(id="0"))
+        bus.publish(AssistantThinkingDelta(id="0", text="t" * 40))
+        await pilot.pause(0.2)
+        after_thinking = counter.tokens
+
+        bus.publish(AssistantTextStarted(id="1"))
+        bus.publish(AssistantTextDelta(id="1", text="x" * 80))
+        await pilot.pause(0.2)
+
+        assert after_thinking == 10
+        assert counter.tokens == 30
+        assert counter.render().plain == "~30 tokens"
+
+
+async def test_generation_completed_snaps_estimate_to_real_count() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _submit(app, pilot)
+        counter = app.query_one(TokenCounter)
+
+        bus.publish(RunStarted())
+        bus.publish(AssistantTextStarted(id="0"))
+        bus.publish(AssistantTextDelta(id="0", text="x" * 400))
+        await pilot.pause(0.2)
+        assert counter.render().plain == "~100 tokens"
+
+        bus.publish(GenerationCompleted(prompt_tokens=250, completion_tokens=37))
+        await pilot.pause(0.2)
+
+        assert counter.render().plain == "37 tokens"
+
+
+async def test_estimates_continue_on_top_of_the_reconciled_baseline() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _submit(app, pilot)
+        counter = app.query_one(TokenCounter)
+
+        bus.publish(RunStarted())
+        bus.publish(AssistantTextStarted(id="0"))
+        bus.publish(AssistantTextDelta(id="0", text="x" * 400))
+        bus.publish(GenerationCompleted(prompt_tokens=250, completion_tokens=37))
+        await pilot.pause(0.2)
+
+        bus.publish(AssistantTextDelta(id="0", text="y" * 40))
+        await pilot.pause(0.2)
+        assert counter.render().plain == "~47 tokens"
+
+        bus.publish(GenerationCompleted(prompt_tokens=300, completion_tokens=11))
+        await pilot.pause(0.2)
+        assert counter.render().plain == "48 tokens"
+
+
+async def test_missing_token_counts_leave_the_estimate_alone() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _submit(app, pilot)
+        counter = app.query_one(TokenCounter)
+
+        bus.publish(RunStarted())
+        bus.publish(AssistantTextStarted(id="0"))
+        bus.publish(AssistantTextDelta(id="0", text="x" * 400))
+        bus.publish(GenerationCompleted())
+        await pilot.pause(0.2)
+
+        assert counter.render().plain == "~100 tokens"
+
+
+async def test_new_turn_resets_the_token_counter() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _submit(app, pilot)
+        counter = app.query_one(TokenCounter)
+
+        bus.publish(RunStarted())
+        bus.publish(AssistantTextStarted(id="0"))
+        bus.publish(AssistantTextDelta(id="0", text="x" * 400))
+        bus.publish(GenerationCompleted(prompt_tokens=250, completion_tokens=37))
+        bus.publish(RunFinished())
+        await pilot.pause(0.2)
+        assert counter.tokens == 37
+
+        bus.publish(RunStarted())
+        await pilot.pause(0.2)
+
+        assert counter.tokens == 0
+        assert counter.render().plain == "~0 tokens"
+
+
+async def test_submitting_input_starts_spinner_elapsed_and_tokens_together() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        status = app.query_one(StatusLine)
+        assert status.display is False
+
+        await _submit(app, pilot)
+
+        assert status.display is True
+        assert app.query_one(WaitingIndicator).running is True
+        assert app.query_one(ElapsedTimer).render().plain == "0s"
+        assert app.query_one(TokenCounter).render().plain == "~0 tokens"
+
+
+@pytest.mark.parametrize(
+    "ending",
+    [
+        [RunFinished()],
+        [RunCancelled()],
+        [ErrorOccurred(message="boom"), RunFinished(error="boom")],
+    ],
+)
+async def test_run_ending_freezes_elapsed_and_tokens_while_stopping_spinner(
+    ending: list[BusEvent],
+) -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _submit(app, pilot)
+
+        bus.publish(RunStarted())
+        bus.publish(GenerationCompleted(prompt_tokens=250, completion_tokens=37))
+        for event in ending:
+            bus.publish(event)
+        await pilot.pause(0.2)
+
+        assert app.query_one(WaitingIndicator).running is False
+        assert app.query_one(StatusLine).display is True
+        assert app.query_one(ElapsedTimer).render().plain == "0s"
+        assert app.query_one(TokenCounter).render().plain == "37 tokens"
+
+
+async def test_status_row_reflows_as_the_readouts_grow_wider() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test(size=(64, 22)) as pilot:
+        await pilot.pause()
+        await _submit(app, pilot)
+
+        bus.publish(RunStarted())
+        bus.publish(GenerationCompleted(prompt_tokens=1, completion_tokens=58))
+        bus.publish(GenerationCompleted(prompt_tokens=1, completion_tokens=91))
+        bus.publish(RunFinished())
+        await pilot.pause(0.2)
+
+        counter = app.query_one(TokenCounter)
+        assert counter.render().plain == "149 tokens"
+        assert counter.size.width == len("149 tokens")
+
+
+async def test_first_pane_stops_the_spinner_but_keeps_elapsed_and_tokens_running() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _submit(app, pilot)
+
+        bus.publish(RunStarted())
+        bus.publish(AssistantTextStarted(id="0"))
+        await pilot.pause(0.2)
+
+        assert app.query_one(WaitingIndicator).running is False
+        assert app.query_one(ElapsedTimer).running is True
+
+        bus.publish(AssistantTextDelta(id="0", text="x" * 400))
+        await pilot.pause(0.2)
+        assert app.query_one(TokenCounter).render().plain == "~100 tokens"
+
+        bus.publish(RunFinished())
+        await pilot.pause(0.2)
+        assert app.query_one(ElapsedTimer).running is False

@@ -1,14 +1,18 @@
+import pytest
 from textual.app import App, ComposeResult
 
+from pico.tui import widgets
 from pico.tui.widgets import (
     ERROR_GLYPH,
     SUCCESS_GLYPH,
     AnswerPane,
     AssistantPane,
+    ElapsedTimer,
     ErrorPane,
     ThinkingPane,
     ToolCallPane,
     WaitingIndicator,
+    format_elapsed,
 )
 
 
@@ -31,6 +35,23 @@ class ThinkingPaneHarness(App[None]):
 class WaitingIndicatorHarness(App[None]):
     def compose(self) -> ComposeResult:
         yield WaitingIndicator()
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class ElapsedTimerHarness(App[None]):
+    def __init__(self, clock: FakeClock) -> None:
+        super().__init__()
+        self._clock = clock
+
+    def compose(self) -> ComposeResult:
+        yield ElapsedTimer(clock=self._clock)
 
 
 class ToolCallPaneHarness(App[None]):
@@ -256,3 +277,51 @@ async def test_waiting_indicator_animates_over_ticks() -> None:
         indicator.stop()
 
         assert len({first_frame, second_frame, third_frame}) > 1
+
+
+@pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [(0, "0s"), (7, "7s"), (59, "59s"), (60, "1m00s"), (72, "1m12s"), (605, "10m05s")],
+)
+def test_format_elapsed_switches_to_minutes_at_the_boundary(seconds: int, expected: str) -> None:
+    assert format_elapsed(seconds) == expected
+
+
+async def test_elapsed_timer_climbs_while_running(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(widgets, "ELAPSED_TICK_SECONDS", 0.01)
+    clock = FakeClock()
+
+    app = ElapsedTimerHarness(clock)
+    async with app.run_test() as pilot:
+        timer = app.query_one(ElapsedTimer)
+        assert timer.render().plain == "0s"
+
+        timer.start()
+        clock.now = 7.0
+        await pilot.pause(0.05)
+        assert timer.render().plain == "7s"
+
+        clock.now = 72.0
+        await pilot.pause(0.05)
+        assert timer.render().plain == "1m12s"
+
+        timer.stop()
+
+
+async def test_elapsed_timer_freezes_final_value_on_stop(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(widgets, "ELAPSED_TICK_SECONDS", 0.01)
+    clock = FakeClock()
+
+    app = ElapsedTimerHarness(clock)
+    async with app.run_test() as pilot:
+        timer = app.query_one(ElapsedTimer)
+        timer.start()
+        clock.now = 59.0
+        await pilot.pause(0.05)
+        assert timer.render().plain == "59s"
+
+        timer.stop()
+        clock.now = 300.0
+        await pilot.pause(0.05)
+
+        assert timer.render().plain == "59s"

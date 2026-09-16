@@ -1,12 +1,19 @@
+import time
+from collections.abc import Callable
+
 from rich.text import Text
+from textual.app import ComposeResult
+from textual.containers import Horizontal
 from textual.reactive import reactive
 from textual.timer import Timer
 from textual.widgets import Static
 
+from pico.core.context import estimate_tokens
 from pico.tui.theme import PICO_THEME, Theme
 
 SUCCESS_GLYPH = "✓"
 ERROR_GLYPH = "✗"
+SEPARATOR_GLYPH = "·"
 WAITING_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 
@@ -179,6 +186,118 @@ class WaitingIndicator(Static):
 
     def render(self) -> Text:
         return Text(WAITING_FRAMES[self.frame_index], style=self._theme.waiting)
+
+
+ELAPSED_TICK_SECONDS = 1.0
+
+
+def format_elapsed(seconds: int) -> str:
+    if seconds < 60:
+        return f"{seconds}s"
+    return f"{seconds // 60}m{seconds % 60:02d}s"
+
+
+class ElapsedTimer(Static):
+    elapsed: reactive[int] = reactive(0, layout=True)
+    running: reactive[bool] = reactive(False)
+
+    def __init__(
+        self, theme: Theme = PICO_THEME, clock: Callable[[], float] = time.monotonic
+    ) -> None:
+        super().__init__(id="elapsed-timer")
+        self._theme = theme
+        self._clock = clock
+        self._timer: Timer | None = None
+        self._started_at = 0.0
+        self.styles.color = theme.muted_text
+
+    def start(self) -> None:
+        self._started_at = self._clock()
+        self.elapsed = 0
+        self.running = True
+        self._timer = self.set_interval(ELAPSED_TICK_SECONDS, self._tick)
+
+    def stop(self) -> None:
+        self.running = False
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
+
+    def _tick(self) -> None:
+        self.elapsed = int(self._clock() - self._started_at)
+
+    def render(self) -> Text:
+        return Text(format_elapsed(self.elapsed), style=self._theme.muted_text)
+
+
+class TokenCounter(Static):
+    tokens: reactive[int] = reactive(0, layout=True)
+    reconciled: reactive[bool] = reactive(False, layout=True)
+
+    def __init__(self, theme: Theme = PICO_THEME) -> None:
+        super().__init__(id="token-counter")
+        self._theme = theme
+        self._confirmed = 0
+        self.styles.color = theme.muted_text
+
+    def reset(self) -> None:
+        self._confirmed = 0
+        self.tokens = 0
+        self.reconciled = False
+
+    def estimate(self, text: str) -> None:
+        self.tokens += estimate_tokens(text)
+        self.reconciled = False
+
+    def reconcile(self, completion_tokens: int | None) -> None:
+        if completion_tokens is None:
+            return
+        self._confirmed += completion_tokens
+        self.tokens = self._confirmed
+        self.reconciled = True
+
+    def render(self) -> Text:
+        prefix = "" if self.reconciled else "~"
+        return Text(f"{prefix}{self.tokens} tokens", style=self._theme.muted_text)
+
+
+class StatusLine(Horizontal):
+    def __init__(self, theme: Theme = PICO_THEME, clock: Callable[[], float] = time.monotonic):
+        super().__init__(id="status-line")
+        self._clock = clock
+        self._theme = theme
+        self.display = False
+
+    def compose(self) -> ComposeResult:
+        yield WaitingIndicator(self._theme)
+        yield ElapsedTimer(self._theme, self._clock)
+        yield Static(f" {SEPARATOR_GLYPH} ")
+        yield TokenCounter(self._theme)
+
+    @property
+    def indicator(self) -> WaitingIndicator:
+        return self.query_one(WaitingIndicator)
+
+    @property
+    def timer(self) -> ElapsedTimer:
+        return self.query_one(ElapsedTimer)
+
+    @property
+    def counter(self) -> TokenCounter:
+        return self.query_one(TokenCounter)
+
+    def start(self) -> None:
+        self.display = True
+        self.indicator.start()
+        self.timer.start()
+        self.counter.reset()
+
+    def stop_spinner(self) -> None:
+        self.indicator.stop()
+
+    def stop(self) -> None:
+        self.indicator.stop()
+        self.timer.stop()
 
 
 LOGO_TOP = "╭────────╮"

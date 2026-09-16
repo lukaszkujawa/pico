@@ -7,6 +7,7 @@ from pico.core.events import (
     AssistantThinkingStarted,
     BusEvent,
     ErrorOccurred,
+    GenerationCompleted,
     RunCancelled,
     RunFinished,
     RunStarted,
@@ -77,6 +78,18 @@ def test_tool_call_finished() -> None:
     assert event.is_error is False
 
 
+def test_generation_completed_defaults_to_unknown_token_counts() -> None:
+    event = GenerationCompleted()
+    assert event.prompt_tokens is None
+    assert event.completion_tokens is None
+
+
+def test_generation_completed_carries_token_counts() -> None:
+    event = GenerationCompleted(prompt_tokens=120, completion_tokens=17)
+    assert event.prompt_tokens == 120
+    assert event.completion_tokens == 17
+
+
 def test_error_occurred() -> None:
     event = ErrorOccurred(message="boom")
     assert event.message == "boom"
@@ -109,6 +122,8 @@ def test_bus_event_exhaustive_match() -> None:
                 return "tool_call_started"
             case ToolCallFinished():
                 return "tool_call_finished"
+            case GenerationCompleted():
+                return "generation_completed"
             case ErrorOccurred():
                 return "error_occurred"
             case RunCancelled():
@@ -125,5 +140,6 @@ def test_bus_event_exhaustive_match() -> None:
     assert describe(ToolCallStarted(id="1", name="echo", arguments={})) == "tool_call_started"
     call = ToolCall(id="1", name="echo", arguments={})
     assert describe(ToolCallFinished(id="1", tool_call=call, result="ok")) == "tool_call_finished"
+    assert describe(GenerationCompleted()) == "generation_completed"
     assert describe(ErrorOccurred(message="boom")) == "error_occurred"
     assert describe(RunCancelled()) == "run_cancelled"

@@ -21,6 +21,7 @@ from pico.core.events import (
     AssistantThinkingFinished,
     AssistantThinkingStarted,
     ErrorOccurred,
+    GenerationCompleted,
     RunCancelled,
     RunFinished,
     RunStarted,
@@ -162,8 +163,14 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
                 pass
             case ToolCallReady(tool_call=tool_call):
                 tool_calls.append(tool_call)
-            case GenerationComplete():
-                pass
+            case GenerationComplete(
+                prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
+            ):
+                runner.bus.publish(
+                    GenerationCompleted(
+                        prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
+                    )
+                )
 
     if thinking_id is not None:
         runner.bus.publish(AssistantThinkingFinished(id=thinking_id))

@@ -15,6 +15,7 @@ from pico.tui.messages import (
     AssistantPaneCreate,
     AssistantPaneDelta,
     ErrorMessage,
+    GenerationCompletedMessage,
     RunCancelledMessage,
     RunFinishedMessage,
     RunStartedMessage,
@@ -32,10 +33,10 @@ from pico.tui.widgets import (
     AssistantPane,
     ErrorPane,
     Splash,
+    StatusLine,
     ThinkingPane,
     ToolCallPane,
     UserPane,
-    WaitingIndicator,
 )
 
 
@@ -92,6 +93,14 @@ class PicoApp(App[None]):
     #input-bar {
         height: auto;
     }
+    #status-line {
+        height: auto;
+        padding: 0 1;
+    }
+    #status-line Static {
+        width: auto;
+        height: 1;
+    }
     #user-input {
         height: auto;
         max-height: 10;
@@ -129,7 +138,7 @@ class PicoApp(App[None]):
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="conversation"):
             yield Splash()
-            yield WaitingIndicator()
+            yield StatusLine()
         yield Rule()
         with Vertical(id="footer"):
             yield InputBar()
@@ -153,26 +162,34 @@ class PicoApp(App[None]):
             if message is not None:
                 self.post_message(message)
 
+    def _stop_status(self) -> None:
+        self.query_one(StatusLine).stop()
+
+    def _stop_spinner(self) -> None:
+        self.query_one(StatusLine).stop_spinner()
+
     def on_assistant_pane_create(self, message: AssistantPaneCreate) -> None:
-        self.query_one(WaitingIndicator).stop()
+        self._stop_spinner()
         pane = AssistantPane(pane_id=message.pane_id)
         self._assistant_panes[message.pane_id] = pane
         self.query_one("#conversation", VerticalScroll).mount(pane)
 
     def on_assistant_pane_delta(self, message: AssistantPaneDelta) -> None:
         self._assistant_panes[message.pane_id].append_delta(message.text)
+        self.query_one(StatusLine).counter.estimate(message.text)
 
     def on_assistant_pane_close(self, message: AssistantPaneClose) -> None:
         self._assistant_panes[message.pane_id].finish()
 
     def on_thinking_pane_create(self, message: ThinkingPaneCreate) -> None:
-        self.query_one(WaitingIndicator).stop()
+        self._stop_spinner()
         pane = ThinkingPane(pane_id=message.pane_id)
         self._thinking_panes[message.pane_id] = pane
         self.query_one("#conversation", VerticalScroll).mount(pane)
 
     def on_thinking_pane_delta(self, message: ThinkingPaneDelta) -> None:
         self._thinking_panes[message.pane_id].append_delta(message.text)
+        self.query_one(StatusLine).counter.estimate(message.text)
 
     def on_thinking_pane_close(self, message: ThinkingPaneClose) -> None:
         self._thinking_panes[message.pane_id].finish()
@@ -201,6 +218,7 @@ class PicoApp(App[None]):
 
     def on_run_started_message(self, message: RunStartedMessage) -> None:
         self._run_in_flight = True
+        self.query_one(StatusLine).counter.reset()
         if self._queued_user_panes:
             self._queued_user_panes[0].queued = False
 
@@ -208,14 +226,17 @@ class PicoApp(App[None]):
         if self._queued_user_panes:
             self._queued_user_panes.pop(0)
 
+    def on_generation_completed_message(self, message: GenerationCompletedMessage) -> None:
+        self.query_one(StatusLine).counter.reconcile(message.completion_tokens)
+
     def on_run_finished_message(self, message: RunFinishedMessage) -> None:
         self._run_in_flight = False
-        self.query_one(WaitingIndicator).stop()
+        self._stop_status()
         self._advance_queue()
 
     def on_run_cancelled_message(self, message: RunCancelledMessage) -> None:
         self._run_in_flight = False
-        self.query_one(WaitingIndicator).stop()
+        self._stop_status()
         self._advance_queue()
 
     def action_cancel_run(self) -> None:
@@ -224,7 +245,7 @@ class PicoApp(App[None]):
 
     def on_error_message(self, message: ErrorMessage) -> None:
         self._run_in_flight = False
-        self.query_one(WaitingIndicator).stop()
+        self._stop_status()
         self.query_one("#conversation", VerticalScroll).mount(ErrorPane(message.message))
         self._advance_queue()
 
@@ -238,7 +259,7 @@ class PicoApp(App[None]):
             pane.queued = True
         self._queued_user_panes.append(pane)
         conversation.mount(pane)
-        indicator = self.query_one(WaitingIndicator)
-        conversation.move_child(indicator, after=-1)
-        indicator.start()
+        status = self.query_one(StatusLine)
+        conversation.move_child(status, after=-1)
+        status.start()
         self._input_queue.put(text)
