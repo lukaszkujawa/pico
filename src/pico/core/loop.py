@@ -222,8 +222,8 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
         if call.name == "answer":
             try:
                 answer = Answer.from_arguments(call.arguments)
-                known = {fact.index for fact in facts(runner.session)}
-                unknown = [index for index in answer.citations if index not in known]
+                known = {fact.id for fact in facts(runner.session)}
+                unknown = [citation for citation in answer.citations if citation not in known]
                 if unknown:
                     raise InvalidActionError(f"unknown fact citation(s): {unknown}")
                 output = answer.content

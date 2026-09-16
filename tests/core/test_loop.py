@@ -650,7 +650,10 @@ def test_answer_citing_known_fact_ends_run() -> None:
     session.append(
         ToolCallRecorded(name="read_file", arguments={}, result="content", is_error=False)
     )
-    call = ToolCall(id="1", name="answer", arguments={"content": "the answer", "citations": [0]})
+    fact_id = facts(session)[0].id
+    call = ToolCall(
+        id="1", name="answer", arguments={"content": "the answer", "citations": [fact_id]}
+    )
     client = ScriptedClient(
         [[ToolCallReady(tool_call=call), GenerationComplete(finish_reason="tool_calls")]]
     )
@@ -666,6 +669,30 @@ def test_answer_citing_unknown_fact_continues_run() -> None:
     session = _session()
     session.append(UserMessageRecorded(content="hi"))
     call = ToolCall(id="1", name="answer", arguments={"content": "the answer", "citations": [0]})
+    client = ScriptedClient(
+        [
+            [ToolCallReady(tool_call=call), GenerationComplete(finish_reason="tool_calls")],
+            [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
+        ]
+    )
+
+    runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    assert runner.final_answer is None
+    last_tool_event = [event for event in session.events() if isinstance(event, ToolCallRecorded)][
+        -1
+    ]
+    assert last_tool_event.is_error is True
+    assert "unknown fact citation" in last_tool_event.result
+
+
+def test_answer_citing_seq_of_error_call_continues_run() -> None:
+    bus = Bus()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    session.append(ToolCallRecorded(name="shell", arguments={}, result="boom", is_error=True))
+    call = ToolCall(id="1", name="answer", arguments={"content": "the answer", "citations": [2]})
     client = ScriptedClient(
         [
             [ToolCallReady(tool_call=call), GenerationComplete(finish_reason="tool_calls")],

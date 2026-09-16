@@ -65,20 +65,23 @@ class Session:
                 (self._session_id, next_seq, kind, payload, created_at),
             )
 
-    def events(self) -> Iterator[SessionEvent]:
+    def records(self) -> Iterator[tuple[int, SessionEvent]]:
         rows = self._conn.execute(
-            "SELECT kind, payload FROM events WHERE session_id = ? ORDER BY seq",
+            "SELECT seq, kind, payload FROM events WHERE session_id = ? ORDER BY seq",
             (self._session_id,),
         ).fetchall()
         for row in rows:
             event_type = _EVENT_KINDS.get(row["kind"])
             if event_type is None:
                 raise UnknownEventKindError(row["kind"])
-            yield event_type(**json.loads(row["payload"]))
+            yield int(row["seq"]), event_type(**json.loads(row["payload"]))
+
+    def events(self) -> Iterator[SessionEvent]:
+        return (event for _, event in self.records())
 
     def messages(self) -> list[Message]:
         messages: list[Message] = []
-        for index, event in enumerate(self.events()):
+        for seq, event in self.records():
             match event:
                 case UserMessageRecorded(content=content):
                     messages.append(Message(role=Role.USER, content=content))
@@ -87,7 +90,7 @@ class Session:
                 case ToolCallRecorded(
                     name=name, arguments=arguments, result=result, is_error=is_error
                 ):
-                    call_id = str(index)
+                    call_id = str(seq)
                     messages.append(
                         Message(
                             role=Role.ASSISTANT,

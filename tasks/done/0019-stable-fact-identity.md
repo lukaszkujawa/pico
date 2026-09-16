@@ -11,7 +11,7 @@ The store already has the right identity sitting unused: every event row carries
 * **`tool_call_id` is the seq.** `Session.messages()` uses `str(seq)` from `records()` as the `ToolCall`/`ToolResult` id for each `ToolCallRecorded` pair, replacing the `enumerate` position. The id is opaque to the LLM layer, so this changes nothing downstream.
 * **The parallel iterator dies.** `render_messages` derives the fact id for a tool message directly from `int(message.tool_result.tool_call_id)` — the id travels with the message, so there is nothing left to keep aligned. `render_tool_result` takes the id as before, just under its honest meaning.
 
-## [ ] T001 `Session.records()` and seq-based message ids
+## [X] T001 `Session.records()` and seq-based message ids
 
 ### Description
 
@@ -22,7 +22,7 @@ In `src/pico/session/session.py`: add `records()` as described (select `seq, kin
 * `tests/session/test_session.py` covers: `records()` yields seqs matching append order starting at 1; `events()` still yields the same events as before; `messages()` gives each tool-call pair a `tool_call_id` equal to the originating event's seq (assert against a session where a non-tool event sits between two tool calls, so position and seq visibly differ); child sessions number independently from their parent.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T002 Seq-based fact ids in the ledger
+## [X] T002 Seq-based fact ids in the ledger
 
 ### Description
 
@@ -34,7 +34,7 @@ In `src/pico/core/ledger.py`: rename `Fact.index` to `Fact.id` and populate it f
 * `tests/core/test_loop.py` covers: an `answer` citing a valid seq-based fact id is accepted; citing a seq that exists but belongs to an error call (or no call) is rejected with the existing unknown-citation error.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T003 Context renderer reads ids from messages
+## [X] T003 Context renderer reads ids from messages
 
 ### Description
 
@@ -45,7 +45,7 @@ In `src/pico/core/context.py`: delete the `fact_indices` parallel iterator from 
 * `tests/core/test_context.py` covers: under budget pressure, each handle summary names exactly the fact id that `facts()` reports for that same tool call — asserted on a session containing interleaved error calls and plain assistant/user turns, the shape that would have silently broken the old parallel walk; error tool results are still never truncated.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T004 Verify and finalize
+## [X] T004 Verify and finalize
 
 ### Description
 
