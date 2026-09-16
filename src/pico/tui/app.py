@@ -84,6 +84,26 @@ class ChatInput(TextArea):
         await super()._on_key(event)
 
 
+class Conversation(VerticalScroll):
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self.pinned = True
+        self._self_scrolling = False
+
+    def scroll_end(self, *args: object, **kwargs: object) -> None:
+        self._self_scrolling = True
+        try:
+            super().scroll_end(*args, **kwargs)  # type: ignore[arg-type]
+        finally:
+            self._self_scrolling = False
+        self.pinned = True
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        super().watch_scroll_y(old_value, new_value)
+        if not self._self_scrolling:
+            self.pinned = round(new_value) >= self.max_scroll_y
+
+
 class InputBar(Horizontal):
     def __init__(self, theme: Theme = PICO_THEME) -> None:
         super().__init__(id="input-bar")
@@ -166,7 +186,6 @@ class PicoApp(App[None]):
         self._answer_arguments: dict[str, str] = {}
         self._queued_user_panes: list[UserPane] = []
         self._pending_token_text: str = ""
-        self._scroll_dirty: bool = False
         self._flush_timer: Timer | None = None
 
     def _session_id(self) -> str:
@@ -181,7 +200,7 @@ class PicoApp(App[None]):
             return str(cwd)
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll(id="conversation"):
+        with Conversation(id="conversation"):
             yield Splash(self._session_id(), self._local_directory())
             yield StatusLine()
         yield Rule()
@@ -193,8 +212,7 @@ class PicoApp(App[None]):
         self.register_theme(PICO_THEME.to_textual())
         self.theme = PICO_THEME.name
         self.query_one("#user-input", ChatInput).focus()
-        conversation = self.query_one("#conversation", VerticalScroll)
-        conversation.anchor(False)
+        self._conversation().anchor(False)
         threading.Thread(target=self._consume_bus, daemon=True).start()
         self._flush_timer = self.set_interval(0.05, self._flush_pending_updates)
 
@@ -215,18 +233,15 @@ class PicoApp(App[None]):
     def _stop_status(self) -> None:
         self.query_one(StatusLine).stop()
 
-    def _conversation(self) -> VerticalScroll:
-        return self.query_one("#conversation", VerticalScroll)
+    def _conversation(self) -> Conversation:
+        return self.query_one("#conversation", Conversation)
 
     async def _mount_at_bottom(self, pane: Static) -> None:
         conversation = self._conversation()
-        at_bottom = conversation.scroll_offset.y >= conversation.max_scroll_y
+        pinned = conversation.pinned
         await conversation.mount(pane, before=self.query_one(StatusLine))
-        if at_bottom:
+        if pinned:
             conversation.scroll_end(animate=False)
-
-    def _stick_to_bottom(self) -> None:
-        self._scroll_dirty = True
 
     def _queue_token_estimate(self, text: str) -> None:
         self._pending_token_text += text
@@ -235,11 +250,9 @@ class PicoApp(App[None]):
         if self._pending_token_text:
             self.query_one(StatusLine).counter.estimate(self._pending_token_text)
             self._pending_token_text = ""
-        if self._scroll_dirty:
-            self._scroll_dirty = False
-            conversation = self._conversation()
-            if conversation.scroll_offset.y >= conversation.max_scroll_y:
-                conversation.scroll_end(animate=False)
+        conversation = self._conversation()
+        if conversation.pinned:
+            conversation.scroll_end(animate=False)
 
     async def on_assistant_pane_create(self, message: AssistantPaneCreate) -> None:
         pane = AssistantPane(pane_id=message.pane_id)
@@ -249,7 +262,6 @@ class PicoApp(App[None]):
     def on_assistant_pane_delta(self, message: AssistantPaneDelta) -> None:
         self._assistant_panes[message.pane_id].append_delta(message.text)
         self._queue_token_estimate(message.text)
-        self._stick_to_bottom()
 
     async def on_thinking_pane_create(self, message: ThinkingPaneCreate) -> None:
         pane = ThinkingPane(pane_id=message.pane_id)
@@ -259,7 +271,6 @@ class PicoApp(App[None]):
     def on_thinking_pane_delta(self, message: ThinkingPaneDelta) -> None:
         self._thinking_panes[message.pane_id].append_delta(message.text)
         self._queue_token_estimate(message.text)
-        self._stick_to_bottom()
 
     async def on_tool_call_pane_create(self, message: ToolCallPaneCreate) -> None:
         if message.pane_id in self._tool_call_panes:
@@ -280,7 +291,6 @@ class PicoApp(App[None]):
             content = extract_answer_content(raw)
             if content is not None:
                 answer_pane.content_text = content
-            self._stick_to_bottom()
             return
         pane = self._tool_call_panes.get(message.pane_id)
         if pane is None:
@@ -288,11 +298,9 @@ class PicoApp(App[None]):
             self._tool_call_panes[message.pane_id] = pane
             await self._mount_at_bottom(pane)
         pane.append_arguments_delta(message.text)
-        self._stick_to_bottom()
 
     def on_tool_call_pane_result_delta(self, message: ToolCallPaneResultDelta) -> None:
         self._tool_call_panes[message.pane_id].append_result_delta(message.text)
-        self._stick_to_bottom()
 
     def on_tool_call_pane_close(self, message: ToolCallPaneClose) -> None:
         self._tool_call_panes[message.pane_id].finish(
@@ -372,7 +380,7 @@ class PicoApp(App[None]):
         self._answer_panes.clear()
         self._answer_arguments.clear()
         self._queued_user_panes.clear()
-        conversation = self.query_one("#conversation", VerticalScroll)
+        conversation = self._conversation()
         status = self.query_one(StatusLine)
         status.stop()
         status.display = False
@@ -381,6 +389,7 @@ class PicoApp(App[None]):
         for child in list(conversation.children):
             if child is not splash and child is not status:
                 child.remove()
+        conversation.pinned = True
 
     async def on_error_message(self, message: ErrorMessage) -> None:
         self._run_in_flight = False

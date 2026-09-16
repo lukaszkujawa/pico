@@ -501,10 +501,10 @@ async def test_manual_scroll_up_is_not_overridden_by_the_next_delta() -> None:
             bus.publish(AssistantTextDelta(id=str(i), text="line " * 20))
             bus.publish(AssistantTextFinished(id=str(i)))
             bus.publish(RunFinished())
-            await pilot.pause(0.01)
+            await pilot.pause(0.05)
 
-        conversation.scroll_home(animate=False)
-        await pilot.pause()
+        conversation.scroll_home(animate=False, immediate=True)
+        await pilot.pause(0.1)
         scrolled_up_offset = conversation.scroll_offset.y
         assert scrolled_up_offset < conversation.max_scroll_y
 
