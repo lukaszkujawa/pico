@@ -3,7 +3,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
-from pico.core.actions import Answer, InvalidActionError
+from pico.core.actions import (
+    Answer,
+    Delegate,
+    InvalidActionError,
+    register_delegate_actions,
+)
 from pico.core.bus import Bus
 from pico.core.context import render_messages
 from pico.core.errors import UnknownToolError
@@ -34,13 +39,19 @@ from pico.llm.types import (
     ToolCallDelta,
     ToolCallReady,
 )
-from pico.session import AssistantMessageRecorded, Session, ToolCallRecorded
+from pico.session import (
+    AssistantMessageRecorded,
+    Session,
+    ToolCallRecorded,
+    UserMessageRecorded,
+)
 
 StepOutcome = Literal["continue", "done", "cancelled"]
 
 Step = Callable[["LoopRunner"], StepOutcome]
 
 MAX_INVALID_ACTION_ATTEMPTS = 5
+MAX_DELEGATE_STEPS = 10
 
 
 @dataclass(frozen=True)
@@ -70,6 +81,7 @@ class LoopRunner:
         self.pending_tool_calls: list[ToolCall] = []
         self.final_answer: str | None = None
         self.invalid_action_attempts = 0
+        self.delegate_calls = 0
         self._next_id = 0
 
     def new_id(self) -> str:
@@ -156,6 +168,30 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
     return "continue"
 
 
+def _run_delegate(runner: LoopRunner, delegate: Delegate) -> tuple[str, bool]:
+    runner.delegate_calls += 1
+    child_session = runner.session.child(f"delegate/{runner.delegate_calls}")
+    child_session.append(UserMessageRecorded(content=delegate.question))
+    child_tools = ToolRegistry()
+    register_delegate_actions(child_tools)
+    child_runner = LoopRunner(
+        runner.llm,
+        child_tools,
+        Bus(),
+        child_session,
+        runner.context_size,
+        LoopConfig(steps=(stream_step, tool_call_step), max_steps=MAX_DELEGATE_STEPS),
+    )
+    child_runner.execute()
+    if child_runner.final_answer is not None:
+        return child_runner.final_answer, False
+    return (
+        f"delegate did not answer question within {MAX_DELEGATE_STEPS} steps: "
+        f"{delegate.question!r}",
+        True,
+    )
+
+
 def tool_call_step(runner: LoopRunner) -> StepOutcome:
     tool_calls = runner.pending_tool_calls
     runner.pending_tool_calls = []
@@ -172,6 +208,13 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
                 output = answer.content
                 is_error = False
                 runner.final_answer = answer.content
+            except InvalidActionError as error:
+                output = str(error)
+                is_error = True
+        elif call.name == "delegate":
+            try:
+                delegate = Delegate.from_arguments(call.arguments)
+                output, is_error = _run_delegate(runner, delegate)
             except InvalidActionError as error:
                 output = str(error)
                 is_error = True

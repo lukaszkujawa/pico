@@ -1,11 +1,13 @@
 from pico.core.actions import (
     Action,
     Answer,
+    Delegate,
     InvalidActionError,
     ReadFile,
     Shell,
     WriteFile,
     register_actions,
+    register_delegate_actions,
 )
 from pico.core.bus import Bus
 from pico.core.context import (
@@ -36,6 +38,7 @@ from pico.core.events import (
 from pico.core.ledger import Fact, Goal, facts, goal
 from pico.core.loop import (
     DEFAULT_LOOP_CONFIG,
+    MAX_DELEGATE_STEPS,
     MAX_INVALID_ACTION_ATTEMPTS,
     LoopConfig,
     LoopRunner,
@@ -48,6 +51,7 @@ from pico.core.tools import Tool, ToolRegistry
 __all__ = [
     "COMPLETION_RESERVE_FRACTION",
     "DEFAULT_LOOP_CONFIG",
+    "MAX_DELEGATE_STEPS",
     "MAX_INVALID_ACTION_ATTEMPTS",
     "Action",
     "Answer",
@@ -59,6 +63,7 @@ __all__ = [
     "AssistantThinkingStarted",
     "Bus",
     "BusEvent",
+    "Delegate",
     "ErrorOccurred",
     "Fact",
     "Goal",
@@ -84,6 +89,7 @@ __all__ = [
     "goal",
     "prompt_budget",
     "register_actions",
+    "register_delegate_actions",
     "render_messages",
     "render_tool_result",
     "stream_step",

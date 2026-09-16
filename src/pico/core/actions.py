@@ -114,7 +114,17 @@ class Answer:
         return cls(content=content, citations=citations)
 
 
-Action = ReadFile | WriteFile | Shell | Answer
+@dataclass(frozen=True)
+class Delegate:
+    question: str
+
+    @classmethod
+    def from_arguments(cls, arguments: Mapping[str, object]) -> Self:
+        question = _require(arguments, "question", str)
+        return cls(question=question)
+
+
+Action = ReadFile | WriteFile | Shell | Answer | Delegate
 
 _TOOL_SPECS = {
     "read_file": ToolSpec(
@@ -159,6 +169,18 @@ _TOOL_SPECS = {
             "required": ["content", "citations"],
         },
     ),
+    "delegate": ToolSpec(
+        name="delegate",
+        description=(
+            "Spawn a read-only sub-agent to answer a single scoped question and "
+            "return its evidence-checked answer."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {"question": {"type": "string"}},
+            "required": ["question"],
+        },
+    ),
 }
 
 
@@ -173,8 +195,18 @@ def _action_tool(action_type: type[ReadFile | WriteFile | Shell], name: str) -> 
     return Tool(spec=_TOOL_SPECS[name], execute=execute)
 
 
+def _answer_tool() -> Tool:
+    return Tool(spec=_TOOL_SPECS["answer"], execute=lambda _: "")
+
+
 def register_actions(registry: ToolRegistry) -> None:
     registry.register(_action_tool(ReadFile, "read_file"))
     registry.register(_action_tool(WriteFile, "write_file"))
     registry.register(_action_tool(Shell, "shell"))
-    registry.register(Tool(spec=_TOOL_SPECS["answer"], execute=lambda _: ""))
+    registry.register(_answer_tool())
+    registry.register(Tool(spec=_TOOL_SPECS["delegate"], execute=lambda _: ""))
+
+
+def register_delegate_actions(registry: ToolRegistry) -> None:
+    registry.register(_action_tool(ReadFile, "read_file"))
+    registry.register(_answer_tool())

@@ -4,11 +4,13 @@ import pytest
 
 from pico.core.actions import (
     Answer,
+    Delegate,
     InvalidActionError,
     ReadFile,
     Shell,
     WriteFile,
     register_actions,
+    register_delegate_actions,
 )
 from pico.core.tools import ToolRegistry
 from pico.llm.types import ToolCall
@@ -130,13 +132,32 @@ def test_answer_from_arguments_citations_with_non_int_element() -> None:
         Answer.from_arguments({"content": "the answer", "citations": [0, "1"]})
 
 
-def test_register_actions_populates_all_four_names() -> None:
+def test_delegate_from_arguments() -> None:
+    action = Delegate.from_arguments({"question": "what is x?"})
+    assert action == Delegate(question="what is x?")
+
+
+def test_delegate_from_arguments_missing_question() -> None:
+    with pytest.raises(InvalidActionError):
+        Delegate.from_arguments({})
+
+
+def test_register_actions_populates_all_five_names() -> None:
     registry = ToolRegistry()
     register_actions(registry)
 
     names = {spec.name for spec in registry.specs()}
 
-    assert names == {"read_file", "write_file", "shell", "answer"}
+    assert names == {"read_file", "write_file", "shell", "answer", "delegate"}
+
+
+def test_register_delegate_actions_populates_read_only_names() -> None:
+    registry = ToolRegistry()
+    register_delegate_actions(registry)
+
+    names = {spec.name for spec in registry.specs()}
+
+    assert names == {"read_file", "answer"}
 
 
 def test_register_actions_read_file_round_trips(tmp_path: Path) -> None:

@@ -145,6 +145,7 @@ def test_turn_loop_runs_one_turn_per_queued_message(
         "write_file",
         "shell",
         "answer",
+        "delegate",
     }
 
 

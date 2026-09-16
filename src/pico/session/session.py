@@ -25,6 +25,13 @@ class Session:
         self._conn = conn
         self._session_id = session_id
 
+    @property
+    def session_id(self) -> str:
+        return self._session_id
+
+    def child(self, suffix: str) -> "Session":
+        return Session(self._conn, f"{self._session_id}/{suffix}")
+
     def append(self, event: SessionEvent) -> None:
         kind = type(event).__name__
         payload = json.dumps(asdict(event))
