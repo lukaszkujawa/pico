@@ -1,4 +1,4 @@
-.PHONY: lint format typecheck test check code run stop_code
+.PHONY: lint format typecheck test check code cloude_attach run stop_code
 
 lint:
 	uv run ruff check .
@@ -18,6 +18,9 @@ check: lint typecheck test
 
 code:
 	bin/code.sh
+
+cloude_attach:
+	tmux attach -t claude-pico
 
 run:
 	uv run python -m pico
