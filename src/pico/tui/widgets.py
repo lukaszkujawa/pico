@@ -292,9 +292,6 @@ class StatusLine(Horizontal):
         self.timer.start()
         self.counter.reset()
 
-    def stop_spinner(self) -> None:
-        self.indicator.stop()
-
     def stop(self) -> None:
         self.indicator.stop()
         self.timer.stop()

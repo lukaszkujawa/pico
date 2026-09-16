@@ -1,6 +1,7 @@
 import queue
 
 import pytest
+from textual.containers import VerticalScroll
 from textual.pilot import Pilot
 
 from pico.core.bus import Bus
@@ -536,7 +537,7 @@ async def test_submitting_input_starts_waiting_indicator() -> None:
         assert app.query_one(WaitingIndicator).running is True
 
 
-async def test_first_pane_create_stops_waiting_indicator() -> None:
+async def test_first_pane_create_keeps_waiting_indicator_running() -> None:
     bus = Bus()
     app = PicoApp(bus, queue.Queue())
     async with app.run_test() as pilot:
@@ -552,7 +553,7 @@ async def test_first_pane_create_stops_waiting_indicator() -> None:
         bus.publish(AssistantThinkingStarted(id="0"))
         await pilot.pause(0.2)
 
-        assert app.query_one(WaitingIndicator).running is False
+        assert app.query_one(WaitingIndicator).running is True
 
 
 async def test_error_before_any_pane_stops_waiting_indicator() -> None:
@@ -808,7 +809,7 @@ async def test_status_row_reflows_as_the_readouts_grow_wider() -> None:
         assert counter.size.width == len("149 tokens")
 
 
-async def test_first_pane_stops_the_spinner_but_keeps_elapsed_and_tokens_running() -> None:
+async def test_first_pane_keeps_spinner_elapsed_and_tokens_running() -> None:
     bus = Bus()
     app = PicoApp(bus, queue.Queue())
     async with app.run_test() as pilot:
@@ -819,7 +820,7 @@ async def test_first_pane_stops_the_spinner_but_keeps_elapsed_and_tokens_running
         bus.publish(AssistantTextStarted(id="0"))
         await pilot.pause(0.2)
 
-        assert app.query_one(WaitingIndicator).running is False
+        assert app.query_one(WaitingIndicator).running is True
         assert app.query_one(ElapsedTimer).running is True
 
         bus.publish(AssistantTextDelta(id="0", text="x" * 400))
@@ -829,6 +830,7 @@ async def test_first_pane_stops_the_spinner_but_keeps_elapsed_and_tokens_running
         bus.publish(RunFinished())
         await pilot.pause(0.2)
         assert app.query_one(ElapsedTimer).running is False
+        assert app.query_one(WaitingIndicator).running is False
 
 
 class RecordingSessionHandle:
@@ -951,3 +953,149 @@ async def test_new_session_action_without_a_session_handle_is_a_no_op() -> None:
         await pilot.pause()
 
         assert app.query_one(Splash).render().plain.count("session ") == 0
+
+
+async def test_status_line_docks_in_the_footer_not_the_conversation() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        status = app.query_one(StatusLine)
+        assert status.parent is not None
+        assert status.parent.id == "footer"
+        assert status not in app.query_one("#conversation", VerticalScroll).children
+
+
+async def test_status_line_stays_visible_after_panes_mount_below_it() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _submit(app, pilot)
+
+        bus.publish(RunStarted())
+        bus.publish(AssistantThinkingStarted(id="0"))
+        bus.publish(AssistantThinkingDelta(id="0", text="pondering"))
+        bus.publish(AssistantThinkingFinished(id="0"))
+        tool_call = ToolCall(id="1", name="search", arguments={})
+        bus.publish(ToolCallStarted(id="1", name="search", arguments={}))
+        bus.publish(ToolCallFinished(id="1", tool_call=tool_call, result="ok", is_error=False))
+        await pilot.pause(0.2)
+
+        assert app.query_one(StatusLine).display is True
+
+
+async def test_spinner_keeps_running_through_thinking_text_and_tool_call_panes() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _submit(app, pilot)
+
+        bus.publish(RunStarted())
+        bus.publish(AssistantThinkingStarted(id="0"))
+        bus.publish(AssistantThinkingDelta(id="0", text="pondering"))
+        bus.publish(AssistantThinkingFinished(id="0"))
+        await pilot.pause(0.2)
+        assert app.query_one(WaitingIndicator).running is True
+
+        bus.publish(AssistantTextStarted(id="1"))
+        bus.publish(AssistantTextDelta(id="1", text="answer"))
+        bus.publish(AssistantTextFinished(id="1"))
+        await pilot.pause(0.2)
+        assert app.query_one(WaitingIndicator).running is True
+
+        bus.publish(ToolCallStarted(id="2", name="search", arguments={}))
+        await pilot.pause(0.2)
+        assert app.query_one(WaitingIndicator).running is True
+
+        tool_call = ToolCall(id="2", name="search", arguments={})
+        bus.publish(ToolCallFinished(id="2", tool_call=tool_call, result="ok", is_error=False))
+        await pilot.pause(0.2)
+        assert app.query_one(WaitingIndicator).running is True
+
+
+async def test_spinner_stops_on_run_cancelled_after_panes() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _submit(app, pilot)
+
+        bus.publish(RunStarted())
+        bus.publish(AssistantTextStarted(id="0"))
+        bus.publish(AssistantTextDelta(id="0", text="partial"))
+        bus.publish(RunCancelled())
+        await pilot.pause(0.2)
+
+        assert app.query_one(WaitingIndicator).running is False
+
+
+async def test_spinner_stops_on_error_after_panes() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _submit(app, pilot)
+
+        bus.publish(RunStarted())
+        bus.publish(AssistantTextStarted(id="0"))
+        bus.publish(ErrorOccurred(message="boom"))
+        bus.publish(RunFinished(error="boom"))
+        await pilot.pause(0.2)
+
+        assert app.query_one(WaitingIndicator).running is False
+
+
+async def test_elapsed_and_tokens_keep_updating_across_the_whole_turn() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _submit(app, pilot)
+
+        bus.publish(RunStarted())
+        bus.publish(AssistantTextStarted(id="0"))
+        bus.publish(AssistantTextDelta(id="0", text="x" * 40))
+        await pilot.pause(0.2)
+        assert app.query_one(TokenCounter).tokens == 10
+
+        bus.publish(ToolCallStarted(id="1", name="search", arguments={}))
+        tool_call = ToolCall(id="1", name="search", arguments={})
+        bus.publish(ToolCallFinished(id="1", tool_call=tool_call, result="ok", is_error=False))
+        bus.publish(AssistantTextDelta(id="0", text="y" * 40))
+        await pilot.pause(0.2)
+        assert app.query_one(TokenCounter).tokens == 20
+        assert app.query_one(ElapsedTimer).running is True
+
+
+async def test_spinner_restarts_and_elapsed_resets_on_a_queued_second_turn() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _submit(app, pilot)
+
+        bus.publish(RunStarted())
+        await pilot.pause(0.2)
+        bus.publish(AssistantTextStarted(id="0"))
+        bus.publish(AssistantTextDelta(id="0", text="first"))
+        bus.publish(AssistantTextFinished(id="0"))
+        bus.publish(RunFinished())
+        await pilot.pause(0.2)
+
+        assert app.query_one(WaitingIndicator).running is False
+        assert app.query_one(ElapsedTimer).running is False
+
+        app.query_one("#user-input", ChatInput).focus()
+        await pilot.press(*"second")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        bus.publish(RunStarted())
+        await pilot.pause(0.2)
+
+        assert app.query_one(WaitingIndicator).running is True
+        assert app.query_one(ElapsedTimer).running is True
+        assert app.query_one(ElapsedTimer).elapsed == 0

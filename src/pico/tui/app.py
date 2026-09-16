@@ -152,9 +152,9 @@ class PicoApp(App[None]):
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="conversation"):
             yield Splash(self._session_id())
-            yield StatusLine()
         yield Rule()
         with Vertical(id="footer"):
+            yield StatusLine()
             yield InputBar()
             yield Rule()
 
@@ -179,11 +179,7 @@ class PicoApp(App[None]):
     def _stop_status(self) -> None:
         self.query_one(StatusLine).stop()
 
-    def _stop_spinner(self) -> None:
-        self.query_one(StatusLine).stop_spinner()
-
     def on_assistant_pane_create(self, message: AssistantPaneCreate) -> None:
-        self._stop_spinner()
         pane = AssistantPane(pane_id=message.pane_id)
         self._assistant_panes[message.pane_id] = pane
         self.query_one("#conversation", VerticalScroll).mount(pane)
@@ -196,7 +192,6 @@ class PicoApp(App[None]):
         self._assistant_panes[message.pane_id].finish()
 
     def on_thinking_pane_create(self, message: ThinkingPaneCreate) -> None:
-        self._stop_spinner()
         pane = ThinkingPane(pane_id=message.pane_id)
         self._thinking_panes[message.pane_id] = pane
         self.query_one("#conversation", VerticalScroll).mount(pane)
@@ -227,7 +222,7 @@ class PicoApp(App[None]):
 
     def on_run_started_message(self, message: RunStartedMessage) -> None:
         self._run_in_flight = True
-        self.query_one(StatusLine).counter.reset()
+        self.query_one(StatusLine).start()
         if self._queued_user_panes:
             self._queued_user_panes[0].queued = False
 
@@ -267,9 +262,8 @@ class PicoApp(App[None]):
         splash = self.query_one(Splash)
         splash.session_id = self._session_id()
         for child in list(conversation.children):
-            if child is not status and child is not splash:
+            if child is not splash:
                 child.remove()
-        conversation.move_child(status, after=-1)
 
     def on_error_message(self, message: ErrorMessage) -> None:
         self._run_in_flight = False
@@ -287,7 +281,5 @@ class PicoApp(App[None]):
             pane.queued = True
         self._queued_user_panes.append(pane)
         conversation.mount(pane)
-        status = self.query_one(StatusLine)
-        conversation.move_child(status, after=-1)
-        status.start()
+        self.query_one(StatusLine).start()
         self._input_queue.put(text)
