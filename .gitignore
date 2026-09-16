@@ -42,5 +42,8 @@ Thumbs.db
 *.db
 *.db-*
 
+# Docker run persisted data
+.docker_data/
+
 # Debug run logs
 logs/

@@ -1,4 +1,4 @@
-.PHONY: lint format typecheck test check code cloude_attach run stop_code
+.PHONY: lint format typecheck test build check code cloude_attach run run_in_docker stop_code
 
 lint:
 	uv run ruff check .
@@ -14,7 +14,10 @@ typecheck:
 test:
 	uv run pytest
 
-check: lint typecheck test
+build:
+	uv build
+
+check: lint typecheck test build
 
 code:
 	bin/code.sh
@@ -24,6 +27,9 @@ cloude_attach:
 
 run:
 	uv run python -m pico
+
+run_in_docker:
+	bin/run_in_docker.sh
 
 stop_code:
 	touch .stop_code

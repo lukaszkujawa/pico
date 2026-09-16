@@ -70,3 +70,4 @@ branch = true
 [tool.coverage.report]
 skip_empty = true
 precision = 1
+fail_under = 94
