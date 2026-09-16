@@ -1,7 +1,11 @@
+import os
+import selectors
+import signal
 import subprocess
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
-from typing import Self, cast
+from typing import IO, Self, cast
 
 from pico.core.errors import ToolError
 from pico.core.ledger import facts, plan, render_plan
@@ -98,6 +102,23 @@ class WriteFile:
         return f"wrote {len(self.content)} bytes to {self.path}"
 
 
+def _read_timeout(stream: IO[str], timeout: float) -> Iterator[str]:
+    selector = selectors.DefaultSelector()
+    selector.register(stream, selectors.EVENT_READ)
+    try:
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not selector.select(remaining):
+                raise TimeoutError
+            line = stream.readline()
+            if not line:
+                return
+            yield line
+    finally:
+        selector.close()
+
+
 @dataclass(frozen=True)
 class Shell:
     command: str
@@ -107,19 +128,30 @@ class Shell:
         command = _require(arguments, "command", str)
         return cls(command=command)
 
-    def run(self, timeout: float = 30) -> tuple[int, str]:
+    def run(
+        self, timeout: float = 30, on_chunk: Callable[[str], None] | None = None
+    ) -> tuple[int, str]:
+        process = subprocess.Popen(
+            self.command,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+        chunks: list[str] = []
+        assert process.stdout is not None
         try:
-            result = subprocess.run(
-                self.command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-        except subprocess.TimeoutExpired as error:
+            for line in _read_timeout(process.stdout, timeout):
+                chunks.append(line)
+                if on_chunk is not None:
+                    on_chunk(line)
+        except TimeoutError as error:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
             raise ToolError(f"command timed out after {timeout}s: {self.command}") from error
-        output = "\n".join(part for part in (result.stdout, result.stderr) if part)
-        return result.returncode, output
+        code = process.wait()
+        return code, "".join(chunks)
 
     def execute(self, timeout: float = 30) -> str:
         code, output = self.run(timeout)

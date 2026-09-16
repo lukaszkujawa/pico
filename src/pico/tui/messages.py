@@ -17,7 +17,9 @@ from pico.core.events import (
     RunCancelled,
     RunFinished,
     RunStarted,
+    ToolCallArgumentsDelta,
     ToolCallFinished,
+    ToolCallResultDelta,
     ToolCallStarted,
 )
 
@@ -82,9 +84,26 @@ class ToolCallPaneCreate(Message):
         super().__init__()
 
 
-class ToolCallPaneClose(Message):
-    def __init__(self, pane_id: str, result: str, is_error: bool, fact_id: int | None) -> None:
+class ToolCallPaneArgumentsDelta(Message):
+    def __init__(self, pane_id: str, text: str) -> None:
         self.pane_id = pane_id
+        self.text = text
+        super().__init__()
+
+
+class ToolCallPaneResultDelta(Message):
+    def __init__(self, pane_id: str, text: str) -> None:
+        self.pane_id = pane_id
+        self.text = text
+        super().__init__()
+
+
+class ToolCallPaneClose(Message):
+    def __init__(
+        self, pane_id: str, arguments: str, result: str, is_error: bool, fact_id: int | None
+    ) -> None:
+        self.pane_id = pane_id
+        self.arguments = arguments
         self.result = result
         self.is_error = is_error
         self.fact_id = fact_id
@@ -128,6 +147,8 @@ TuiMessage = (
     | ThinkingPaneDelta
     | ThinkingPaneClose
     | ToolCallPaneCreate
+    | ToolCallPaneArgumentsDelta
+    | ToolCallPaneResultDelta
     | ToolCallPaneClose
     | AnswerPaneCreate
     | GenerationCompletedMessage
@@ -164,13 +185,23 @@ def translate(event: BusEvent) -> TuiMessage | None:
             return ToolCallPaneCreate(
                 pane_id=pane_id, name=name, arguments=format_arguments(arguments)
             )
+        case ToolCallArgumentsDelta(id=pane_id, text=text):
+            return ToolCallPaneArgumentsDelta(pane_id=pane_id, text=text)
+        case ToolCallResultDelta(id=pane_id, text=text):
+            return ToolCallPaneResultDelta(pane_id=pane_id, text=text)
         case ToolCallFinished(id=pane_id, tool_call=tool_call, result=result, is_error=False) if (
             tool_call.name == "answer"
         ):
             return AnswerPaneCreate(pane_id=pane_id, content=result)
-        case ToolCallFinished(id=pane_id, result=result, is_error=is_error, fact_id=fact_id):
+        case ToolCallFinished(
+            id=pane_id, tool_call=tool_call, result=result, is_error=is_error, fact_id=fact_id
+        ):
             return ToolCallPaneClose(
-                pane_id=pane_id, result=result, is_error=is_error, fact_id=fact_id
+                pane_id=pane_id,
+                arguments=format_arguments(tool_call.arguments),
+                result=result,
+                is_error=is_error,
+                fact_id=fact_id,
             )
         case GenerationCompleted(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens):
             return GenerationCompletedMessage(

@@ -12,7 +12,9 @@ from pico.core.events import (
     RunCancelled,
     RunFinished,
     RunStarted,
+    ToolCallArgumentsDelta,
     ToolCallFinished,
+    ToolCallResultDelta,
     ToolCallStarted,
 )
 from pico.llm.types import ToolCall
@@ -71,6 +73,18 @@ def test_tool_call_started() -> None:
     assert event.arguments == {"x": 1}
 
 
+def test_tool_call_arguments_delta() -> None:
+    event = ToolCallArgumentsDelta(id="1", text='{"path":')
+    assert event.id == "1"
+    assert event.text == '{"path":'
+
+
+def test_tool_call_result_delta() -> None:
+    event = ToolCallResultDelta(id="1", text="line 1\n")
+    assert event.id == "1"
+    assert event.text == "line 1\n"
+
+
 def test_tool_call_finished() -> None:
     call = ToolCall(id="1", name="echo", arguments={})
     event = ToolCallFinished(id="1", tool_call=call, result="ok")
@@ -127,6 +141,10 @@ def test_bus_event_exhaustive_match() -> None:
                 return "assistant_thinking_finished"
             case ToolCallStarted():
                 return "tool_call_started"
+            case ToolCallArgumentsDelta():
+                return "tool_call_arguments_delta"
+            case ToolCallResultDelta():
+                return "tool_call_result_delta"
             case ToolCallFinished():
                 return "tool_call_finished"
             case GenerationCompleted():
@@ -147,6 +165,8 @@ def test_bus_event_exhaustive_match() -> None:
     assert describe(AssistantThinkingDelta(id="1", text="hmm")) == "assistant_thinking_delta"
     assert describe(AssistantThinkingFinished(id="1")) == "assistant_thinking_finished"
     assert describe(ToolCallStarted(id="1", name="echo", arguments={})) == "tool_call_started"
+    assert describe(ToolCallArgumentsDelta(id="1", text="a")) == "tool_call_arguments_delta"
+    assert describe(ToolCallResultDelta(id="1", text="a")) == "tool_call_result_delta"
     call = ToolCall(id="1", name="echo", arguments={})
     assert describe(ToolCallFinished(id="1", tool_call=call, result="ok")) == "tool_call_finished"
     assert describe(GenerationCompleted()) == "generation_completed"

@@ -11,6 +11,7 @@ from pico.llm.types import (
     Role,
     TextDelta,
     ThinkingDelta,
+    ToolCallDelta,
     ToolCallReady,
     ToolSpec,
 )
@@ -140,12 +141,16 @@ def test_stream_tool_call() -> None:
     tools = [ToolSpec(name="search", description="search the web", parameters={"type": "object"})]
     events = list(client.stream([Message(role=Role.USER, content="search pico")], tools))
 
-    assert len(events) == 2
-    ready = events[0]
+    assert len(events) == 3
+    delta = events[0]
+    assert isinstance(delta, ToolCallDelta)
+    assert delta.id == "call_1"
+    assert delta.name == "search"
+    ready = events[1]
     assert isinstance(ready, ToolCallReady)
     assert ready.tool_call.name == "search"
     assert ready.tool_call.arguments == {"query": "pico"}
-    assert events[1] == GenerationComplete(finish_reason="tool_calls")
+    assert events[2] == GenerationComplete(finish_reason="tool_calls")
 
 
 def test_stream_uses_explicit_call_id_verbatim() -> None:
@@ -170,7 +175,7 @@ def test_stream_uses_explicit_call_id_verbatim() -> None:
 
     events = list(client.stream([Message(role=Role.USER, content="hi")], []))
 
-    ready = events[0]
+    ready = events[1]
     assert isinstance(ready, ToolCallReady)
     assert ready.tool_call.id == "call_abc"
 

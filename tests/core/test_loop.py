@@ -27,7 +27,9 @@ from pico.core.events import (
     RunCancelled,
     RunFinished,
     RunStarted,
+    ToolCallArgumentsDelta,
     ToolCallFinished,
+    ToolCallResultDelta,
     ToolCallStarted,
 )
 from pico.core.ledger import facts
@@ -481,6 +483,45 @@ def test_two_tool_calls_sharing_model_id_get_distinct_pane_ids() -> None:
     assert started[1].id == finished[1].id
 
 
+def test_concurrent_tool_call_deltas_land_on_separate_pane_ids() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    first_call = ToolCall(id="a", name="echo", arguments={"text": "first"})
+    second_call = ToolCall(id="b", name="echo", arguments={"text": "second"})
+    client = ScriptedClient(
+        [
+            [
+                ToolCallDelta(id="a", name="echo", arguments_delta='{"text":'),
+                ToolCallDelta(id="b", name="echo", arguments_delta='{"text":'),
+                ToolCallDelta(id="a", name="echo", arguments_delta=' "first"}'),
+                ToolCallDelta(id="b", name="echo", arguments_delta=' "second"}'),
+                ToolCallReady(tool_call=first_call),
+                ToolCallReady(tool_call=second_call),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [GenerationComplete(finish_reason="stop")],
+        ]
+    )
+
+    runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    events = [next(subscriber) for _ in range(12)]
+    deltas = [event for event in events if isinstance(event, ToolCallArgumentsDelta)]
+    started = [event for event in events if isinstance(event, ToolCallStarted)]
+    finished = [event for event in events if isinstance(event, ToolCallFinished)]
+
+    first_pane_ids = {deltas[0].id, deltas[2].id}
+    second_pane_ids = {deltas[1].id, deltas[3].id}
+    assert len(first_pane_ids) == 1
+    assert len(second_pane_ids) == 1
+    assert first_pane_ids != second_pane_ids
+    assert [event.id for event in started] == [deltas[0].id, deltas[1].id]
+    assert [event.id for event in finished] == [deltas[0].id, deltas[1].id]
+
+
 def test_tool_call_pane_ids_do_not_collide_with_text_or_thinking_pane_ids() -> None:
     bus = Bus()
     subscriber = bus.subscribe()
@@ -511,7 +552,7 @@ def test_tool_call_pane_ids_do_not_collide_with_text_or_thinking_pane_ids() -> N
     assert len(pane_ids) == len(set(pane_ids))
 
 
-def test_tool_call_delta_from_llm_is_ignored() -> None:
+def test_tool_call_delta_from_llm_is_forwarded_with_the_calls_pane_id() -> None:
     bus = Bus()
     subscriber = bus.subscribe()
     session = _session()
@@ -531,9 +572,10 @@ def test_tool_call_delta_from_llm_is_ignored() -> None:
     runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    events = [next(subscriber) for _ in range(6)]
+    events = [next(subscriber) for _ in range(7)]
     assert events == [
         RunStarted(),
+        ToolCallArgumentsDelta(id="0", text='{"text":'),
         GenerationCompleted(),
         ToolCallStarted(id="0", name="echo", arguments={"text": "hi"}),
         ToolCallFinished(id="0", tool_call=call, result="hi", is_error=False, fact_id=3),
@@ -1238,6 +1280,43 @@ def test_repeated_tool_errors_do_not_end_run_via_invalid_action_cap() -> None:
     ]
     assert len(errors) == MAX_INVALID_ACTION_ATTEMPTS
     assert list(session.events())[-1] == AssistantMessageRecorded(content="done", thinking="")
+
+
+def test_shell_tool_call_publishes_result_deltas_before_finished() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    tools = ToolRegistry()
+    register_actions(tools, session)
+    call = ToolCall(id="1", name="shell", arguments={"command": "echo one; echo two"})
+    client = ScriptedClient(
+        [
+            [ToolCallReady(tool_call=call), GenerationComplete(finish_reason="tool_calls")],
+            [GenerationComplete(finish_reason="stop")],
+        ]
+    )
+
+    runner = LoopRunner(client, tools, bus, session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    events: list[object] = []
+    for event in subscriber:
+        events.append(event)
+        if isinstance(event, RunFinished):
+            break
+
+    finished_index = next(
+        index for index, event in enumerate(events) if isinstance(event, ToolCallFinished)
+    )
+    delta_indices = [
+        index for index, event in enumerate(events) if isinstance(event, ToolCallResultDelta)
+    ]
+    assert delta_indices
+    assert all(index < finished_index for index in delta_indices)
+    finished = events[finished_index]
+    assert isinstance(finished, ToolCallFinished)
+    assert finished.result == "one\ntwo\n"
 
 
 def test_model_recovers_a_truncated_fact_via_read_fact_and_cites_it() -> None:

@@ -196,6 +196,64 @@ async def test_tool_call_pane_truncates_long_result() -> None:
         assert "100 more chars" in rendered
 
 
+async def test_tool_call_pane_accumulates_argument_deltas() -> None:
+    app = ToolCallPaneHarness()
+    async with app.run_test() as pilot:
+        pane = app.query_one(ToolCallPane)
+
+        pane.append_arguments_delta('{"path":')
+        pane.append_arguments_delta(' "a.txt"}')
+        await pilot.pause()
+
+        assert '{"path": "a.txt"}' in pane.render().plain
+
+
+async def test_tool_call_pane_accumulates_result_deltas() -> None:
+    app = ToolCallPaneHarness()
+    async with app.run_test() as pilot:
+        pane = app.query_one(ToolCallPane)
+
+        pane.append_result_delta("line one\n")
+        pane.append_result_delta("line two\n")
+        await pilot.pause()
+
+        assert "line one\nline two\n" in pane.render().plain
+
+
+async def test_tool_call_pane_finish_replaces_streamed_arguments_and_result() -> None:
+    app = ToolCallPaneHarness()
+    async with app.run_test() as pilot:
+        pane = app.query_one(ToolCallPane)
+
+        pane.append_arguments_delta('{"q": "partial')
+        pane.append_result_delta("partial output")
+        await pilot.pause()
+
+        pane.finish(result="final output", is_error=False, arguments='{"q": "pico"}')
+        await pilot.pause()
+
+        rendered = pane.render().plain
+        assert "partial" not in rendered
+        assert "final output" in rendered
+        assert '{"q": "pico"}' in rendered
+
+
+async def test_tool_call_pane_truncates_finished_result_after_streaming() -> None:
+    app = ToolCallPaneHarness()
+    long_result = "y" * 400
+    async with app.run_test() as pilot:
+        pane = app.query_one(ToolCallPane)
+
+        pane.append_result_delta("y" * 50)
+        pane.finish(result=long_result, is_error=False)
+        await pilot.pause()
+
+        rendered = pane.render().plain
+        assert long_result not in rendered
+        assert "y" * 300 in rendered
+        assert "100 more chars" in rendered
+
+
 async def test_tool_call_pane_shows_fact_index_on_success() -> None:
     app = ToolCallPaneHarness()
     async with app.run_test() as pilot:

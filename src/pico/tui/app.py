@@ -22,8 +22,10 @@ from pico.tui.messages import (
     ThinkingPaneClose,
     ThinkingPaneCreate,
     ThinkingPaneDelta,
+    ToolCallPaneArgumentsDelta,
     ToolCallPaneClose,
     ToolCallPaneCreate,
+    ToolCallPaneResultDelta,
     UserInputSubmitted,
     translate,
 )
@@ -208,9 +210,18 @@ class PicoApp(App[None]):
         self._tool_call_panes[message.pane_id] = pane
         self.query_one("#conversation", VerticalScroll).mount(pane)
 
+    def on_tool_call_pane_arguments_delta(self, message: ToolCallPaneArgumentsDelta) -> None:
+        self._tool_call_panes[message.pane_id].append_arguments_delta(message.text)
+
+    def on_tool_call_pane_result_delta(self, message: ToolCallPaneResultDelta) -> None:
+        self._tool_call_panes[message.pane_id].append_result_delta(message.text)
+
     def on_tool_call_pane_close(self, message: ToolCallPaneClose) -> None:
         self._tool_call_panes[message.pane_id].finish(
-            result=message.result, is_error=message.is_error, fact_index=message.fact_id
+            result=message.result,
+            is_error=message.is_error,
+            fact_index=message.fact_id,
+            arguments=message.arguments,
         )
 
     def on_answer_pane_create(self, message: AnswerPaneCreate) -> None:

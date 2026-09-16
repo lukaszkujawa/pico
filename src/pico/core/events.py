@@ -54,6 +54,18 @@ class ToolCallStarted:
 
 
 @dataclass(frozen=True)
+class ToolCallArgumentsDelta:
+    id: str
+    text: str
+
+
+@dataclass(frozen=True)
+class ToolCallResultDelta:
+    id: str
+    text: str
+
+
+@dataclass(frozen=True)
 class ToolCallFinished:
     id: str
     tool_call: ToolCall
@@ -95,6 +107,8 @@ BusEvent = (
     | AssistantThinkingDelta
     | AssistantThinkingFinished
     | ToolCallStarted
+    | ToolCallArgumentsDelta
+    | ToolCallResultDelta
     | ToolCallFinished
     | GenerationCompleted
     | BudgetExceeded

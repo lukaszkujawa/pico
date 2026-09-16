@@ -8,7 +8,9 @@ from pico.core.events import (
     ErrorOccurred,
     RunFinished,
     RunStarted,
+    ToolCallArgumentsDelta,
     ToolCallFinished,
+    ToolCallResultDelta,
     ToolCallStarted,
 )
 from pico.llm.types import ToolCall
@@ -23,8 +25,10 @@ from pico.tui.messages import (
     ThinkingPaneClose,
     ThinkingPaneCreate,
     ThinkingPaneDelta,
+    ToolCallPaneArgumentsDelta,
     ToolCallPaneClose,
     ToolCallPaneCreate,
+    ToolCallPaneResultDelta,
     translate,
 )
 
@@ -84,6 +88,20 @@ def test_translate_tool_call_started() -> None:
     assert message.pane_id == "1"
     assert message.name == "search"
     assert message.arguments == '{"q": "pico"}'
+
+
+def test_translate_tool_call_arguments_delta() -> None:
+    message = translate(ToolCallArgumentsDelta(id="1", text='{"q":'))
+    assert isinstance(message, ToolCallPaneArgumentsDelta)
+    assert message.pane_id == "1"
+    assert message.text == '{"q":'
+
+
+def test_translate_tool_call_result_delta() -> None:
+    message = translate(ToolCallResultDelta(id="1", text="line\n"))
+    assert isinstance(message, ToolCallPaneResultDelta)
+    assert message.pane_id == "1"
+    assert message.text == "line\n"
 
 
 def test_translate_tool_call_finished() -> None:

@@ -102,6 +102,7 @@ def truncate(text: str, limit: int = RESULT_TRUNCATE_LENGTH) -> str:
 
 
 class ToolCallPane(Static):
+    arguments_text: reactive[str] = reactive("", repaint=True)
     result_text: reactive[str] = reactive("", repaint=True)
     finished: reactive[bool] = reactive(False, repaint=True)
     is_error: reactive[bool] = reactive(False, repaint=True)
@@ -114,7 +115,7 @@ class ToolCallPane(Static):
         super().__init__(id=f"tool-{pane_id}")
         self._theme = theme
         self.name_label = name
-        self.arguments_text = arguments
+        self.set_reactive(ToolCallPane.arguments_text, arguments)
         self._timer: Timer | None = None
         self.styles.border = ("round", theme.tool_call_border)
         self.styles.color = theme.text
@@ -126,7 +127,21 @@ class ToolCallPane(Static):
     def _advance(self) -> None:
         self.frame_index = (self.frame_index + 1) % len(WAITING_FRAMES)
 
-    def finish(self, result: str, is_error: bool, fact_index: int | None = None) -> None:
+    def append_arguments_delta(self, text: str) -> None:
+        self.arguments_text += text
+
+    def append_result_delta(self, text: str) -> None:
+        self.result_text += text
+
+    def finish(
+        self,
+        result: str,
+        is_error: bool,
+        fact_index: int | None = None,
+        arguments: str | None = None,
+    ) -> None:
+        if arguments is not None:
+            self.arguments_text = arguments
         self.result_text = result
         self.is_error = is_error
         self.fact_index = fact_index
@@ -150,8 +165,9 @@ class ToolCallPane(Static):
         lines = [header]
         if self.arguments_text:
             lines.append(Text(self.arguments_text, style=self._theme.muted_text))
-        if self.finished and self.result_text:
-            lines.append(Text(truncate(self.result_text), style=self._theme.text))
+        if self.result_text:
+            result_text = truncate(self.result_text) if self.finished else self.result_text
+            lines.append(Text(result_text, style=self._theme.text))
 
         return Text("\n").join(lines)
 

@@ -34,7 +34,9 @@ from pico.core.events import (
     RunCancelled,
     RunFinished,
     RunStarted,
+    ToolCallArgumentsDelta,
     ToolCallFinished,
+    ToolCallResultDelta,
     ToolCallStarted,
 )
 from pico.core.ledger import Plan, facts, plan, render_plan
@@ -99,6 +101,7 @@ class LoopRunner:
         self.cancel = cancel if cancel is not None else threading.Event()
         self.can_verify = can_verify
         self.pending_tool_calls: list[ToolCall] = []
+        self.tool_call_pane_ids: dict[str, str] = {}
         self.pending_nudge: str | None = None
         self.chars_per_token = DEFAULT_CHARS_PER_TOKEN
         self.final_answer: str | None = None
@@ -178,6 +181,7 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
     text_id: str | None = None
     thinking_id: str | None = None
     cancelled = False
+    runner.tool_call_pane_ids = {}
 
     current_plan = plan(runner.session)
     specs = runner.tools.specs()
@@ -220,8 +224,12 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
                     runner.bus.publish(AssistantTextStarted(id=text_id))
                 text += chunk
                 runner.bus.publish(AssistantTextDelta(id=text_id, text=chunk))
-            case ToolCallDelta():
-                pass
+            case ToolCallDelta(id=call_id, arguments_delta=arguments_delta):
+                pane_id = runner.tool_call_pane_ids.get(call_id)
+                if pane_id is None:
+                    pane_id = runner.new_id()
+                    runner.tool_call_pane_ids[call_id] = pane_id
+                runner.bus.publish(ToolCallArgumentsDelta(id=pane_id, text=arguments_delta))
             case ToolCallReady(tool_call=tool_call):
                 tool_calls.append(tool_call)
             case GenerationComplete(
@@ -288,12 +296,24 @@ def _verified_answer(runner: LoopRunner, answer: Answer) -> tuple[str, bool]:
     return f"{answer.content}\n\nverified: {answer.verify}", False
 
 
+def _run_shell(runner: LoopRunner, pane_id: str, shell: Shell) -> tuple[str, bool]:
+    def on_chunk(chunk: str) -> None:
+        runner.bus.publish(ToolCallResultDelta(id=pane_id, text=chunk))
+
+    code, output = shell.run(on_chunk=on_chunk)
+    if code != 0:
+        return f"exit code {code}\n{output}", True
+    return output, False
+
+
 def tool_call_step(runner: LoopRunner) -> StepOutcome:
     tool_calls = runner.pending_tool_calls
     runner.pending_tool_calls = []
     outcome: StepOutcome = "continue"
     for call in tool_calls:
-        pane_id = runner.new_id()
+        pane_id = runner.tool_call_pane_ids.get(call.id)
+        if pane_id is None:
+            pane_id = runner.new_id()
         runner.bus.publish(ToolCallStarted(id=pane_id, name=call.name, arguments=call.arguments))
         invalid = False
         if call.name == "answer":
@@ -323,6 +343,17 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
                 output = str(error)
                 is_error = True
                 invalid = True
+        elif call.name == "shell":
+            try:
+                shell = Shell.from_arguments(call.arguments)
+                output, is_error = _run_shell(runner, pane_id, shell)
+            except InvalidActionError as error:
+                output = str(error)
+                is_error = True
+                invalid = True
+            except ToolError as error:
+                output = str(error)
+                is_error = True
         else:
             try:
                 output = runner.tools.execute(call)

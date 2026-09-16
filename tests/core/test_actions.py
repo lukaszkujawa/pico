@@ -197,6 +197,33 @@ def test_shell_run_returns_exit_code_and_output() -> None:
     assert "boom" in output
 
 
+def test_shell_run_invokes_callback_per_chunk_and_preserves_combined_output() -> None:
+    chunks: list[str] = []
+    code, output = Shell(command="echo one; echo two; echo three").run(on_chunk=chunks.append)
+
+    assert code == 0
+    assert len(chunks) > 1
+    assert "".join(chunks) == output
+    assert output == "one\ntwo\nthree\n"
+
+
+def test_shell_run_reports_non_zero_exit_code_with_callback() -> None:
+    chunks: list[str] = []
+    code, output = Shell(command="echo boom >&2; exit 3").run(on_chunk=chunks.append)
+
+    assert code == 3
+    assert "boom" in output
+    assert "".join(chunks) == output
+
+
+def test_shell_run_timeout_raises_tool_error_and_kills_process() -> None:
+    with pytest.raises(ToolError, match="timed out"):
+        Shell(command="sleep 5").run(timeout=0.1)
+
+    _, output = Shell(command="pgrep -f 'sleep 5' >/dev/null; echo $?").run()
+    assert output.strip() == "1"
+
+
 def test_delegate_from_arguments() -> None:
     action = Delegate.from_arguments({"question": "what is x?"})
     assert action == Delegate(question="what is x?")

@@ -14,6 +14,7 @@ from pico.llm.types import (
     TextDelta,
     ThinkingDelta,
     ToolCall,
+    ToolCallDelta,
     ToolCallReady,
     ToolSpec,
 )
@@ -109,12 +110,15 @@ class OllamaClient:
                 for raw_call in raw_calls:
                     function: dict[str, Any] = raw_call["function"]
                     call_id: str = raw_call.get("id") or str(next(self._fallback_call_ids))
+                    name: str = function["name"]
+                    arguments: dict[str, Any] = function.get("arguments", {})
+                    yield ToolCallDelta(
+                        id=call_id,
+                        name=name,
+                        arguments_delta=json.dumps(arguments, separators=(", ", ": ")),
+                    )
                     yield ToolCallReady(
-                        tool_call=ToolCall(
-                            id=call_id,
-                            name=function["name"],
-                            arguments=function.get("arguments", {}),
-                        )
+                        tool_call=ToolCall(id=call_id, name=name, arguments=arguments)
                     )
 
             if chunk.get("done"):
