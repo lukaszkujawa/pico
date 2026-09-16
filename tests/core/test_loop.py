@@ -1,3 +1,4 @@
+import itertools
 import threading
 from collections.abc import Iterator
 
@@ -333,6 +334,51 @@ def test_thinking_then_text_published_in_order_with_shared_ids_across_two_turns(
         AssistantMessageRecorded(content="hello world", thinking="pondering more"),
         AssistantMessageRecorded(content="second answer", thinking="second thought"),
     ]
+
+
+def test_shared_id_source_keeps_ids_unique_across_separate_runners() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    id_source = itertools.count()
+
+    first_client = ScriptedClient(
+        [
+            [
+                ThinkingDelta(text="pondering"),
+                TextDelta(text="hello"),
+                GenerationComplete(finish_reason="stop"),
+            ],
+        ]
+    )
+    first_runner = LoopRunner(
+        first_client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG, None, id_source
+    )
+    first_runner.execute()
+
+    second_client = ScriptedClient(
+        [
+            [
+                ThinkingDelta(text="more thoughts"),
+                TextDelta(text="world"),
+                GenerationComplete(finish_reason="stop"),
+            ],
+        ]
+    )
+    second_runner = LoopRunner(
+        second_client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG, None, id_source
+    )
+    second_runner.execute()
+
+    all_events = [next(subscriber) for _ in range(16)]
+    started_ids = [
+        event.id
+        for event in all_events
+        if isinstance(event, AssistantThinkingStarted | AssistantTextStarted)
+    ]
+    assert started_ids == ["0", "1", "2", "3"]
+    assert len(set(started_ids)) == len(started_ids)
 
 
 def test_single_tool_call_round_trip() -> None:

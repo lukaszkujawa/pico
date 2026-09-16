@@ -1,5 +1,6 @@
+import itertools
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Literal
 
@@ -73,6 +74,7 @@ class LoopRunner:
         context_size: int,
         config: LoopConfig,
         cancel: threading.Event | None = None,
+        id_source: Iterator[int] | None = None,
     ) -> None:
         self.llm = llm
         self.tools = tools
@@ -86,12 +88,10 @@ class LoopRunner:
         self.final_answer: str | None = None
         self.invalid_action_attempts = 0
         self.delegate_calls = 0
-        self._next_id = 0
+        self._id_source = id_source if id_source is not None else itertools.count()
 
     def new_id(self) -> str:
-        stream_id = str(self._next_id)
-        self._next_id += 1
-        return stream_id
+        return str(next(self._id_source))
 
     def execute(self) -> None:
         self.bus.publish(RunStarted())

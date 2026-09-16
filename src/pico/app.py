@@ -1,3 +1,4 @@
+import itertools
 import queue
 import threading
 
@@ -50,6 +51,7 @@ def _turn_loop(
     shutdown: threading.Event,
     cancel_handle: CancelHandle,
 ) -> None:
+    id_source = itertools.count()
     while True:
         try:
             text = input_queue.get(timeout=0.1)
@@ -60,7 +62,9 @@ def _turn_loop(
         session.append(UserMessageRecorded(content=text))
         cancel = threading.Event()
         cancel_handle.arm(cancel)
-        runner = LoopRunner(llm, tools, bus, session, context_size, DEFAULT_LOOP_CONFIG, cancel)
+        runner = LoopRunner(
+            llm, tools, bus, session, context_size, DEFAULT_LOOP_CONFIG, cancel, id_source
+        )
         runner.execute()
         cancel_handle.disarm()
 
