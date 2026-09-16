@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from textual.message import Message
 
 from pico.core.events import (
+    AnswerSettled,
     AssistantTextDelta,
     AssistantTextFinished,
     AssistantTextStarted,
@@ -111,9 +112,25 @@ class ToolCallPaneClose(Message):
 
 
 class AnswerPaneCreate(Message):
-    def __init__(self, pane_id: str, content: str) -> None:
+    def __init__(self, pane_id: str) -> None:
+        self.pane_id = pane_id
+        super().__init__()
+
+
+class AnswerPaneSettle(Message):
+    def __init__(
+        self,
+        pane_id: str,
+        content: str,
+        accepted: bool,
+        reason: str | None,
+        verify: str | None,
+    ) -> None:
         self.pane_id = pane_id
         self.content = content
+        self.accepted = accepted
+        self.reason = reason
+        self.verify = verify
         super().__init__()
 
 
@@ -151,6 +168,7 @@ TuiMessage = (
     | ToolCallPaneResultDelta
     | ToolCallPaneClose
     | AnswerPaneCreate
+    | AnswerPaneSettle
     | GenerationCompletedMessage
     | ErrorMessage
     | UserInputSubmitted
@@ -181,6 +199,8 @@ def translate(event: BusEvent) -> TuiMessage | None:
             return ThinkingPaneDelta(pane_id=pane_id, text=text)
         case AssistantThinkingFinished(id=pane_id):
             return ThinkingPaneClose(pane_id=pane_id)
+        case ToolCallStarted(id=pane_id, name="answer"):
+            return AnswerPaneCreate(pane_id=pane_id)
         case ToolCallStarted(id=pane_id, name=name, arguments=arguments):
             return ToolCallPaneCreate(
                 pane_id=pane_id, name=name, arguments=format_arguments(arguments)
@@ -189,10 +209,12 @@ def translate(event: BusEvent) -> TuiMessage | None:
             return ToolCallPaneArgumentsDelta(pane_id=pane_id, text=text)
         case ToolCallResultDelta(id=pane_id, text=text):
             return ToolCallPaneResultDelta(pane_id=pane_id, text=text)
-        case ToolCallFinished(id=pane_id, tool_call=tool_call, result=result, is_error=False) if (
-            tool_call.name == "answer"
+        case AnswerSettled(
+            id=pane_id, content=content, accepted=accepted, reason=reason, verify=verify
         ):
-            return AnswerPaneCreate(pane_id=pane_id, content=result)
+            return AnswerPaneSettle(
+                pane_id=pane_id, content=content, accepted=accepted, reason=reason, verify=verify
+            )
         case ToolCallFinished(
             id=pane_id, tool_call=tool_call, result=result, is_error=is_error, fact_id=fact_id
         ):

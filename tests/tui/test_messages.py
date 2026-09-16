@@ -1,4 +1,5 @@
 from pico.core.events import (
+    AnswerSettled,
     AssistantTextDelta,
     AssistantTextFinished,
     AssistantTextStarted,
@@ -16,6 +17,7 @@ from pico.core.events import (
 from pico.llm.types import ToolCall
 from pico.tui.messages import (
     AnswerPaneCreate,
+    AnswerPaneSettle,
     AssistantPaneClose,
     AssistantPaneCreate,
     AssistantPaneDelta,
@@ -113,21 +115,31 @@ def test_translate_tool_call_finished() -> None:
     assert message.is_error is False
 
 
-def test_translate_successful_answer_call_becomes_answer_pane() -> None:
-    tool_call = ToolCall(id="1", name="answer", arguments={"content": "42", "citations": []})
-    message = translate(ToolCallFinished(id="1", tool_call=tool_call, result="42", is_error=False))
+def test_translate_answer_call_started_becomes_answer_pane_create() -> None:
+    message = translate(ToolCallStarted(id="1", name="answer", arguments={"content": "42"}))
     assert isinstance(message, AnswerPaneCreate)
     assert message.pane_id == "1"
-    assert message.content == "42"
 
 
-def test_translate_failed_answer_call_stays_a_tool_call_close() -> None:
-    tool_call = ToolCall(id="1", name="answer", arguments={})
+def test_translate_accepted_answer_settled_becomes_answer_pane_settle() -> None:
     message = translate(
-        ToolCallFinished(id="1", tool_call=tool_call, result="unknown citation", is_error=True)
+        AnswerSettled(id="1", content="42", accepted=True, reason=None, verify=None)
     )
-    assert isinstance(message, ToolCallPaneClose)
-    assert message.is_error is True
+    assert isinstance(message, AnswerPaneSettle)
+    assert message.pane_id == "1"
+    assert message.content == "42"
+    assert message.accepted is True
+    assert message.reason is None
+    assert message.verify is None
+
+
+def test_translate_rejected_answer_settled_becomes_answer_pane_settle() -> None:
+    message = translate(
+        AnswerSettled(id="1", content="", accepted=False, reason="unknown fact citation(s): [3]")
+    )
+    assert isinstance(message, AnswerPaneSettle)
+    assert message.accepted is False
+    assert message.reason == "unknown fact citation(s): [3]"
 
 
 def test_translate_error_occurred() -> None:

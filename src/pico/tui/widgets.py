@@ -38,17 +38,48 @@ class AssistantPane(Static):
 
 
 class AnswerPane(Static):
-    def __init__(self, pane_id: str, content: str, theme: Theme = PICO_THEME) -> None:
+    content_text: reactive[str] = reactive("", repaint=True)
+    settled: reactive[bool] = reactive(False, repaint=True)
+    accepted: reactive[bool] = reactive(False, repaint=True)
+    reason: reactive[str | None] = reactive(None, repaint=True)
+    verify: reactive[str | None] = reactive(None, repaint=True)
+
+    def __init__(self, pane_id: str, content: str = "", theme: Theme = PICO_THEME) -> None:
         super().__init__(id=f"answer-{pane_id}")
         self._theme = theme
-        self._content = content
-        self.styles.color = theme.primary
+        self.set_reactive(AnswerPane.content_text, content)
         self.styles.padding = (0, 1)
 
+    def append_delta(self, text: str) -> None:
+        self.content_text += text
+
+    def settle(self, content: str, accepted: bool, reason: str | None, verify: str | None) -> None:
+        self.content_text = content
+        self.accepted = accepted
+        self.reason = reason
+        self.verify = verify
+        self.settled = True
+
     def render(self) -> Text:
-        marker = Text("● ", style=f"bold {self._theme.primary}")
-        body = Text(self._content, style=f"bold {self._theme.primary}")
-        return marker + body
+        if not self.settled:
+            marker = Text("● ", style=f"bold {self._theme.primary}")
+            body = Text(self.content_text, style=f"bold {self._theme.primary}")
+            return marker + body
+        if self.accepted:
+            color = self._theme.success
+            marker = Text(f"{SUCCESS_GLYPH} ", style=f"bold {color}")
+            body = Text(self.content_text, style=f"bold {color}")
+            result = marker + body
+            if self.verify is not None:
+                result.append(f"\nverified: {self.verify}", style=f"italic {color}")
+            return result
+        color = self._theme.warning
+        marker = Text("↺ ", style=f"bold {color}")
+        body = Text(self.content_text, style=f"bold {color}")
+        result = marker + body
+        if self.reason is not None:
+            result.append(f"\nsent back: {self.reason}", style=color)
+        return result
 
 
 class ThinkingPane(Static):

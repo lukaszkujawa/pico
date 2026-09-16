@@ -22,6 +22,7 @@ from pico.core.context import (
 )
 from pico.core.errors import ToolError, UnknownToolError
 from pico.core.events import (
+    AnswerSettled,
     AssistantTextDelta,
     AssistantTextFinished,
     AssistantTextStarted,
@@ -285,15 +286,47 @@ def _run_delegate(runner: LoopRunner, delegate: Delegate) -> tuple[str, bool]:
     )
 
 
-def _verified_answer(runner: LoopRunner, answer: Answer) -> tuple[str, bool]:
+@dataclass(frozen=True)
+class AnswerOutcome:
+    content: str
+    result: str
+    is_error: bool
+    accepted: bool
+    reason: str | None
+    verify: str | None
+
+
+def _verified_answer(runner: LoopRunner, answer: Answer) -> AnswerOutcome:
     if answer.verify is None:
         runner.final_answer = answer.content
-        return answer.content, False
+        return AnswerOutcome(
+            content=answer.content,
+            result=answer.content,
+            is_error=False,
+            accepted=True,
+            reason=None,
+            verify=None,
+        )
     code, output = Shell(command=answer.verify).run()
     if code != 0:
-        return f"answer rejected — verification failed (exit {code}):\n{output}", True
+        reason = f"verification failed (exit {code}):\n{output}"
+        return AnswerOutcome(
+            content=answer.content,
+            result=f"answer rejected — {reason}",
+            is_error=True,
+            accepted=False,
+            reason=reason,
+            verify=answer.verify,
+        )
     runner.final_answer = answer.content
-    return f"{answer.content}\n\nverified: {answer.verify}", False
+    return AnswerOutcome(
+        content=answer.content,
+        result=f"{answer.content}\n\nverified: {answer.verify}",
+        is_error=False,
+        accepted=True,
+        reason=None,
+        verify=answer.verify,
+    )
 
 
 def _run_shell(runner: LoopRunner, pane_id: str, shell: Shell) -> tuple[str, bool]:
@@ -316,6 +349,7 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
             pane_id = runner.new_id()
         runner.bus.publish(ToolCallStarted(id=pane_id, name=call.name, arguments=call.arguments))
         invalid = False
+        answer_outcome: AnswerOutcome | None = None
         if call.name == "answer":
             try:
                 answer = Answer.from_arguments(call.arguments)
@@ -327,14 +361,31 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
                     raise InvalidActionError(
                         "a delegate may not use 'verify'; answer from what you have read"
                     )
-                output, is_error = _verified_answer(runner, answer)
+                answer_outcome = _verified_answer(runner, answer)
+                output, is_error = answer_outcome.result, answer_outcome.is_error
             except InvalidActionError as error:
                 output = str(error)
                 is_error = True
                 invalid = True
+                answer_outcome = AnswerOutcome(
+                    content="",
+                    result=output,
+                    is_error=True,
+                    accepted=False,
+                    reason=output,
+                    verify=None,
+                )
             except ToolError as error:
                 output = str(error)
                 is_error = True
+                answer_outcome = AnswerOutcome(
+                    content="",
+                    result=output,
+                    is_error=True,
+                    accepted=False,
+                    reason=output,
+                    verify=None,
+                )
         elif call.name == "delegate":
             try:
                 delegate = Delegate.from_arguments(call.arguments)
@@ -373,11 +424,22 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
         fact_id = None
         if not is_error and call.name not in ("answer", "delegate"):
             fact_id = facts(runner.session)[-1].id
-        runner.bus.publish(
-            ToolCallFinished(
-                id=pane_id, tool_call=call, result=output, is_error=is_error, fact_id=fact_id
+        if answer_outcome is not None:
+            runner.bus.publish(
+                AnswerSettled(
+                    id=pane_id,
+                    content=answer_outcome.content,
+                    accepted=answer_outcome.accepted,
+                    reason=answer_outcome.reason,
+                    verify=answer_outcome.verify,
+                )
             )
-        )
+        else:
+            runner.bus.publish(
+                ToolCallFinished(
+                    id=pane_id, tool_call=call, result=output, is_error=is_error, fact_id=fact_id
+                )
+            )
         if invalid:
             runner.invalid_action_attempts += 1
             if runner.invalid_action_attempts >= MAX_INVALID_ACTION_ATTEMPTS:

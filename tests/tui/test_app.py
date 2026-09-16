@@ -6,6 +6,7 @@ from textual.pilot import Pilot
 
 from pico.core.bus import Bus
 from pico.core.events import (
+    AnswerSettled,
     AssistantTextDelta,
     AssistantTextFinished,
     AssistantTextStarted,
@@ -18,6 +19,7 @@ from pico.core.events import (
     RunCancelled,
     RunFinished,
     RunStarted,
+    ToolCallArgumentsDelta,
     ToolCallFinished,
     ToolCallStarted,
 )
@@ -179,41 +181,48 @@ async def test_fact_index_reflects_real_non_contiguous_fact_ids() -> None:
         assert panes[2].fact_index == 7
 
 
-async def test_successful_answer_renders_as_answer_pane_not_tool_call() -> None:
+async def test_answer_call_mounts_answer_pane_from_the_moment_it_starts() -> None:
     bus = Bus()
     app = PicoApp(bus, queue.Queue())
     async with app.run_test() as pilot:
         await pilot.pause()
 
-        tool_call = ToolCall(id="1", name="answer", arguments={"content": "42", "citations": []})
         bus.publish(RunStarted())
         bus.publish(
             ToolCallStarted(id="1", name="answer", arguments={"content": "42", "citations": []})
         )
-        bus.publish(ToolCallFinished(id="1", tool_call=tool_call, result="42", is_error=False))
-        bus.publish(RunFinished())
 
         await pilot.pause(0.2)
 
         answer_panes = app.query(AnswerPane)
         tool_panes = app.query(ToolCallPane)
         assert len(answer_panes) == 1
-        assert "42" in answer_panes.first().render().plain
         assert len(tool_panes) == 0
 
+        bus.publish(AnswerSettled(id="1", content="42", accepted=True, reason=None, verify=None))
+        bus.publish(RunFinished())
+        await pilot.pause(0.2)
 
-async def test_failed_answer_call_still_renders_as_tool_call_pane() -> None:
+        assert len(app.query(AnswerPane)) == 1
+        assert len(app.query(ToolCallPane)) == 0
+        assert "42" in app.query(AnswerPane).first().render().plain
+
+
+async def test_rejected_answer_leaves_pane_mounted_showing_reason() -> None:
     bus = Bus()
     app = PicoApp(bus, queue.Queue())
     async with app.run_test() as pilot:
         await pilot.pause()
 
-        tool_call = ToolCall(id="1", name="answer", arguments={})
         bus.publish(RunStarted())
         bus.publish(ToolCallStarted(id="1", name="answer", arguments={}))
         bus.publish(
-            ToolCallFinished(
-                id="1", tool_call=tool_call, result="unknown citation(s)", is_error=True
+            AnswerSettled(
+                id="1",
+                content="",
+                accepted=False,
+                reason="unknown fact citation(s): [3]",
+                verify=None,
             )
         )
         bus.publish(RunFinished())
@@ -222,9 +231,65 @@ async def test_failed_answer_call_still_renders_as_tool_call_pane() -> None:
 
         answer_panes = app.query(AnswerPane)
         tool_panes = app.query(ToolCallPane)
-        assert len(answer_panes) == 0
-        assert len(tool_panes) == 1
-        assert tool_panes.first().is_error is True
+        assert len(answer_panes) == 1
+        assert len(tool_panes) == 0
+        pane = answer_panes.first()
+        assert pane.settled is True
+        assert pane.accepted is False
+        assert "unknown fact citation(s): [3]" in pane.render().plain
+
+
+async def test_no_raw_json_appears_for_an_answer_call() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        bus.publish(RunStarted())
+        bus.publish(
+            ToolCallStarted(
+                id="1", name="answer", arguments={"content": "There are 17 dirs", "citations": []}
+            )
+        )
+        bus.publish(
+            ToolCallArgumentsDelta(id="1", text='{"content": "There are 17 dirs", "citations": []}')
+        )
+        bus.publish(
+            AnswerSettled(
+                id="1", content="There are 17 dirs", accepted=True, reason=None, verify=None
+            )
+        )
+        bus.publish(RunFinished())
+
+        await pilot.pause(0.2)
+
+        rendered = app.query(AnswerPane).first().render().plain
+        assert '{"content"' not in rendered
+
+
+async def test_rejected_then_accepted_answer_leaves_two_answer_panes_in_order() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        bus.publish(RunStarted())
+        bus.publish(ToolCallStarted(id="1", name="answer", arguments={}))
+        bus.publish(
+            AnswerSettled(
+                id="1", content="", accepted=False, reason="unknown fact citation(s): [3]"
+            )
+        )
+        bus.publish(ToolCallStarted(id="2", name="answer", arguments={"content": "42"}))
+        bus.publish(AnswerSettled(id="2", content="42", accepted=True, reason=None, verify=None))
+        bus.publish(RunFinished())
+
+        await pilot.pause(0.2)
+
+        answer_panes = app.query(AnswerPane)
+        assert len(answer_panes) == 2
+        assert answer_panes[0].accepted is False
+        assert answer_panes[1].accepted is True
 
 
 async def test_thinking_then_text_produces_one_pane_each() -> None:

@@ -1,4 +1,5 @@
 from pico.core.events import (
+    AnswerSettled,
     AssistantTextDelta,
     AssistantTextFinished,
     AssistantTextStarted,
@@ -93,6 +94,25 @@ def test_tool_call_finished() -> None:
     assert event.is_error is False
 
 
+def test_answer_settled_accepted_defaults() -> None:
+    event = AnswerSettled(id="1", content="the answer", accepted=True)
+    assert event.reason is None
+    assert event.verify is None
+
+
+def test_answer_settled_rejected_carries_reason() -> None:
+    event = AnswerSettled(
+        id="1", content="the answer", accepted=False, reason="unknown fact citation(s): [3]"
+    )
+    assert event.accepted is False
+    assert event.reason == "unknown fact citation(s): [3]"
+
+
+def test_answer_settled_carries_verify_command() -> None:
+    event = AnswerSettled(id="1", content="done", accepted=True, verify="pytest")
+    assert event.verify == "pytest"
+
+
 def test_generation_completed_defaults_to_unknown_token_counts() -> None:
     event = GenerationCompleted()
     assert event.prompt_tokens is None
@@ -147,6 +167,8 @@ def test_bus_event_exhaustive_match() -> None:
                 return "tool_call_result_delta"
             case ToolCallFinished():
                 return "tool_call_finished"
+            case AnswerSettled():
+                return "answer_settled"
             case GenerationCompleted():
                 return "generation_completed"
             case ErrorOccurred():
@@ -169,6 +191,7 @@ def test_bus_event_exhaustive_match() -> None:
     assert describe(ToolCallResultDelta(id="1", text="a")) == "tool_call_result_delta"
     call = ToolCall(id="1", name="echo", arguments={})
     assert describe(ToolCallFinished(id="1", tool_call=call, result="ok")) == "tool_call_finished"
+    assert describe(AnswerSettled(id="1", content="ok", accepted=True)) == "answer_settled"
     assert describe(GenerationCompleted()) == "generation_completed"
     assert describe(ErrorOccurred(message="boom")) == "error_occurred"
     assert describe(RunCancelled()) == "run_cancelled"

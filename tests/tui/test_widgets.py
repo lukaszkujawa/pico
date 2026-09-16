@@ -24,7 +24,7 @@ class AssistantPaneHarness(App[None]):
 
 class AnswerPaneHarness(App[None]):
     def compose(self) -> ComposeResult:
-        yield AnswerPane(pane_id="0", content="The final answer is 42.")
+        yield AnswerPane(pane_id="0")
 
 
 class ThinkingPaneHarness(App[None]):
@@ -84,14 +84,83 @@ async def test_assistant_pane_lifecycle() -> None:
         assert pane.render().plain == "Hello, world!"
 
 
-async def test_answer_pane_renders_content_without_box() -> None:
+async def test_answer_pane_renders_without_box() -> None:
     app = AnswerPaneHarness()
     async with app.run_test() as pilot:
         pane = app.query_one(AnswerPane)
         await pilot.pause()
 
-        assert "The final answer is 42." in pane.render().plain
         assert pane.styles.border.top[0] == ""
+
+
+async def test_answer_pane_accumulates_content_deltas_while_streaming() -> None:
+    app = AnswerPaneHarness()
+    async with app.run_test() as pilot:
+        pane = app.query_one(AnswerPane)
+        await pilot.pause()
+
+        pane.append_delta("The final ")
+        pane.append_delta("answer is 42.")
+        await pilot.pause()
+
+        assert "The final answer is 42." in pane.render().plain
+        assert pane.settled is False
+
+
+async def test_answer_pane_accepted_renders_content_with_success_marker() -> None:
+    app = AnswerPaneHarness()
+    async with app.run_test() as pilot:
+        pane = app.query_one(AnswerPane)
+        await pilot.pause()
+
+        pane.settle(content="42", accepted=True, reason=None, verify=None)
+        await pilot.pause()
+
+        assert pane.settled is True
+        assert pane.accepted is True
+        assert SUCCESS_GLYPH in pane.render().plain
+        assert "42" in pane.render().plain
+
+
+async def test_answer_pane_accepted_with_verification_shows_verify_badge_not_body_text() -> None:
+    app = AnswerPaneHarness()
+    async with app.run_test() as pilot:
+        pane = app.query_one(AnswerPane)
+        await pilot.pause()
+
+        pane.settle(content="42", accepted=True, reason=None, verify="pytest")
+        await pilot.pause()
+
+        rendered = pane.render().plain
+        assert "pytest" in rendered
+        assert "verified:" not in "42"
+
+
+async def test_answer_pane_rejected_renders_reason_distinct_from_accepted_and_error() -> None:
+    app = AnswerPaneHarness()
+    error_app = ErrorPaneHarness()
+    async with app.run_test() as pilot, error_app.run_test() as error_pilot:
+        pane = app.query_one(AnswerPane)
+        await pilot.pause()
+
+        pane.settle(
+            content="",
+            accepted=False,
+            reason="unknown fact citation(s): [3]",
+            verify=None,
+        )
+        await pilot.pause()
+
+        assert pane.settled is True
+        assert pane.accepted is False
+        rendered = pane.render().plain
+        assert "unknown fact citation(s): [3]" in rendered
+        assert SUCCESS_GLYPH not in rendered
+        assert ERROR_GLYPH not in rendered
+
+        error_pane = error_app.query_one(ErrorPane)
+        await error_pilot.pause()
+        assert pane.styles.border.top[0] != error_pane.styles.border.top[0]
 
 
 async def test_thinking_pane_lifecycle() -> None:

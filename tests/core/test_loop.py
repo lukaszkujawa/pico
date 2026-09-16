@@ -15,6 +15,7 @@ from pico.core.context import (
 )
 from pico.core.errors import ToolError
 from pico.core.events import (
+    AnswerSettled,
     AssistantTextDelta,
     AssistantTextFinished,
     AssistantTextStarted,
@@ -737,7 +738,7 @@ def test_valid_answer_call_ends_run_and_records_result() -> None:
         ToolCallStarted(
             id="0", name="answer", arguments={"content": "the answer", "citations": []}
         ),
-        ToolCallFinished(id="0", tool_call=call, result="the answer", is_error=False),
+        AnswerSettled(id="0", content="the answer", accepted=True, reason=None, verify=None),
         RunFinished(),
     ]
     assert runner.final_answer == "the answer"
@@ -816,9 +817,10 @@ def test_invalid_answer_call_continues_run_instead_of_ending() -> None:
         GenerationCompleted(),
         ToolCallStarted(id="0", name="answer", arguments={}),
     ]
-    finished = events[3]
-    assert isinstance(finished, ToolCallFinished)
-    assert finished.is_error is True
+    settled = events[3]
+    assert isinstance(settled, AnswerSettled)
+    assert settled.accepted is False
+    assert settled.reason == "missing required field 'content'"
     assert runner.final_answer is None
 
 
@@ -845,6 +847,7 @@ def test_answer_citing_known_fact_ends_run() -> None:
 
 def test_answer_citing_unknown_fact_continues_run() -> None:
     bus = Bus()
+    subscriber = bus.subscribe()
     session = _session()
     session.append(UserMessageRecorded(content="hi"))
     call = ToolCall(id="1", name="answer", arguments={"content": "the answer", "citations": [0]})
@@ -864,6 +867,17 @@ def test_answer_citing_unknown_fact_continues_run() -> None:
     ]
     assert last_tool_event.is_error is True
     assert "unknown fact citation" in last_tool_event.result
+
+    events: list[object] = []
+    for event in subscriber:
+        events.append(event)
+        if isinstance(event, RunFinished):
+            break
+    settled = next(event for event in events if isinstance(event, AnswerSettled))
+    assert isinstance(settled, AnswerSettled)
+    assert settled.accepted is False
+    assert settled.reason is not None
+    assert "unknown fact citation" in settled.reason
 
 
 def test_answer_citing_seq_of_error_call_continues_run() -> None:
@@ -1768,6 +1782,8 @@ def test_fitting_prompt_publishes_no_budget_exceeded() -> None:
 
 
 def test_answer_with_passing_verification_ends_run() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
     session = _session()
     session.append(UserMessageRecorded(content="hi"))
     call = ToolCall(
@@ -1777,7 +1793,7 @@ def test_answer_with_passing_verification_ends_run() -> None:
         [[ToolCallReady(tool_call=call), GenerationComplete(finish_reason="tool_calls")]]
     )
 
-    runner = LoopRunner(client, _echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
     assert runner.final_answer == "done"
@@ -1785,8 +1801,25 @@ def test_answer_with_passing_verification_ends_run() -> None:
     assert recorded.is_error is False
     assert recorded.result == "done\n\nverified: true"
 
+    events: list[object] = []
+    for event in subscriber:
+        events.append(event)
+        if isinstance(event, RunFinished):
+            break
+    settled = next(event for event in events if isinstance(event, AnswerSettled))
+    assert isinstance(settled, AnswerSettled)
+    assert (settled.content, settled.accepted, settled.reason, settled.verify) == (
+        "done",
+        True,
+        None,
+        "true",
+    )
+    assert "verified:" not in settled.content
+
 
 def test_answer_with_failing_verification_is_rejected_and_run_continues() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
     session = _session()
     session.append(UserMessageRecorded(content="hi"))
     call = ToolCall(
@@ -1805,7 +1838,7 @@ def test_answer_with_failing_verification_is_rejected_and_run_continues() -> Non
         ]
     )
 
-    runner = LoopRunner(client, _echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
     assert runner.final_answer is None
@@ -1814,6 +1847,19 @@ def test_answer_with_failing_verification_is_rejected_and_run_continues() -> Non
     assert "verification failed (exit 3)" in recorded.result
     assert "missing output" in recorded.result
     assert list(session.events())[-1] == AssistantMessageRecorded(content="fixing", thinking="")
+
+    events: list[object] = []
+    for event in subscriber:
+        events.append(event)
+        if isinstance(event, RunFinished):
+            break
+    settled = next(event for event in events if isinstance(event, AnswerSettled))
+    assert isinstance(settled, AnswerSettled)
+    assert settled.accepted is False
+    assert settled.verify == "echo missing output >&2; exit 3"
+    assert settled.reason is not None
+    assert "verification failed (exit 3)" in settled.reason
+    assert "missing output" in settled.reason
 
 
 def test_answer_verification_sees_the_working_directory(tmp_path: Path) -> None:

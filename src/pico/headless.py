@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pico.core.actions import register_actions
 from pico.core.bus import Bus
 from pico.core.events import (
+    AnswerSettled,
     ErrorOccurred,
     GenerationCompleted,
     RunCancelled,
@@ -50,7 +51,7 @@ def run_turn(llm: LLMClient, session: Session, context_size: int, prompt: str) -
             ):
                 prompt_tokens += prompt_count or 0
                 completion_tokens += completion_count or 0
-            case ToolCallFinished():
+            case ToolCallFinished() | AnswerSettled():
                 tool_calls += 1
             case ErrorOccurred(message=message):
                 error = message

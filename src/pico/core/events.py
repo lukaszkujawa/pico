@@ -75,6 +75,15 @@ class ToolCallFinished:
 
 
 @dataclass(frozen=True)
+class AnswerSettled:
+    id: str
+    content: str
+    accepted: bool
+    reason: str | None = None
+    verify: str | None = None
+
+
+@dataclass(frozen=True)
 class GenerationCompleted:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
@@ -110,6 +119,7 @@ BusEvent = (
     | ToolCallArgumentsDelta
     | ToolCallResultDelta
     | ToolCallFinished
+    | AnswerSettled
     | GenerationCompleted
     | BudgetExceeded
     | ErrorOccurred

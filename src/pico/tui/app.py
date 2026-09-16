@@ -1,6 +1,7 @@
+import json
 import queue
 import threading
-from typing import ClassVar, Protocol
+from typing import ClassVar, Protocol, cast
 
 from textual import events
 from textual.app import App, ComposeResult
@@ -11,6 +12,7 @@ from textual.widgets import Rule, Static, TextArea
 from pico.core.bus import Bus
 from pico.tui.messages import (
     AnswerPaneCreate,
+    AnswerPaneSettle,
     AssistantPaneClose,
     AssistantPaneCreate,
     AssistantPaneDelta,
@@ -54,6 +56,18 @@ class SessionHandle(Protocol):
 
 
 NEWLINE_KEYS = {"ctrl+j", "shift+enter"}
+
+
+def extract_answer_content(arguments_text: str) -> str | None:
+    try:
+        parsed: object = json.loads(arguments_text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    fields = cast(dict[str, object], parsed)
+    content = fields.get("content")
+    return content if isinstance(content, str) else None
 
 
 class ChatInput(TextArea):
@@ -146,6 +160,8 @@ class PicoApp(App[None]):
         self._assistant_panes: dict[str, AssistantPane] = {}
         self._thinking_panes: dict[str, ThinkingPane] = {}
         self._tool_call_panes: dict[str, ToolCallPane] = {}
+        self._answer_panes: dict[str, AnswerPane] = {}
+        self._answer_arguments: dict[str, str] = {}
         self._queued_user_panes: list[UserPane] = []
 
     def _session_id(self) -> str:
@@ -211,6 +227,14 @@ class PicoApp(App[None]):
         self.query_one("#conversation", VerticalScroll).mount(pane)
 
     def on_tool_call_pane_arguments_delta(self, message: ToolCallPaneArgumentsDelta) -> None:
+        answer_pane = self._answer_panes.get(message.pane_id)
+        if answer_pane is not None:
+            raw = self._answer_arguments.get(message.pane_id, "") + message.text
+            self._answer_arguments[message.pane_id] = raw
+            content = extract_answer_content(raw)
+            if content is not None:
+                answer_pane.content_text = content
+            return
         self._tool_call_panes[message.pane_id].append_arguments_delta(message.text)
 
     def on_tool_call_pane_result_delta(self, message: ToolCallPaneResultDelta) -> None:
@@ -225,11 +249,18 @@ class PicoApp(App[None]):
         )
 
     def on_answer_pane_create(self, message: AnswerPaneCreate) -> None:
-        pending = self._tool_call_panes.pop(message.pane_id, None)
-        if pending is not None:
-            pending.remove()
-        pane = AnswerPane(pane_id=message.pane_id, content=message.content)
+        pane = AnswerPane(pane_id=message.pane_id)
+        self._answer_panes[message.pane_id] = pane
         self.query_one("#conversation", VerticalScroll).mount(pane)
+
+    def on_answer_pane_settle(self, message: AnswerPaneSettle) -> None:
+        self._answer_arguments.pop(message.pane_id, None)
+        self._answer_panes[message.pane_id].settle(
+            content=message.content,
+            accepted=message.accepted,
+            reason=message.reason,
+            verify=message.verify,
+        )
 
     def on_run_started_message(self, message: RunStartedMessage) -> None:
         self._run_in_flight = True
@@ -265,6 +296,8 @@ class PicoApp(App[None]):
         self._assistant_panes.clear()
         self._thinking_panes.clear()
         self._tool_call_panes.clear()
+        self._answer_panes.clear()
+        self._answer_arguments.clear()
         self._queued_user_panes.clear()
         conversation = self.query_one("#conversation", VerticalScroll)
         status = self.query_one(StatusLine)
