@@ -111,7 +111,7 @@ for ((step = 1; step <= MAX_STEPS; step++)); do
   task_name="$(basename "$before_task")"
   step_line="STEP $step/$MAX_STEPS  ·  $before_count task(s) remaining"
   next_line="next: $task_name"
-  attach_line="watch live: make cloude_attach"
+  attach_line="watch live: make claude_attach"
 
   branch_name="${task_name%.md}"
 
