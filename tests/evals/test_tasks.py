@@ -1,16 +1,24 @@
 from pathlib import Path
 
-from pico.core.context import estimate_tokens, prompt_budget
+from pico.core.context import (
+    estimate_tokens,
+    message_text,
+    prompt_budget,
+    render_messages,
+)
 from pico.evals.tasks import (
     EXPECTED_INVENTORY_VALUE,
     EXPECTED_LARGEST_REGION,
     EXPECTED_SHIFT_TOTAL,
+    EXPECTED_TALLY,
     LOG_MARKER,
     MEASUREMENT_TOTAL,
     REFERENCE_CONTEXT_SIZE,
     SUITE,
+    TALLY_FILES,
     EvalTask,
 )
+from pico.session import Session, ToolCallRecorded, UserMessageRecorded, connect
 
 
 def _task(name: str) -> EvalTask:
@@ -177,3 +185,55 @@ def test_dependent_chain_rejects_wrong_revenues_and_missing_region(tmp_path: Pat
     (tmp_path / "totals.csv").write_text("north,100\nsouth,90\neast,120\nwest,90\n")
     (tmp_path / "summary.txt").write_text(f"total {taxed}\n")
     assert not task.check(tmp_path, f"the total is {taxed}")
+
+
+def test_many_small_steps_accepts_the_written_tally_and_rejects_wrong_states(
+    tmp_path: Path,
+) -> None:
+    task = _seeded("many_small_steps", tmp_path)
+
+    values = [
+        int((tmp_path / f"part-{index:02d}.txt").read_text().split("value = ")[1])
+        for index in range(TALLY_FILES)
+    ]
+    assert sum(values) == EXPECTED_TALLY
+
+    assert not task.check(tmp_path, f"the tally is {EXPECTED_TALLY}")
+
+    (tmp_path / "tally.txt").write_text(f"{EXPECTED_TALLY}\n")
+    assert task.check(tmp_path, f"the tally is {EXPECTED_TALLY}")
+    assert not task.check(tmp_path, "the tally is unclear")
+
+    (tmp_path / "tally.txt").write_text("999")
+    assert not task.check(tmp_path, f"the tally is {EXPECTED_TALLY}")
+
+
+def test_many_small_steps_conversation_outgrows_the_budget_without_any_huge_result(
+    tmp_path: Path,
+) -> None:
+    _seeded("many_small_steps", tmp_path)
+    parts = [(tmp_path / f"part-{index:02d}.txt").read_text() for index in range(TALLY_FILES)]
+    budget = prompt_budget(REFERENCE_CONTEXT_SIZE)
+
+    assert sum(estimate_tokens(part) for part in parts) > budget
+    assert all(estimate_tokens(part) < budget // 2 for part in parts)
+
+
+def test_many_small_steps_renders_within_budget_after_compaction(tmp_path: Path) -> None:
+    _seeded("many_small_steps", tmp_path)
+    session = Session(connect(":memory:"), "evals")
+    session.append(UserMessageRecorded(content="tally the parts"))
+    for index in range(TALLY_FILES):
+        session.append(
+            ToolCallRecorded(
+                name="read_file",
+                arguments={"path": f"part-{index:02d}.txt"},
+                result=(tmp_path / f"part-{index:02d}.txt").read_text(),
+                is_error=False,
+            )
+        )
+
+    rendered = render_messages(session, REFERENCE_CONTEXT_SIZE)
+    total = sum(estimate_tokens(message_text(message)) for message in rendered)
+
+    assert total <= prompt_budget(REFERENCE_CONTEXT_SIZE)

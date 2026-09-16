@@ -165,6 +165,34 @@ def _check_dependent_chain(directory: Path, answer: str) -> bool:
     )
 
 
+TALLY_FILES = 10
+TALLY_VALUES = tuple(3 * index + 5 for index in range(TALLY_FILES))
+EXPECTED_TALLY = sum(TALLY_VALUES)
+TALLY_NOTE_LINES = 60
+
+
+def _part(index: int, value: int) -> str:
+    notes = "\n".join(
+        f"# note {line:02d} for part {index:02d}: nothing to total on this line"
+        for line in range(TALLY_NOTE_LINES)
+    )
+    return f"{notes}\nvalue = {value}\n"
+
+
+def _setup_many_small_steps(directory: Path) -> None:
+    for index, value in enumerate(TALLY_VALUES):
+        (directory / f"part-{index:02d}.txt").write_text(_part(index, value))
+
+
+def _check_many_small_steps(directory: Path, answer: str) -> bool:
+    path = directory / "tally.txt"
+    if not path.is_file():
+        return False
+    return re.findall(r"\d+", path.read_text()) == [str(EXPECTED_TALLY)] and _mentions(
+        answer, str(EXPECTED_TALLY)
+    )
+
+
 SUITE: tuple[EvalTask, ...] = (
     EvalTask(
         name="read_one_file",
@@ -241,5 +269,16 @@ SUITE: tuple[EvalTask, ...] = (
         ),
         setup=_setup_dependent_chain,
         check=_check_dependent_chain,
+    ),
+    EvalTask(
+        name="many_small_steps",
+        prompt=(
+            f"There are {TALLY_FILES} files named part-00.txt through "
+            f"part-{TALLY_FILES - 1:02d}.txt, each holding one value. "
+            "Read them one at a time, one file per step, without combining the reads. "
+            "Then write the sum of every value to tally.txt and report it."
+        ),
+        setup=_setup_many_small_steps,
+        check=_check_many_small_steps,
     ),
 )

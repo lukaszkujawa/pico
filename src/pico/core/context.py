@@ -12,6 +12,7 @@ COMPLETION_RESERVE_CAP = 4096
 SYSTEM_PROMPT = "You are Pico, a tiny agent solving big problems."
 
 _HANDLE_PREVIEW_CHARS = 200
+_MARKER_FACT_IDS = 12
 
 
 def estimate_tokens(text: str, chars_per_token: float = 4.0) -> int:
@@ -58,6 +59,53 @@ def _message_tokens(message: Message, chars_per_token: float) -> int:
     )
 
 
+def _protected_start(messages: list[Message]) -> int:
+    for position in reversed(range(len(messages))):
+        if messages[position].role is Role.USER:
+            return position
+    return 0
+
+
+def _unit_end(messages: list[Message], start: int) -> int:
+    end = start + 1
+    while end < len(messages) and messages[end].role is Role.TOOL:
+        end += 1
+    return end
+
+
+def elision_marker(messages: list[Message]) -> Message:
+    fact_ids = [
+        int(message.tool_result.tool_call_id)
+        for message in messages
+        if message.role is Role.TOOL
+        and message.tool_result is not None
+        and not message.tool_result.is_error
+    ]
+    shown = fact_ids[-_MARKER_FACT_IDS:]
+    overflow = len(fact_ids) - len(shown)
+    calls = ", ".join(f"read_fact({fact_id})" for fact_id in shown)
+    if overflow:
+        calls += f", +{overflow} more"
+    evidence = f" — their evidence remains available: {calls}" if fact_ids else ""
+    return Message(
+        role=Role.USER,
+        content=(f"[{len(messages)} earlier messages elided to fit the context budget{evidence}]"),
+    )
+
+
+def elide(messages: list[Message], budget: int, chars_per_token: float = 4.0) -> list[Message]:
+    def cost(cut: int) -> int:
+        rendered = messages[cut:] if cut == 0 else [elision_marker(messages[:cut]), *messages[cut:]]
+        return sum(_message_tokens(message, chars_per_token) for message in rendered)
+
+    protected = _protected_start(messages)
+    cut = 0
+    while cut < protected and cost(cut) > budget:
+        cut = _unit_end(messages, cut)
+
+    return messages if cut == 0 else [elision_marker(messages[:cut]), *messages[cut:]]
+
+
 def render_messages(
     session: Session,
     context_size: int,
@@ -94,4 +142,4 @@ def render_messages(
         )
         total += after - before
 
-    return result
+    return elide(result, budget, chars_per_token)

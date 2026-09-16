@@ -3,6 +3,8 @@ from itertools import pairwise
 from pico.core.context import (
     COMPLETION_RESERVE_CAP,
     COMPLETION_RESERVE_FRACTION,
+    elide,
+    elision_marker,
     estimate_tokens,
     message_text,
     prompt_budget,
@@ -10,7 +12,7 @@ from pico.core.context import (
     render_tool_result,
 )
 from pico.core.ledger import facts
-from pico.llm.types import Message, Role, ToolCall
+from pico.llm.types import Message, Role, ToolCall, ToolResult
 from pico.session import (
     AssistantMessageRecorded,
     Session,
@@ -298,3 +300,151 @@ def test_message_text_of_tool_message_is_its_result_content() -> None:
     tool_message = next(m for m in session.messages() if m.role is Role.TOOL)
 
     assert message_text(tool_message) == "out"
+
+
+def _tokens(messages: list[Message]) -> int:
+    return sum(estimate_tokens(message_text(message)) for message in messages)
+
+
+def _turn(index: int, size: int) -> list[Message]:
+    call = ToolCall(id=str(index), name="read_file", arguments={"path": f"f{index}"})
+    return [
+        Message(role=Role.USER, content=f"question {index}"),
+        Message(role=Role.ASSISTANT, tool_calls=(call,)),
+        Message(
+            role=Role.TOOL,
+            tool_result=ToolResult(tool_call_id=str(index), content=f"{index}" * size),
+        ),
+        Message(role=Role.ASSISTANT, content=f"answer {index}"),
+    ]
+
+
+def _conversation(turns: int, size: int = 400) -> list[Message]:
+    return [message for index in range(turns) for message in _turn(index, size)]
+
+
+def test_elide_returns_conversation_that_already_fits_unchanged() -> None:
+    messages = _conversation(3)
+
+    assert elide(messages, budget=_tokens(messages)) == messages
+
+
+def test_elide_drops_oldest_messages_until_it_fits() -> None:
+    messages = _conversation(6)
+    budget = _tokens(messages) // 2
+
+    rendered = elide(messages, budget)
+
+    assert _tokens(rendered) <= budget
+    assert rendered[0].role is Role.USER
+    assert "elided" in rendered[0].content
+    assert rendered[1:] == messages[len(messages) - len(rendered) + 1 :]
+
+
+def test_elide_keeps_tool_call_and_its_result_together() -> None:
+    messages = _conversation(4)
+
+    for budget in range(1, _tokens(messages)):
+        rendered = elide(messages, budget)
+        calls = [m for m in rendered if m.role is Role.ASSISTANT and m.tool_calls]
+        results = [m for m in rendered if m.role is Role.TOOL]
+        assert len(calls) == len(results)
+        assert [call.tool_calls[0].id for call in calls] == [
+            result.tool_result.tool_call_id for result in results if result.tool_result
+        ]
+
+
+def test_elide_protects_the_latest_user_message_and_everything_after_it() -> None:
+    messages = _conversation(3, size=4_000)
+
+    rendered = elide(messages, budget=1)
+
+    protected = next(
+        index for index in reversed(range(len(messages))) if messages[index].role is Role.USER
+    )
+    assert rendered[1:] == messages[protected:]
+    assert _tokens(rendered) > 1
+
+
+def test_elide_passes_an_empty_conversation_through() -> None:
+    assert elide([], budget=0) == []
+
+
+def test_elide_passes_a_single_turn_through_untouched() -> None:
+    messages = _turn(0, size=10_000)
+
+    assert elide(messages, budget=1) == messages
+
+
+def test_elide_leaves_a_conversation_without_a_user_message_alone() -> None:
+    messages = [Message(role=Role.ASSISTANT, content="x" * 8_000)]
+
+    assert elide(messages, budget=1) == messages
+
+
+def test_elision_marker_names_the_count_and_the_non_error_fact_ids() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hello"))
+    session.append(ToolCallRecorded(name="shell", arguments={}, result="boom", is_error=True))
+    session.append(ToolCallRecorded(name="read_file", arguments={}, result="ok", is_error=False))
+    messages = session.messages()
+
+    marker = elision_marker(messages)
+
+    assert marker.role is Role.USER
+    assert f"[{len(messages)} earlier messages elided" in marker.content
+    assert "read_fact(3)" in marker.content
+    assert "read_fact(2)" not in marker.content
+
+
+def test_elision_marker_caps_the_id_list_with_an_overflow_suffix() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hello"))
+    for _ in range(20):
+        session.append(
+            ToolCallRecorded(name="read_file", arguments={}, result="ok", is_error=False)
+        )
+
+    marker = elision_marker(session.messages())
+
+    assert marker.content.count("read_fact(") == 12
+    assert "+8 more" in marker.content
+    assert "read_fact(21)" in marker.content
+    assert "read_fact(9)" not in marker.content
+
+
+def test_elision_marker_omits_the_evidence_clause_when_no_facts_were_elided() -> None:
+    marker = elision_marker([Message(role=Role.USER, content="hi")])
+
+    assert marker.content == "[1 earlier messages elided to fit the context budget]"
+
+
+def test_elide_adds_no_marker_when_nothing_was_elided() -> None:
+    messages = _conversation(2)
+
+    assert all("elided" not in message.content for message in elide(messages, _tokens(messages)))
+
+
+def test_elide_counts_the_marker_against_the_budget() -> None:
+    messages = _conversation(8)
+    budget = _tokens(messages) // 3
+
+    rendered = elide(messages, budget)
+
+    assert "elided" in rendered[0].content
+    assert _tokens(rendered) <= budget
+
+
+def test_render_messages_elides_when_handles_alone_cannot_fit() -> None:
+    session = _session()
+    for index in range(40):
+        session.append(UserMessageRecorded(content=f"step {index} " * 40))
+        session.append(
+            ToolCallRecorded(name="read_file", arguments={}, result="r" * 400, is_error=False)
+        )
+
+    rendered = render_messages(session, context_size=2_000)
+
+    assert len(rendered) < len(session.messages())
+    assert "elided" in rendered[0].content
+    assert "read_fact(" in rendered[0].content

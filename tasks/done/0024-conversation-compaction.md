@@ -11,7 +11,7 @@ This milestone adds the second tier: when handles alone can't fit the budget, el
 * **Pure and testable.** The elision logic lives in its own pure function (e.g. `elide(messages, budget) -> list[Message]` — name and exact signature your call) so tests exercise it directly on constructed message lists without a session, mirroring how the handle pass is already tested. `render_messages` composes the two passes.
 * **No summarization.** A model-written summary of elided turns would put a model in charge of deciding what mattered — the opposite of this runtime's bet, and unverifiable. Deterministic elision plus recoverable facts is the whole design. If evals later show summaries earn their complexity, that is a separate milestone with numbers attached.
 
-## [ ] T001 Pair-safe elision pass
+## [X] T001 Pair-safe elision pass
 
 ### Description
 
@@ -22,7 +22,7 @@ Implement the elision function and compose it into `render_messages` after the h
 * `tests/core/test_context.py` covers: a conversation that fits after handles alone is returned unchanged by the second pass; one that doesn't gets oldest messages dropped until it fits; a tool-call/result pair straddling the cut line is dropped or kept atomically; the latest user message and everything after it survive even when that tail alone exceeds budget; an empty conversation and a single-turn conversation pass through untouched.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T002 Elision marker
+## [X] T002 Elision marker
 
 ### Description
 
@@ -33,7 +33,7 @@ Build the marker message per the design decisions: elided-message count, the tra
 * `tests/core/test_context.py` covers: the marker names the exact count and the correct ids (asserted against a session with interleaved error calls, whose ids must not appear); the id list caps with the `+N more` suffix; no marker appears when nothing was elided; the returned total including the marker fits the budget in the normal case.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T003 Verify and finalize
+## [X] T003 Verify and finalize
 
 ### Description
 
