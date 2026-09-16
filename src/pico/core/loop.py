@@ -11,7 +11,7 @@ from pico.core.actions import (
     register_delegate_actions,
 )
 from pico.core.bus import Bus
-from pico.core.context import render_messages
+from pico.core.context import SYSTEM_PROMPT, render_messages
 from pico.core.errors import UnknownToolError
 from pico.core.events import (
     AssistantTextDelta,
@@ -134,7 +134,10 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
     thinking_id: str | None = None
     cancelled = False
 
-    messages = render_messages(runner.session, runner.context_size)
+    messages = [
+        Message(role=Role.SYSTEM, content=SYSTEM_PROMPT),
+        *render_messages(runner.session, runner.context_size),
+    ]
     if runner.pending_nudge is not None:
         messages = [*messages, Message(role=Role.USER, content=runner.pending_nudge)]
 

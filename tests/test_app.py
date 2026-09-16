@@ -10,6 +10,7 @@ import pico.app as app_module
 from pico.app import DEFAULT_SESSION_ID, UnsupportedVendorError, run_pico
 from pico.config import Config
 from pico.core.bus import Bus
+from pico.core.context import SYSTEM_PROMPT
 from pico.core.events import RunCancelled, RunFinished, RunStarted
 from pico.llm.types import GenerationComplete, Message, Role, StreamEvent, TextDelta, ToolSpec
 from pico.session import AssistantMessageRecorded, Session, UserMessageRecorded, connect
@@ -137,9 +138,14 @@ def test_turn_loop_runs_one_turn_per_queued_message(
     run_pico(_config(tmp_path))
 
     assert len(client.seen_messages) == 2
-    assert [m.content for m in client.seen_messages[0]] == ["hello"]
-    assert [m.content for m in client.seen_messages[1]] == ["hello", "hi", "world"]
-    assert [m.role for m in client.seen_messages[1]] == [Role.USER, Role.ASSISTANT, Role.USER]
+    assert [m.content for m in client.seen_messages[0]] == [SYSTEM_PROMPT, "hello"]
+    assert [m.content for m in client.seen_messages[1]] == [SYSTEM_PROMPT, "hello", "hi", "world"]
+    assert [m.role for m in client.seen_messages[1]] == [
+        Role.SYSTEM,
+        Role.USER,
+        Role.ASSISTANT,
+        Role.USER,
+    ]
     assert {spec.name for spec in client.seen_tools[0]} == {
         "read_file",
         "write_file",

@@ -8,6 +8,8 @@ RenderLevel = Literal["full", "handle"]
 
 COMPLETION_RESERVE_FRACTION = 0.25
 
+SYSTEM_PROMPT = "You are Pico, a tiny agent solving big problems."
+
 _HANDLE_PREVIEW_CHARS = 200
 
 
