@@ -5,7 +5,7 @@ from pico.session.events import (
     ToolCallRecorded,
     UserMessageRecorded,
 )
-from pico.session.session import Session
+from pico.session.session import Session, latest_session_id, new_session_id
 from pico.session.store import connect
 
 __all__ = [
@@ -16,4 +16,6 @@ __all__ = [
     "UnknownEventKindError",
     "UserMessageRecorded",
     "connect",
+    "latest_session_id",
+    "new_session_id",
 ]

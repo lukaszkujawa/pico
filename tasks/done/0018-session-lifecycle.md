@@ -6,7 +6,7 @@ This was invisible on a throwaway host `pico.db`, but `0016-docker-run.md` bind-
 
 This milestone adds an actual session lifecycle: a fresh, empty session by default, a way to explicitly resume a specific prior one, and a way to start over mid-run — without touching the event-sourcing model itself (`Session`/`SessionEvent`/the store schema from `0008-session-store.md` are correct as-is; this is purely about *which* session id a run uses and when).
 
-## [ ] T001 Fresh session id per process start, by default
+## [X] T001 Fresh session id per process start, by default
 
 ### Description
 
@@ -20,7 +20,7 @@ Do not remove the underlying multi-session capability — `Session(conn, session
 * Existing tests that rely on a known/fixed session id (if any) are updated to not depend on the literal string `"default"`.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T002 `--resume [session_id]` CLI flag
+## [X] T002 `--resume [session_id]` CLI flag
 
 ### Description
 
@@ -36,7 +36,7 @@ Add a small lookup in `src/pico/session/session.py` or `src/pico/session/store.p
 * `tests/session/test_session.py` or `test_store.py` covers the most-recently-active lookup: returns `None` (or raises — pick one, document it) on an empty database; returns the correct id when multiple sessions have events with different timestamps.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T003 In-TUI "new conversation" action
+## [X] T003 In-TUI "new conversation" action
 
 ### Description
 
@@ -52,7 +52,7 @@ This does not delete the old session's data — it's still in the database, resu
 * `tests/tui/test_app.py` covers: triggering the action mid-conversation clears visible panes and starts a session whose `messages()` is empty; the old session's events are untouched and still queryable under its original id; triggering it while `_run_in_flight` is true is a no-op (mirrors the existing cancel-while-idle test pattern).
 * Fully annotated, passes strict Pyright.
 
-## [ ] T004 Surface the active session id somewhere visible
+## [X] T004 Surface the active session id somewhere visible
 
 ### Description
 
@@ -63,7 +63,7 @@ A user resuming a session, or wanting to `--resume` one later, needs to know whi
 * `tests/tui/test_app.py` or `test_widgets.py` covers: the rendered output contains the active session id after startup, and updates to the new id after the T003 new-conversation action fires.
 * Fully annotated, passes strict Pyright.
 
-## [ ] T005 `README.md`
+## [X] T005 `README.md`
 
 ### Description
 
@@ -73,7 +73,7 @@ Document the new behavior: Pico starts a fresh conversation by default, `--resum
 
 * A reader who hits this milestone's behavior for the first time (e.g. running `make run_in_docker` twice and getting two independent conversations, where they previously got one continuous one) can find out why and how to get the old behavior back (`--resume`) from the README alone.
 
-## [ ] T006 Verify and finalize
+## [X] T006 Verify and finalize
 
 ### Description
 

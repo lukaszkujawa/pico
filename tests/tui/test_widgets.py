@@ -9,6 +9,7 @@ from pico.tui.widgets import (
     AssistantPane,
     ElapsedTimer,
     ErrorPane,
+    Splash,
     ThinkingPane,
     ToolCallPane,
     WaitingIndicator,
@@ -325,3 +326,11 @@ async def test_elapsed_timer_freezes_final_value_on_stop(monkeypatch: pytest.Mon
         await pilot.pause(0.05)
 
         assert timer.render().plain == "59s"
+
+
+def test_splash_renders_session_id_when_given() -> None:
+    assert "session abc123" in Splash("abc123").render().plain
+
+
+def test_splash_omits_session_line_when_id_is_empty() -> None:
+    assert "session " not in Splash().render().plain

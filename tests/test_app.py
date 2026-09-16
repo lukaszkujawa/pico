@@ -7,13 +7,19 @@ from pathlib import Path
 import pytest
 
 import pico.app as app_module
-from pico.app import DEFAULT_SESSION_ID, UnsupportedVendorError, run_pico
+from pico.app import SessionHandle, UnsupportedVendorError, run_pico
 from pico.config import Config
 from pico.core.bus import Bus
 from pico.core.context import SYSTEM_PROMPT
 from pico.core.events import RunCancelled, RunFinished, RunStarted
 from pico.llm.types import GenerationComplete, Message, Role, StreamEvent, TextDelta, ToolSpec
-from pico.session import AssistantMessageRecorded, Session, UserMessageRecorded, connect
+from pico.session import (
+    AssistantMessageRecorded,
+    Session,
+    UserMessageRecorded,
+    connect,
+    latest_session_id,
+)
 from pico.tui import PicoApp
 
 
@@ -128,9 +134,10 @@ def test_turn_loop_runs_one_turn_per_queued_message(
         bus: Bus,
         input_queue: "queue.Queue[str]",
         cancel_handle: app_module.CancelHandle | None = None,
+        session_handle: SessionHandle | None = None,
     ) -> None:
         queues.append(input_queue)
-        original_init(self, bus, input_queue, cancel_handle)
+        original_init(self, bus, input_queue, cancel_handle, session_handle)
 
     monkeypatch.setattr(PicoApp, "__init__", tracking_init)
     monkeypatch.setattr(PicoApp, "run", driving_run)
@@ -183,11 +190,12 @@ def test_cancelling_mid_turn_stops_run_and_allows_next_turn(
         bus: Bus,
         input_queue: "queue.Queue[str]",
         cancel_handle: app_module.CancelHandle,
+        session_handle: SessionHandle | None = None,
     ) -> None:
         queues.append(input_queue)
         cancel_handles.append(cancel_handle)
         subscribers.append(bus.subscribe())
-        original_init(self, bus, input_queue, cancel_handle)
+        original_init(self, bus, input_queue, cancel_handle, session_handle)
 
     monkeypatch.setattr(PicoApp, "__init__", tracking_init)
     monkeypatch.setattr(PicoApp, "run", driving_run)
@@ -250,9 +258,10 @@ def test_turn_persists_to_session_file_on_disk(
         bus: Bus,
         input_queue: "queue.Queue[str]",
         cancel_handle: app_module.CancelHandle | None = None,
+        session_handle: SessionHandle | None = None,
     ) -> None:
         queues.append(input_queue)
-        original_init(self, bus, input_queue, cancel_handle)
+        original_init(self, bus, input_queue, cancel_handle, session_handle)
 
     monkeypatch.setattr(PicoApp, "__init__", tracking_init)
     monkeypatch.setattr(PicoApp, "run", driving_run)
@@ -261,7 +270,9 @@ def test_turn_persists_to_session_file_on_disk(
     run_pico(config)
 
     conn = connect(config.session_path)
-    session = Session(conn, DEFAULT_SESSION_ID)
+    session_id = latest_session_id(conn)
+    assert session_id is not None
+    session = Session(conn, session_id)
     events = list(session.events())
 
     assert events == [
@@ -295,9 +306,10 @@ def test_debug_true_writes_run_log(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
         bus: Bus,
         input_queue: "queue.Queue[str]",
         cancel_handle: app_module.CancelHandle | None = None,
+        session_handle: SessionHandle | None = None,
     ) -> None:
         queues.append(input_queue)
-        original_init(self, bus, input_queue, cancel_handle)
+        original_init(self, bus, input_queue, cancel_handle, session_handle)
 
     monkeypatch.setattr(PicoApp, "__init__", tracking_init)
     monkeypatch.setattr(PicoApp, "run", driving_run)
@@ -339,9 +351,10 @@ def test_debug_false_creates_no_logs_dir(monkeypatch: pytest.MonkeyPatch, tmp_pa
         bus: Bus,
         input_queue: "queue.Queue[str]",
         cancel_handle: app_module.CancelHandle | None = None,
+        session_handle: SessionHandle | None = None,
     ) -> None:
         queues.append(input_queue)
-        original_init(self, bus, input_queue, cancel_handle)
+        original_init(self, bus, input_queue, cancel_handle, session_handle)
 
     monkeypatch.setattr(PicoApp, "__init__", tracking_init)
     monkeypatch.setattr(PicoApp, "run", driving_run)
@@ -349,3 +362,86 @@ def test_debug_false_creates_no_logs_dir(monkeypatch: pytest.MonkeyPatch, tmp_pa
     run_pico(_config(tmp_path), debug=False)
 
     assert not (tmp_path / "logs").exists()
+
+
+def _run_one_turn(monkeypatch: pytest.MonkeyPatch, config: Config, session_id: str | None) -> None:
+    client = RecordingClient()
+
+    def factory(*, model: str, base_url: str, api_key: str | None) -> RecordingClient:
+        return client
+
+    monkeypatch.setattr(app_module, "OllamaClient", factory)
+
+    queues: list[queue.Queue[str]] = []
+
+    def driving_run(self: PicoApp) -> None:
+        queues[0].put("hello")
+        deadline = time.monotonic() + 5
+        while len(client.seen_messages) < 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+    original_init = PicoApp.__init__
+
+    def tracking_init(
+        self: PicoApp,
+        bus: Bus,
+        input_queue: "queue.Queue[str]",
+        cancel_handle: app_module.CancelHandle | None = None,
+        session_handle: SessionHandle | None = None,
+    ) -> None:
+        queues.append(input_queue)
+        original_init(self, bus, input_queue, cancel_handle, session_handle)
+
+    monkeypatch.setattr(PicoApp, "__init__", tracking_init)
+    monkeypatch.setattr(PicoApp, "run", driving_run)
+
+    run_pico(config, session_id=session_id)
+
+
+def test_each_run_starts_a_fresh_session(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    config = _config(tmp_path)
+
+    _run_one_turn(monkeypatch, config, session_id=None)
+    first_id = latest_session_id(connect(config.session_path))
+
+    _run_one_turn(monkeypatch, config, session_id=None)
+    conn = connect(config.session_path)
+    session_ids = {row[0] for row in conn.execute("SELECT DISTINCT session_id FROM events")}
+
+    assert first_id is not None
+    assert len(session_ids) == 2
+    assert first_id in session_ids
+
+    other_id = next(iter(session_ids - {first_id}))
+    assert Session(conn, first_id).messages() == Session(conn, other_id).messages()
+    assert len(Session(conn, first_id).messages()) == 2
+
+
+def test_explicit_session_id_resumes_existing_history(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = _config(tmp_path)
+
+    _run_one_turn(monkeypatch, config, session_id=None)
+    conn = connect(config.session_path)
+    resumed_id = latest_session_id(conn)
+    assert resumed_id is not None
+
+    _run_one_turn(monkeypatch, config, session_id=resumed_id)
+
+    session_ids = {row[0] for row in conn.execute("SELECT DISTINCT session_id FROM events")}
+    assert session_ids == {resumed_id}
+    assert len(Session(conn, resumed_id).messages()) == 4
+
+
+def test_session_handle_start_new_switches_to_an_empty_session(tmp_path: Path) -> None:
+    conn = connect(tmp_path / "session.db")
+    original = Session(conn, "original")
+    original.append(UserMessageRecorded(content="hello"))
+    handle = SessionHandle(original)
+
+    handle.start_new()
+
+    assert handle.session_id != "original"
+    assert handle.session.messages() == []
+    assert len(original.messages()) == 1

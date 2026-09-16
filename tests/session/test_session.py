@@ -3,7 +3,7 @@ import pytest
 from pico.llm.types import Message, Role, ToolCall, ToolResult
 from pico.session.errors import UnknownEventKindError
 from pico.session.events import AssistantMessageRecorded, ToolCallRecorded, UserMessageRecorded
-from pico.session.session import Session
+from pico.session.session import Session, latest_session_id, new_session_id
 from pico.session.store import connect
 
 
@@ -90,3 +90,29 @@ def test_seq_is_monotonic_per_session() -> None:
         "SELECT seq FROM events WHERE session_id = ? ORDER BY seq", ("s1",)
     ).fetchall()
     assert [row[0] for row in rows] == [1, 2]
+
+
+def test_new_session_id_is_unique_per_call() -> None:
+    assert new_session_id() != new_session_id()
+
+
+def test_latest_session_id_is_none_on_empty_database() -> None:
+    assert latest_session_id(connect(":memory:")) is None
+
+
+def test_latest_session_id_returns_most_recently_active_session() -> None:
+    conn = connect(":memory:")
+    Session(conn, "older").append(UserMessageRecorded(content="hello"))
+    Session(conn, "newer").append(UserMessageRecorded(content="world"))
+    Session(conn, "older").append(UserMessageRecorded(content="again"))
+
+    assert latest_session_id(conn) == "older"
+
+
+def test_latest_session_id_ignores_delegate_child_sessions() -> None:
+    conn = connect(":memory:")
+    parent = Session(conn, "parent")
+    parent.append(UserMessageRecorded(content="hello"))
+    parent.child("delegate/0").append(UserMessageRecorded(content="sub"))
+
+    assert latest_session_id(conn) == "parent"

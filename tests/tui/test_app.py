@@ -763,3 +763,122 @@ async def test_first_pane_stops_the_spinner_but_keeps_elapsed_and_tokens_running
         bus.publish(RunFinished())
         await pilot.pause(0.2)
         assert app.query_one(ElapsedTimer).running is False
+
+
+class RecordingSessionHandle:
+    def __init__(self, session_id: str = "session-1") -> None:
+        self._session_id = session_id
+        self.start_count = 0
+
+    @property
+    def session_id(self) -> str:
+        return self._session_id
+
+    def start_new(self) -> None:
+        self.start_count += 1
+        self._session_id = f"session-{self.start_count + 1}"
+
+
+async def test_new_session_action_clears_conversation_and_starts_a_session() -> None:
+    bus = Bus()
+    session_handle = RecordingSessionHandle()
+    app = PicoApp(bus, queue.Queue(), None, session_handle)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#user-input", ChatInput).focus()
+        await pilot.press(*"hello")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        bus.publish(RunStarted())
+        bus.publish(AssistantTextStarted(id="0"))
+        bus.publish(AssistantTextDelta(id="0", text="hi"))
+        bus.publish(AssistantTextFinished(id="0"))
+        bus.publish(RunFinished())
+        await pilot.pause(0.2)
+
+        assert len(app.query(UserPane)) == 1
+        assert len(app.query(AssistantPane)) == 1
+
+        await pilot.press("ctrl+n")
+        await pilot.pause(0.2)
+
+        assert session_handle.start_count == 1
+        assert len(app.query(UserPane)) == 0
+        assert len(app.query(AssistantPane)) == 0
+        assert len(app.query(Splash)) == 1
+        assert len(app.query(StatusLine)) == 1
+
+
+async def test_new_session_action_is_a_no_op_during_a_run() -> None:
+    bus = Bus()
+    session_handle = RecordingSessionHandle()
+    app = PicoApp(bus, queue.Queue(), None, session_handle)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        bus.publish(RunStarted())
+        await pilot.pause(0.2)
+
+        await pilot.press("ctrl+n")
+        await pilot.pause()
+
+        assert session_handle.start_count == 0
+
+
+async def test_new_session_action_resets_fact_numbering() -> None:
+    bus = Bus()
+    session_handle = RecordingSessionHandle()
+    app = PicoApp(bus, queue.Queue(), None, session_handle)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tool_call = ToolCall(id="1", name="search", arguments={"q": "pico"})
+        bus.publish(RunStarted())
+        bus.publish(ToolCallStarted(id="1", name="search", arguments={"q": "pico"}))
+        bus.publish(ToolCallFinished(id="1", tool_call=tool_call, result="ok", is_error=False))
+        bus.publish(RunFinished())
+        await pilot.pause(0.2)
+
+        await pilot.press("ctrl+n")
+        await pilot.pause(0.2)
+
+        bus.publish(RunStarted())
+        bus.publish(ToolCallStarted(id="2", name="search", arguments={"q": "pico"}))
+        bus.publish(
+            ToolCallFinished(
+                id="2",
+                tool_call=ToolCall(id="2", name="search", arguments={"q": "pico"}),
+                result="ok",
+                is_error=False,
+            )
+        )
+        bus.publish(RunFinished())
+        await pilot.pause(0.2)
+
+        assert app.query_one(ToolCallPane).fact_index == 0
+
+
+async def test_splash_shows_active_session_id_and_updates_after_new_session() -> None:
+    bus = Bus()
+    session_handle = RecordingSessionHandle()
+    app = PicoApp(bus, queue.Queue(), None, session_handle)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        assert "session-1" in app.query_one(Splash).render().plain
+
+        await pilot.press("ctrl+n")
+        await pilot.pause(0.2)
+
+        assert "session-2" in app.query_one(Splash).render().plain
+
+
+async def test_new_session_action_without_a_session_handle_is_a_no_op() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        await pilot.press("ctrl+n")
+        await pilot.pause()
+
+        assert app.query_one(Splash).render().plain.count("session ") == 0

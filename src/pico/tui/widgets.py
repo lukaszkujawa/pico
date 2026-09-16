@@ -314,10 +314,13 @@ LABEL_INDENT = " " * ((len(TAGLINE) - len(LOGO_LABEL)) // 2)
 
 
 class Splash(Static):
-    def __init__(self, theme: Theme = PICO_THEME) -> None:
+    session_id: reactive[str] = reactive("", repaint=True)
+
+    def __init__(self, session_id: str = "", theme: Theme = PICO_THEME) -> None:
         super().__init__(id="splash")
         self._theme = theme
         self.styles.padding = (1, 0, 1, 2)
+        self.set_reactive(Splash.session_id, session_id)
 
     def render(self) -> Text:
         border = f"bold {self._theme.primary}"
@@ -334,6 +337,8 @@ class Splash(Static):
             Text(LABEL_INDENT + LOGO_LABEL, style=f"bold {self._theme.text}"),
             Text(TAGLINE, style=f"italic {self._theme.muted_text}"),
         ]
+        if self.session_id:
+            lines.append(Text(f"session {self.session_id}", style=self._theme.muted_text))
         return Text("\n").join(lines)
 
 

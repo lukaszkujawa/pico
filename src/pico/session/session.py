@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import uuid
 from collections.abc import Iterator
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -20,6 +21,18 @@ _EVENT_KINDS: dict[str, type[SessionEvent]] = {
 }
 
 
+def new_session_id() -> str:
+    return f"{datetime.now(UTC).strftime('%Y-%m-%d_%H-%M-%S')}-{uuid.uuid4().hex[:6]}"
+
+
+def latest_session_id(conn: sqlite3.Connection) -> str | None:
+    row = conn.execute(
+        "SELECT session_id FROM events WHERE session_id NOT LIKE '%/%' "
+        "ORDER BY created_at DESC, id DESC LIMIT 1"
+    ).fetchone()
+    return None if row is None else str(row["session_id"])
+
+
 class Session:
     def __init__(self, conn: sqlite3.Connection, session_id: str) -> None:
         self._conn = conn
@@ -28,6 +41,10 @@ class Session:
     @property
     def session_id(self) -> str:
         return self._session_id
+
+    @property
+    def connection(self) -> sqlite3.Connection:
+        return self._conn
 
     def child(self, suffix: str) -> "Session":
         return Session(self._conn, f"{self._session_id}/{suffix}")

@@ -44,6 +44,13 @@ class CancelHandle(Protocol):
     def trigger(self) -> None: ...
 
 
+class SessionHandle(Protocol):
+    @property
+    def session_id(self) -> str: ...
+
+    def start_new(self) -> None: ...
+
+
 NEWLINE_KEYS = {"ctrl+j", "shift+enter"}
 
 
@@ -116,18 +123,23 @@ class PicoApp(App[None]):
         margin: 0;
     }
     """
-    BINDINGS: ClassVar[list[BindingType]] = [("escape", "cancel_run", "Cancel")]
+    BINDINGS: ClassVar[list[BindingType]] = [
+        ("escape", "cancel_run", "Cancel"),
+        ("ctrl+n", "new_session", "New conversation"),
+    ]
 
     def __init__(
         self,
         bus: Bus,
         input_queue: "queue.Queue[str]",
         cancel_handle: CancelHandle | None = None,
+        session_handle: SessionHandle | None = None,
     ) -> None:
         super().__init__()
         self._bus = bus
         self._input_queue = input_queue
         self._cancel_handle = cancel_handle
+        self._session_handle = session_handle
         self._run_in_flight = False
         self._assistant_panes: dict[str, AssistantPane] = {}
         self._thinking_panes: dict[str, ThinkingPane] = {}
@@ -135,9 +147,12 @@ class PicoApp(App[None]):
         self._queued_user_panes: list[UserPane] = []
         self._fact_count = 0
 
+    def _session_id(self) -> str:
+        return "" if self._session_handle is None else self._session_handle.session_id
+
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="conversation"):
-            yield Splash()
+            yield Splash(self._session_id())
             yield StatusLine()
         yield Rule()
         with Vertical(id="footer"):
@@ -242,6 +257,26 @@ class PicoApp(App[None]):
     def action_cancel_run(self) -> None:
         if self._run_in_flight and self._cancel_handle is not None:
             self._cancel_handle.trigger()
+
+    def action_new_session(self) -> None:
+        if self._run_in_flight or self._session_handle is None:
+            return
+        self._session_handle.start_new()
+        self._assistant_panes.clear()
+        self._thinking_panes.clear()
+        self._tool_call_panes.clear()
+        self._queued_user_panes.clear()
+        self._fact_count = 0
+        conversation = self.query_one("#conversation", VerticalScroll)
+        status = self.query_one(StatusLine)
+        status.stop()
+        status.display = False
+        splash = self.query_one(Splash)
+        splash.session_id = self._session_id()
+        for child in list(conversation.children):
+            if child is not status and child is not splash:
+                child.remove()
+        conversation.move_child(status, after=-1)
 
     def on_error_message(self, message: ErrorMessage) -> None:
         self._run_in_flight = False
