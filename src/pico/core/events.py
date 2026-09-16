@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from pico.llm.types import ToolCall
@@ -49,12 +50,7 @@ class AssistantThinkingFinished:
 class ToolCallStarted:
     id: str
     name: str
-
-
-@dataclass(frozen=True)
-class ToolCallArgumentsDelta:
-    id: str
-    arguments_delta: str
+    arguments: Mapping[str, object]
 
 
 @dataclass(frozen=True)
@@ -85,7 +81,6 @@ BusEvent = (
     | AssistantThinkingDelta
     | AssistantThinkingFinished
     | ToolCallStarted
-    | ToolCallArgumentsDelta
     | ToolCallFinished
     | ErrorOccurred
     | RunCancelled

@@ -14,7 +14,6 @@ from pico.core.events import (
     RunCancelled,
     RunFinished,
     RunStarted,
-    ToolCallArgumentsDelta,
     ToolCallFinished,
     ToolCallStarted,
 )
@@ -400,7 +399,7 @@ def test_single_tool_call_round_trip() -> None:
     events = [next(subscriber) for _ in range(7)]
     assert events == [
         RunStarted(),
-        ToolCallStarted(id="1", name="echo"),
+        ToolCallStarted(id="1", name="echo", arguments={"text": "hi"}),
         ToolCallFinished(id="1", tool_call=call, result="hi", is_error=False),
         AssistantTextStarted(id="0"),
         AssistantTextDelta(id="0", text="done"),
@@ -415,7 +414,7 @@ def test_single_tool_call_round_trip() -> None:
     ]
 
 
-def test_tool_call_arguments_delta_forwarded() -> None:
+def test_tool_call_delta_from_llm_is_ignored() -> None:
     bus = Bus()
     subscriber = bus.subscribe()
     session = _session()
@@ -435,11 +434,10 @@ def test_tool_call_arguments_delta_forwarded() -> None:
     runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    events = [next(subscriber) for _ in range(5)]
+    events = [next(subscriber) for _ in range(4)]
     assert events == [
         RunStarted(),
-        ToolCallArgumentsDelta(id="1", arguments_delta='{"text":'),
-        ToolCallStarted(id="1", name="echo"),
+        ToolCallStarted(id="1", name="echo", arguments={"text": "hi"}),
         ToolCallFinished(id="1", tool_call=call, result="hi", is_error=False),
         RunFinished(),
     ]
@@ -464,7 +462,7 @@ def test_unknown_tool_call_surfaced_as_tool_error() -> None:
     events = [next(subscriber) for _ in range(4)]
     assert events == [
         RunStarted(),
-        ToolCallStarted(id="1", name="missing"),
+        ToolCallStarted(id="1", name="missing", arguments={}),
         ToolCallFinished(id="1", tool_call=call, result="missing", is_error=True),
         RunFinished(),
     ]
@@ -592,7 +590,9 @@ def test_valid_answer_call_ends_run_and_records_result() -> None:
     events = [next(subscriber) for _ in range(4)]
     assert events == [
         RunStarted(),
-        ToolCallStarted(id="1", name="answer"),
+        ToolCallStarted(
+            id="1", name="answer", arguments={"content": "the answer", "citations": []}
+        ),
         ToolCallFinished(id="1", tool_call=call, result="the answer", is_error=False),
         RunFinished(),
     ]
@@ -622,7 +622,10 @@ def test_invalid_answer_call_continues_run_instead_of_ending() -> None:
     runner.execute()
 
     events = [next(subscriber) for _ in range(3)]
-    assert events[:2] == [RunStarted(), ToolCallStarted(id="1", name="answer")]
+    assert events[:2] == [
+        RunStarted(),
+        ToolCallStarted(id="1", name="answer", arguments={}),
+    ]
     finished = events[2]
     assert isinstance(finished, ToolCallFinished)
     assert finished.is_error is True
@@ -906,7 +909,7 @@ def test_delegate_child_stream_events_do_not_appear_on_parent_bus() -> None:
     events = [next(subscriber) for _ in range(6)]
     assert events == [
         RunStarted(),
-        ToolCallStarted(id="1", name="delegate"),
+        ToolCallStarted(id="1", name="delegate", arguments={"question": "what is x?"}),
         ToolCallFinished(id="1", tool_call=delegate_call, result="x is 1", is_error=False),
         AssistantTextStarted(id="0"),
         AssistantTextDelta(id="0", text="done"),

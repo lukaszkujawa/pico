@@ -31,7 +31,6 @@ from pico.core.events import (
     RunCancelled,
     RunFinished,
     RunStarted,
-    ToolCallArgumentsDelta,
     ToolCallFinished,
     ToolCallStarted,
 )
@@ -90,7 +89,6 @@ __all__ = [
     "StepOutcome",
     "Stuckness",
     "Tool",
-    "ToolCallArgumentsDelta",
     "ToolCallFinished",
     "ToolCallStarted",
     "ToolRegistry",

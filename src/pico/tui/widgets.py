@@ -31,6 +31,20 @@ class AssistantPane(Static):
         return Text(self.content_text, style=self._theme.assistant)
 
 
+class AnswerPane(Static):
+    def __init__(self, pane_id: str, content: str, theme: Theme = PICO_THEME) -> None:
+        super().__init__(id=f"answer-{pane_id}")
+        self._theme = theme
+        self._content = content
+        self.styles.color = theme.primary
+        self.styles.padding = (0, 1)
+
+    def render(self) -> Text:
+        marker = Text("● ", style=f"bold {self._theme.primary}")
+        body = Text(self._content, style=f"bold {self._theme.primary}")
+        return marker + body
+
+
 class ThinkingPane(Static):
     content_text: reactive[str] = reactive("", repaint=True)
     finished: reactive[bool] = reactive(False, repaint=True)
@@ -82,22 +96,21 @@ def truncate(text: str, limit: int = RESULT_TRUNCATE_LENGTH) -> str:
 
 
 class ToolCallPane(Static):
-    arguments_text: reactive[str] = reactive("", repaint=True)
     result_text: reactive[str] = reactive("", repaint=True)
     finished: reactive[bool] = reactive(False, repaint=True)
     is_error: reactive[bool] = reactive(False, repaint=True)
     fact_index: reactive[int | None] = reactive(None, repaint=True)
 
-    def __init__(self, pane_id: str, name: str, theme: Theme = PICO_THEME) -> None:
+    def __init__(
+        self, pane_id: str, name: str, arguments: str = "", theme: Theme = PICO_THEME
+    ) -> None:
         super().__init__(id=f"tool-{pane_id}")
         self._theme = theme
         self.name_label = name
+        self.arguments_text = arguments
         self.styles.border = ("round", theme.tool_call_border)
         self.styles.color = theme.text
         self.styles.padding = (0, 1)
-
-    def append_delta(self, text: str) -> None:
-        self.arguments_text += text
 
     def finish(self, result: str, is_error: bool, fact_index: int | None = None) -> None:
         self.result_text = result

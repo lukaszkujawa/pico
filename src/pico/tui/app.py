@@ -10,6 +10,7 @@ from textual.widgets import Rule, Static, TextArea
 
 from pico.core.bus import Bus
 from pico.tui.messages import (
+    AnswerPaneCreate,
     AssistantPaneClose,
     AssistantPaneCreate,
     AssistantPaneDelta,
@@ -22,12 +23,12 @@ from pico.tui.messages import (
     ThinkingPaneDelta,
     ToolCallPaneClose,
     ToolCallPaneCreate,
-    ToolCallPaneDelta,
     UserInputSubmitted,
     translate,
 )
 from pico.tui.theme import PICO_THEME, Theme
 from pico.tui.widgets import (
+    AnswerPane,
     AssistantPane,
     ErrorPane,
     Splash,
@@ -176,12 +177,9 @@ class PicoApp(App[None]):
         self._thinking_panes[message.pane_id].finish()
 
     def on_tool_call_pane_create(self, message: ToolCallPaneCreate) -> None:
-        pane = ToolCallPane(pane_id=message.pane_id, name=message.name)
+        pane = ToolCallPane(pane_id=message.pane_id, name=message.name, arguments=message.arguments)
         self._tool_call_panes[message.pane_id] = pane
         self.query_one("#conversation", VerticalScroll).mount(pane)
-
-    def on_tool_call_pane_delta(self, message: ToolCallPaneDelta) -> None:
-        self._tool_call_panes[message.pane_id].append_delta(message.text)
 
     def on_tool_call_pane_close(self, message: ToolCallPaneClose) -> None:
         fact_index: int | None = None
@@ -191,6 +189,14 @@ class PicoApp(App[None]):
         self._tool_call_panes[message.pane_id].finish(
             result=message.result, is_error=message.is_error, fact_index=fact_index
         )
+
+    def on_answer_pane_create(self, message: AnswerPaneCreate) -> None:
+        self._fact_count += 1
+        pending = self._tool_call_panes.pop(message.pane_id, None)
+        if pending is not None:
+            pending.remove()
+        pane = AnswerPane(pane_id=message.pane_id, content=message.content)
+        self.query_one("#conversation", VerticalScroll).mount(pane)
 
     def on_run_started_message(self, message: RunStartedMessage) -> None:
         self._run_in_flight = True

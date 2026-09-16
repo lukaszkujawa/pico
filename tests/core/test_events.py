@@ -10,7 +10,6 @@ from pico.core.events import (
     RunCancelled,
     RunFinished,
     RunStarted,
-    ToolCallArgumentsDelta,
     ToolCallFinished,
     ToolCallStarted,
 )
@@ -64,15 +63,10 @@ def test_assistant_thinking_finished() -> None:
 
 
 def test_tool_call_started() -> None:
-    event = ToolCallStarted(id="1", name="echo")
+    event = ToolCallStarted(id="1", name="echo", arguments={"x": 1})
     assert event.id == "1"
     assert event.name == "echo"
-
-
-def test_tool_call_arguments_delta() -> None:
-    event = ToolCallArgumentsDelta(id="1", arguments_delta='{"x":')
-    assert event.id == "1"
-    assert event.arguments_delta == '{"x":'
+    assert event.arguments == {"x": 1}
 
 
 def test_tool_call_finished() -> None:
@@ -113,8 +107,6 @@ def test_bus_event_exhaustive_match() -> None:
                 return "assistant_thinking_finished"
             case ToolCallStarted():
                 return "tool_call_started"
-            case ToolCallArgumentsDelta():
-                return "tool_call_arguments_delta"
             case ToolCallFinished():
                 return "tool_call_finished"
             case ErrorOccurred():
@@ -130,10 +122,7 @@ def test_bus_event_exhaustive_match() -> None:
     assert describe(AssistantThinkingStarted(id="1")) == "assistant_thinking_started"
     assert describe(AssistantThinkingDelta(id="1", text="hmm")) == "assistant_thinking_delta"
     assert describe(AssistantThinkingFinished(id="1")) == "assistant_thinking_finished"
-    assert describe(ToolCallStarted(id="1", name="echo")) == "tool_call_started"
-    assert (
-        describe(ToolCallArgumentsDelta(id="1", arguments_delta="")) == "tool_call_arguments_delta"
-    )
+    assert describe(ToolCallStarted(id="1", name="echo", arguments={})) == "tool_call_started"
     call = ToolCall(id="1", name="echo", arguments={})
     assert describe(ToolCallFinished(id="1", tool_call=call, result="ok")) == "tool_call_finished"
     assert describe(ErrorOccurred(message="boom")) == "error_occurred"

@@ -8,12 +8,12 @@ from pico.core.events import (
     ErrorOccurred,
     RunFinished,
     RunStarted,
-    ToolCallArgumentsDelta,
     ToolCallFinished,
     ToolCallStarted,
 )
 from pico.llm.types import ToolCall
 from pico.tui.messages import (
+    AnswerPaneCreate,
     AssistantPaneClose,
     AssistantPaneCreate,
     AssistantPaneDelta,
@@ -25,7 +25,6 @@ from pico.tui.messages import (
     ThinkingPaneDelta,
     ToolCallPaneClose,
     ToolCallPaneCreate,
-    ToolCallPaneDelta,
     translate,
 )
 
@@ -80,17 +79,11 @@ def test_translate_assistant_thinking_finished() -> None:
 
 
 def test_translate_tool_call_started() -> None:
-    message = translate(ToolCallStarted(id="1", name="search"))
+    message = translate(ToolCallStarted(id="1", name="search", arguments={"q": "pico"}))
     assert isinstance(message, ToolCallPaneCreate)
     assert message.pane_id == "1"
     assert message.name == "search"
-
-
-def test_translate_tool_call_arguments_delta() -> None:
-    message = translate(ToolCallArgumentsDelta(id="1", arguments_delta='{"q":'))
-    assert isinstance(message, ToolCallPaneDelta)
-    assert message.pane_id == "1"
-    assert message.text == '{"q":'
+    assert message.arguments == '{"q": "pico"}'
 
 
 def test_translate_tool_call_finished() -> None:
@@ -100,6 +93,23 @@ def test_translate_tool_call_finished() -> None:
     assert message.pane_id == "1"
     assert message.result == "ok"
     assert message.is_error is False
+
+
+def test_translate_successful_answer_call_becomes_answer_pane() -> None:
+    tool_call = ToolCall(id="1", name="answer", arguments={"content": "42", "citations": []})
+    message = translate(ToolCallFinished(id="1", tool_call=tool_call, result="42", is_error=False))
+    assert isinstance(message, AnswerPaneCreate)
+    assert message.pane_id == "1"
+    assert message.content == "42"
+
+
+def test_translate_failed_answer_call_stays_a_tool_call_close() -> None:
+    tool_call = ToolCall(id="1", name="answer", arguments={})
+    message = translate(
+        ToolCallFinished(id="1", tool_call=tool_call, result="unknown citation", is_error=True)
+    )
+    assert isinstance(message, ToolCallPaneClose)
+    assert message.is_error is True
 
 
 def test_translate_error_occurred() -> None:

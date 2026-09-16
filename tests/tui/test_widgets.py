@@ -3,6 +3,7 @@ from textual.app import App, ComposeResult
 from pico.tui.widgets import (
     ERROR_GLYPH,
     SUCCESS_GLYPH,
+    AnswerPane,
     AssistantPane,
     ErrorPane,
     ThinkingPane,
@@ -14,6 +15,11 @@ from pico.tui.widgets import (
 class AssistantPaneHarness(App[None]):
     def compose(self) -> ComposeResult:
         yield AssistantPane(pane_id="0")
+
+
+class AnswerPaneHarness(App[None]):
+    def compose(self) -> ComposeResult:
+        yield AnswerPane(pane_id="0", content="The final answer is 42.")
 
 
 class ThinkingPaneHarness(App[None]):
@@ -29,7 +35,7 @@ class WaitingIndicatorHarness(App[None]):
 
 class ToolCallPaneHarness(App[None]):
     def compose(self) -> ComposeResult:
-        yield ToolCallPane(pane_id="1", name="search")
+        yield ToolCallPane(pane_id="1", name="search", arguments='{"q": "pico"}')
 
 
 class ErrorPaneHarness(App[None]):
@@ -54,6 +60,16 @@ async def test_assistant_pane_lifecycle() -> None:
         await pilot.pause()
         assert pane.finished is True
         assert pane.render().plain == "Hello, world!"
+
+
+async def test_answer_pane_renders_content_without_box() -> None:
+    app = AnswerPaneHarness()
+    async with app.run_test() as pilot:
+        pane = app.query_one(AnswerPane)
+        await pilot.pause()
+
+        assert "The final answer is 42." in pane.render().plain
+        assert pane.styles.border.top[0] == ""
 
 
 async def test_thinking_pane_lifecycle() -> None:
@@ -89,9 +105,6 @@ async def test_tool_call_pane_lifecycle_success() -> None:
         pane = app.query_one(ToolCallPane)
         assert pane.name_label == "search"
         assert pane.finished is False
-
-        pane.append_delta('{"q": "pico"}')
-        await pilot.pause()
         assert "pico" in pane.render().plain
 
         pane.finish(result="found it", is_error=False)
@@ -108,7 +121,6 @@ async def test_tool_call_pane_lifecycle_error() -> None:
     async with app.run_test() as pilot:
         pane = app.query_one(ToolCallPane)
 
-        pane.append_delta("boom")
         pane.finish(result="tool crashed", is_error=True)
         await pilot.pause()
         assert pane.finished is True

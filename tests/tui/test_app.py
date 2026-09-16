@@ -12,7 +12,6 @@ from pico.core.events import (
     RunCancelled,
     RunFinished,
     RunStarted,
-    ToolCallArgumentsDelta,
     ToolCallFinished,
     ToolCallStarted,
 )
@@ -20,6 +19,7 @@ from pico.llm.types import ToolCall
 from pico.tui.app import ChatInput, InputBar, PicoApp
 from pico.tui.messages import UserInputSubmitted
 from pico.tui.widgets import (
+    AnswerPane,
     AssistantPane,
     ErrorPane,
     Splash,
@@ -60,8 +60,7 @@ async def test_app_renders_tool_call_pane_from_bus_events() -> None:
 
         tool_call = ToolCall(id="1", name="search", arguments={"q": "pico"})
         bus.publish(RunStarted())
-        bus.publish(ToolCallStarted(id="1", name="search"))
-        bus.publish(ToolCallArgumentsDelta(id="1", arguments_delta='{"q": "pico"}'))
+        bus.publish(ToolCallStarted(id="1", name="search", arguments={"q": "pico"}))
         bus.publish(
             ToolCallFinished(id="1", tool_call=tool_call, result="found it", is_error=False)
         )
@@ -73,6 +72,7 @@ async def test_app_renders_tool_call_pane_from_bus_events() -> None:
         assert len(panes) == 1
         pane = panes.first()
         assert pane.name_label == "search"
+        assert '"q": "pico"' in pane.render().plain
         assert "found it" in pane.render().plain
         assert pane.finished is True
         assert pane.is_error is False
@@ -87,11 +87,11 @@ async def test_fact_index_increments_across_successful_tool_calls_only() -> None
 
         tool_call = ToolCall(id="1", name="search", arguments={})
         bus.publish(RunStarted())
-        bus.publish(ToolCallStarted(id="1", name="search"))
+        bus.publish(ToolCallStarted(id="1", name="search", arguments={}))
         bus.publish(ToolCallFinished(id="1", tool_call=tool_call, result="first", is_error=False))
-        bus.publish(ToolCallStarted(id="2", name="search"))
+        bus.publish(ToolCallStarted(id="2", name="search", arguments={}))
         bus.publish(ToolCallFinished(id="2", tool_call=tool_call, result="oops", is_error=True))
-        bus.publish(ToolCallStarted(id="3", name="search"))
+        bus.publish(ToolCallStarted(id="3", name="search", arguments={}))
         bus.publish(ToolCallFinished(id="3", tool_call=tool_call, result="second", is_error=False))
         bus.publish(RunFinished())
 
@@ -102,6 +102,54 @@ async def test_fact_index_increments_across_successful_tool_calls_only() -> None
         assert panes[0].fact_index == 0
         assert panes[1].fact_index is None
         assert panes[2].fact_index == 1
+
+
+async def test_successful_answer_renders_as_answer_pane_not_tool_call() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        tool_call = ToolCall(id="1", name="answer", arguments={"content": "42", "citations": []})
+        bus.publish(RunStarted())
+        bus.publish(
+            ToolCallStarted(id="1", name="answer", arguments={"content": "42", "citations": []})
+        )
+        bus.publish(ToolCallFinished(id="1", tool_call=tool_call, result="42", is_error=False))
+        bus.publish(RunFinished())
+
+        await pilot.pause(0.2)
+
+        answer_panes = app.query(AnswerPane)
+        tool_panes = app.query(ToolCallPane)
+        assert len(answer_panes) == 1
+        assert "42" in answer_panes.first().render().plain
+        assert len(tool_panes) == 0
+
+
+async def test_failed_answer_call_still_renders_as_tool_call_pane() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        tool_call = ToolCall(id="1", name="answer", arguments={})
+        bus.publish(RunStarted())
+        bus.publish(ToolCallStarted(id="1", name="answer", arguments={}))
+        bus.publish(
+            ToolCallFinished(
+                id="1", tool_call=tool_call, result="unknown citation(s)", is_error=True
+            )
+        )
+        bus.publish(RunFinished())
+
+        await pilot.pause(0.2)
+
+        answer_panes = app.query(AnswerPane)
+        tool_panes = app.query(ToolCallPane)
+        assert len(answer_panes) == 0
+        assert len(tool_panes) == 1
+        assert tool_panes.first().is_error is True
 
 
 async def test_thinking_then_text_produces_one_pane_each() -> None:
@@ -180,7 +228,7 @@ async def test_app_handles_multiple_panes_and_error() -> None:
         bus.publish(AssistantTextDelta(id="0", text="thinking"))
         bus.publish(AssistantTextFinished(id="0"))
         tool_call = ToolCall(id="1", name="search", arguments={})
-        bus.publish(ToolCallStarted(id="1", name="search"))
+        bus.publish(ToolCallStarted(id="1", name="search", arguments={}))
         bus.publish(ToolCallFinished(id="1", tool_call=tool_call, result="oops", is_error=True))
         bus.publish(ErrorOccurred(message="something broke"))
         bus.publish(RunFinished(error="something broke"))

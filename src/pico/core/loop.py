@@ -24,7 +24,6 @@ from pico.core.events import (
     RunCancelled,
     RunFinished,
     RunStarted,
-    ToolCallArgumentsDelta,
     ToolCallFinished,
     ToolCallStarted,
 )
@@ -156,10 +155,8 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
                     runner.bus.publish(AssistantTextStarted(id=text_id))
                 text += chunk
                 runner.bus.publish(AssistantTextDelta(id=text_id, text=chunk))
-            case ToolCallDelta(id=call_id, arguments_delta=arguments_delta):
-                runner.bus.publish(
-                    ToolCallArgumentsDelta(id=call_id, arguments_delta=arguments_delta)
-                )
+            case ToolCallDelta():
+                pass
             case ToolCallReady(tool_call=tool_call):
                 tool_calls.append(tool_call)
             case GenerationComplete():
@@ -211,7 +208,7 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
     runner.pending_tool_calls = []
     outcome: StepOutcome = "continue"
     for call in tool_calls:
-        runner.bus.publish(ToolCallStarted(id=call.id, name=call.name))
+        runner.bus.publish(ToolCallStarted(id=call.id, name=call.name, arguments=call.arguments))
         if call.name == "answer":
             try:
                 answer = Answer.from_arguments(call.arguments)

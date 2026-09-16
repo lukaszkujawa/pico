@@ -1,3 +1,6 @@
+import json
+from collections.abc import Mapping
+
 from textual.message import Message
 
 from pico.core.events import (
@@ -12,7 +15,6 @@ from pico.core.events import (
     RunCancelled,
     RunFinished,
     RunStarted,
-    ToolCallArgumentsDelta,
     ToolCallFinished,
     ToolCallStarted,
 )
@@ -71,16 +73,10 @@ class ThinkingPaneClose(Message):
 
 
 class ToolCallPaneCreate(Message):
-    def __init__(self, pane_id: str, name: str) -> None:
+    def __init__(self, pane_id: str, name: str, arguments: str) -> None:
         self.pane_id = pane_id
         self.name = name
-        super().__init__()
-
-
-class ToolCallPaneDelta(Message):
-    def __init__(self, pane_id: str, text: str) -> None:
-        self.pane_id = pane_id
-        self.text = text
+        self.arguments = arguments
         super().__init__()
 
 
@@ -89,6 +85,13 @@ class ToolCallPaneClose(Message):
         self.pane_id = pane_id
         self.result = result
         self.is_error = is_error
+        super().__init__()
+
+
+class AnswerPaneCreate(Message):
+    def __init__(self, pane_id: str, content: str) -> None:
+        self.pane_id = pane_id
+        self.content = content
         super().__init__()
 
 
@@ -115,11 +118,15 @@ TuiMessage = (
     | ThinkingPaneDelta
     | ThinkingPaneClose
     | ToolCallPaneCreate
-    | ToolCallPaneDelta
     | ToolCallPaneClose
+    | AnswerPaneCreate
     | ErrorMessage
     | UserInputSubmitted
 )
+
+
+def format_arguments(arguments: Mapping[str, object]) -> str:
+    return json.dumps(arguments, separators=(", ", ": "))
 
 
 def translate(event: BusEvent) -> TuiMessage | None:
@@ -142,10 +149,14 @@ def translate(event: BusEvent) -> TuiMessage | None:
             return ThinkingPaneDelta(pane_id=pane_id, text=text)
         case AssistantThinkingFinished(id=pane_id):
             return ThinkingPaneClose(pane_id=pane_id)
-        case ToolCallStarted(id=pane_id, name=name):
-            return ToolCallPaneCreate(pane_id=pane_id, name=name)
-        case ToolCallArgumentsDelta(id=pane_id, arguments_delta=arguments_delta):
-            return ToolCallPaneDelta(pane_id=pane_id, text=arguments_delta)
+        case ToolCallStarted(id=pane_id, name=name, arguments=arguments):
+            return ToolCallPaneCreate(
+                pane_id=pane_id, name=name, arguments=format_arguments(arguments)
+            )
+        case ToolCallFinished(id=pane_id, tool_call=tool_call, result=result, is_error=False) if (
+            tool_call.name == "answer"
+        ):
+            return AnswerPaneCreate(pane_id=pane_id, content=result)
         case ToolCallFinished(id=pane_id, result=result, is_error=is_error):
             return ToolCallPaneClose(pane_id=pane_id, result=result, is_error=is_error)
         case ErrorOccurred(message=message):
