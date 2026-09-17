@@ -12,6 +12,7 @@ class Stuckness:
     tool_failure_streak: int
     nudge: str | None
     stuck: bool
+    reason: str | None = None
 
 
 def _trailing_tool_calls(session: Session) -> list[ToolCallRecorded]:
@@ -67,11 +68,16 @@ def assess(session: Session) -> Stuckness:
             "— reconsider your approach instead of retrying the same way"
         )
 
-    stuck = repeated >= STUCK_THRESHOLD or failures >= STUCK_THRESHOLD
+    reason: str | None = None
+    if repeated >= STUCK_THRESHOLD:
+        reason = f"repeated the same action {repeated} times"
+    elif failures >= STUCK_THRESHOLD:
+        reason = f"{failures} tool calls failed in a row"
 
     return Stuckness(
         repeated_action_streak=repeated,
         tool_failure_streak=failures,
         nudge=nudge,
-        stuck=stuck,
+        stuck=reason is not None,
+        reason=reason,
     )

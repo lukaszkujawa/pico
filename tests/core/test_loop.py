@@ -24,6 +24,7 @@ from pico.core.events import (
     AssistantThinkingFinished,
     AssistantThinkingStarted,
     BudgetExceeded,
+    BusEvent,
     ErrorOccurred,
     GenerationCompleted,
     RunCancelled,
@@ -38,6 +39,7 @@ from pico.core.ledger import facts
 from pico.core.loop import (
     DEFAULT_CHARS_PER_TOKEN,
     DEFAULT_LOOP_CONFIG,
+    MAX_ACTIONLESS_GENERATIONS,
     MAX_CHARS_PER_TOKEN,
     MAX_DELEGATE_STEPS,
     MAX_INVALID_ACTION_ATTEMPTS,
@@ -1284,7 +1286,8 @@ def test_repeating_delegate_is_stopped_by_stuckness() -> None:
     assert len(child_calls) == STUCK_THRESHOLD
     parent = next(event for event in session.events() if isinstance(event, ToolCallRecorded))
     assert parent.is_error is True
-    assert "did not answer" in parent.result
+    assert "delegate failed" in parent.result
+    assert "stuck" in parent.result
 
 
 def test_delegate_child_session_is_distinct_from_parent() -> None:
@@ -1707,6 +1710,12 @@ def test_plan_message_tracks_completion_and_appears_exactly_once() -> None:
                 ),
                 GenerationComplete(finish_reason="tool_calls"),
             ],
+            [
+                ToolCallReady(
+                    tool_call=ToolCall(id="3", name="complete_step", arguments={"index": 1})
+                ),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
             [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
         ]
     )
@@ -1739,7 +1748,7 @@ def test_plan_message_is_never_persisted_to_the_session() -> None:
                 ),
                 GenerationComplete(finish_reason="tool_calls"),
             ],
-            [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
+            _answer_turn(),
         ]
     )
 
@@ -1762,7 +1771,7 @@ def test_stream_step_sends_briefing_and_window_not_the_full_transcript() -> None
     for index in range(RECENT_UNITS + 4):
         session.append(UserMessageRecorded(content=f"step {index}"))
         session.append(AssistantMessageRecorded(content=f"done {index}", thinking=""))
-    client = ScriptedClient([[TextDelta(text="ok"), GenerationComplete(finish_reason="stop")]])
+    client = ScriptedClient([_answer_turn()])
     transcript = session.messages()
 
     LoopRunner(client, _echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
@@ -1822,6 +1831,17 @@ def _stop_turn() -> list[StreamEvent]:
     return [TextDelta(text="hello"), GenerationComplete(finish_reason="stop")]
 
 
+def _answer_turn(content: str = "done") -> list[StreamEvent]:
+    return [
+        ToolCallReady(
+            tool_call=ToolCall(
+                id="a1", name="answer", arguments={"content": content, "citations": []}
+            )
+        ),
+        GenerationComplete(finish_reason="tool_calls"),
+    ]
+
+
 def test_overhead_reflects_the_registered_tool_specs() -> None:
     session = _session()
     session.append(UserMessageRecorded(content="hi"))
@@ -1845,7 +1865,7 @@ def test_overhead_grows_when_a_plan_message_is_present() -> None:
     plan_session = _session("s2")
     plan_session.append(UserMessageRecorded(content="hi"))
     plan_session.append(PlanSet(steps=("one", "two")))
-    plan_client = RecordingClient([_stop_turn()])
+    plan_client = RecordingClient([_answer_turn()])
     LoopRunner(
         plan_client, _echo_registry(), Bus(), plan_session, 128_000, DEFAULT_LOOP_CONFIG
     ).execute()
@@ -2545,3 +2565,136 @@ def test_invalid_action_streak_resets_on_a_valid_call() -> None:
     recorded = [event for event in session.events() if isinstance(event, ToolCallRecorded)]
     assert len(recorded) == 2 * (MAX_INVALID_ACTION_ATTEMPTS - 1) + 1
     assert runner.invalid_action_attempts == MAX_INVALID_ACTION_ATTEMPTS - 1
+
+
+def _drain_until_run_finished(subscriber: Iterator[BusEvent]) -> list[BusEvent]:
+    events: list[BusEvent] = []
+    for event in subscriber:
+        events.append(event)
+        if isinstance(event, RunFinished):
+            return events
+    return events
+
+
+def _set_plan_turn(steps: list[str]) -> list[StreamEvent]:
+    return [
+        ToolCallReady(tool_call=ToolCall(id="p1", name="set_plan", arguments={"steps": steps})),
+        GenerationComplete(finish_reason="tool_calls"),
+    ]
+
+
+def _text_turn(text: str) -> list[StreamEvent]:
+    return [TextDelta(text=text), GenerationComplete(finish_reason="stop")]
+
+
+def test_narration_without_a_plan_still_ends_the_run() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    client = ScriptedClient([_text_turn("just chatting")])
+
+    runner = LoopRunner(client, _echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    assert runner.error is None
+    assert len(client.seen_messages) == 1
+
+
+def test_narration_with_unfinished_plan_is_nudged_and_run_continues() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    registry = ToolRegistry()
+    register_actions(registry, session)
+    client = ScriptedClient(
+        [
+            _set_plan_turn(["review the code"]),
+            _text_turn("now let me look at the next file"),
+            _answer_turn("all reviewed"),
+        ]
+    )
+
+    runner = LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    assert runner.final_answer == "all reviewed"
+    assert runner.error is None
+    nudge = client.seen_messages[2][-1]
+    assert nudge.role is Role.USER
+    assert "took no action" in nudge.content
+
+
+def test_repeated_narration_with_unfinished_plan_stops_the_run_with_an_error() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    registry = ToolRegistry()
+    register_actions(registry, session)
+    turns = [
+        _set_plan_turn(["review the code"]),
+        *[_text_turn(f"musing {i}") for i in range(MAX_ACTIONLESS_GENERATIONS)],
+    ]
+    client = ScriptedClient(turns)
+
+    runner = LoopRunner(client, registry, bus, session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    assert runner.final_answer is None
+    assert runner.error is not None
+    assert "without a tool call" in runner.error
+    assert _drain_until_run_finished(subscriber)[-1] == RunFinished(error=runner.error)
+
+
+def test_stuck_run_carries_its_reason_on_run_finished() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    turns: list[list[StreamEvent]] = [
+        [
+            ToolCallReady(tool_call=ToolCall(id=str(i), name="echo", arguments={"text": "same"})),
+            GenerationComplete(finish_reason="tool_calls"),
+        ]
+        for i in range(STUCK_THRESHOLD)
+    ]
+    runner = LoopRunner(
+        ScriptedClient(turns), _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG
+    )
+    runner.execute()
+
+    assert runner.error is not None
+    assert "stuck" in runner.error
+    events = _drain_until_run_finished(subscriber)
+    assert ErrorOccurred(message=runner.error) in events
+    assert events[-1] == RunFinished(error=runner.error)
+
+
+def test_delegate_at_max_depth_reports_it_is_unavailable() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    client = ScriptedClient(
+        [
+            [
+                ToolCallReady(
+                    tool_call=ToolCall(id="1", name="delegate", arguments={"question": "q"})
+                ),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            _text_turn("done"),
+        ]
+    )
+
+    runner = LoopRunner(
+        client,
+        _echo_registry(),
+        Bus(),
+        session,
+        128_000,
+        DEFAULT_LOOP_CONFIG,
+        depth=MAX_DELEGATE_DEPTH,
+    )
+    runner.execute()
+
+    recorded = next(event for event in session.events() if isinstance(event, ToolCallRecorded))
+    assert recorded.is_error is True
+    assert "not available at this depth" in recorded.result
+    assert runner.invalid_action_attempts == 1

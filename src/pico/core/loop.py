@@ -42,8 +42,8 @@ from pico.core.events import (
     ToolCallResultDelta,
     ToolCallStarted,
 )
-from pico.core.ledger import facts
-from pico.core.stuckness import STUCK_THRESHOLD, assess
+from pico.core.ledger import facts, plan
+from pico.core.stuckness import assess
 from pico.core.tools import ToolRegistry
 from pico.llm.client import LLMClient
 from pico.llm.types import (
@@ -70,6 +70,12 @@ Step = Callable[["LoopRunner"], StepOutcome]
 
 MAX_INVALID_ACTION_ATTEMPTS = 5
 MAX_DELEGATE_STEPS = 10
+MAX_ACTIONLESS_GENERATIONS = 3
+
+NO_ACTION_NUDGE = (
+    "you wrote text but took no action, and your plan has unfinished steps "
+    "— call a tool to continue, or finish with answer"
+)
 DEFAULT_CHARS_PER_TOKEN = 4.0
 MIN_CHARS_PER_TOKEN = 2.0
 MAX_CHARS_PER_TOKEN = 6.0
@@ -111,11 +117,16 @@ class LoopRunner:
         self.chars_per_token = DEFAULT_CHARS_PER_TOKEN
         self.final_answer: str | None = None
         self.invalid_action_attempts = 0
+        self.actionless_generations = 0
         self.iterations = 0
         self._id_source = id_source if id_source is not None else itertools.count()
 
     def new_id(self) -> str:
         return str(next(self._id_source))
+
+    def fail(self, message: str) -> None:
+        self.error = message
+        self.bus.publish(ErrorOccurred(message=message))
 
     def execute(self) -> None:
         self.bus.publish(RunStarted())
@@ -129,11 +140,8 @@ class LoopRunner:
                 if outcome == "done":
                     break
         except Exception as error:
-            self.error = str(error)
-            self.bus.publish(ErrorOccurred(message=str(error)))
-            self.bus.publish(RunFinished(error=str(error)))
-            return
-        self.bus.publish(RunFinished())
+            self.fail(str(error))
+        self.bus.publish(RunFinished(error=self.error))
 
     def _run_iteration(self) -> StepOutcome:
         for step in self.config.steps:
@@ -148,14 +156,10 @@ class LoopRunner:
 def stuckness_step(runner: LoopRunner) -> StepOutcome:
     result = assess(runner.session)
     if result.stuck:
-        reason = (
-            f"repeated the same action {result.repeated_action_streak} times"
-            if result.repeated_action_streak >= STUCK_THRESHOLD
-            else f"{result.tool_failure_streak} tool calls failed in a row"
-        )
-        runner.bus.publish(ErrorOccurred(message=f"run stopped as stuck: {reason}"))
+        runner.fail(f"run stopped as stuck: {result.reason}")
         return "done"
-    runner.pending_nudge = result.nudge
+    if result.nudge is not None:
+        runner.pending_nudge = result.nudge
     return "continue"
 
 
@@ -193,6 +197,7 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
         if runner.pending_nudge is None
         else [Message(role=Role.USER, content=runner.pending_nudge)]
     )
+    runner.pending_nudge = None
     overhead_text = specs_text(specs) + "".join(
         message_text(message) for message in [*preamble, *postamble]
     )
@@ -256,13 +261,27 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
         runner.session.append(AssistantMessageRecorded(content=text, thinking=thinking))
 
     if not tool_calls:
-        return "done"
+        current = plan(runner.session)
+        if current is None or all(step.done for step in current.steps):
+            return "done"
+        runner.actionless_generations += 1
+        if runner.actionless_generations >= MAX_ACTIONLESS_GENERATIONS:
+            runner.fail(
+                f"run stopped: {MAX_ACTIONLESS_GENERATIONS} generations without a tool call "
+                "while the plan has unfinished steps"
+            )
+            return "done"
+        runner.pending_nudge = NO_ACTION_NUDGE
+        return "continue"
 
+    runner.actionless_generations = 0
     runner.pending_tool_calls = tool_calls
     return "continue"
 
 
 def _run_delegate(runner: LoopRunner, delegate: Delegate) -> tuple[str, bool]:
+    if runner.depth >= MAX_DELEGATE_DEPTH:
+        raise InvalidActionError("delegate is not available at this depth")
     child_session = runner.session.child(f"delegate/{runner.session.next_seq()}")
     prompt = "" if delegate.shape is None else delegate.shape.prompt()
     child_session.append(UserMessageRecorded(content=delegate.question + prompt))
@@ -395,7 +414,7 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
                     reason=output,
                     verify=None,
                 )
-        elif call.name == "delegate" and runner.depth < MAX_DELEGATE_DEPTH:
+        elif call.name == "delegate":
             try:
                 delegate = Delegate.from_arguments(call.arguments)
                 output, is_error = _run_delegate(runner, delegate)
@@ -454,11 +473,8 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
         if invalid:
             runner.invalid_action_attempts += 1
             if runner.invalid_action_attempts >= MAX_INVALID_ACTION_ATTEMPTS:
-                runner.bus.publish(
-                    ErrorOccurred(
-                        message=f"run stopped: {runner.invalid_action_attempts} "
-                        "invalid actions in a row"
-                    )
+                runner.fail(
+                    f"run stopped: {runner.invalid_action_attempts} invalid actions in a row"
                 )
                 outcome = "done"
         else:
