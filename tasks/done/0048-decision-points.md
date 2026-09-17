@@ -13,7 +13,7 @@ This milestone adds decision points: at deterministic pressure moments the runti
 * **`set_plan` leads with the benefit.** The description opens with why to plan — break a task too big for one context into steps, each run with a fresh context — before the mechanics of hand-off, so planning reads as gaining leverage, not losing control.
 * **The wind-down nudge defers to the demand.** When a decision point is active it owns the nudge slot; the plain wind-down wording applies only to nodes with a plan already in motion.
 
-## [ ] T001 Pressure signals demand a decision
+## [X] T001 Pressure signals demand a decision
 
 ### Description
 
@@ -27,7 +27,7 @@ Detect the two pressure signals per node — transcript past `RECENT_UNITS` unit
 * The demand names both options and requires a stated reason.
 * `make check` passes.
 
-## [ ] T002 Crossroads generation
+## [X] T002 Crossroads generation
 
 ### Description
 
@@ -41,7 +41,7 @@ If `DECISION_GRACE` generations pass after a demand with no plan set and no acce
 * The last-words path (budget, stuck, twice-failed step) behaves exactly as before.
 * `make check` passes.
 
-## [ ] T003 No silent endings
+## [X] T003 No silent endings
 
 ### Description
 

@@ -155,6 +155,12 @@ def _pinned_positions(messages: list[Message]) -> list[int]:
     return sorted({users[0], users[-1]}) if users else []
 
 
+def transcript_units(messages: list[Message]) -> int:
+    pinned = set(_pinned_positions(messages))
+    body = [message for position, message in enumerate(messages) if position not in pinned]
+    return len(_unit_starts(body))
+
+
 def recency_window(
     messages: list[Message], budget: int, chars_per_token: float = 4.0
 ) -> list[Message]:

@@ -14,6 +14,7 @@ from pico.config import Config, ConfigError
 from pico.core.bus import Bus
 from pico.core.context import SYSTEM_PROMPT
 from pico.core.events import RunCancelled, RunFinished, RunStarted
+from pico.llm.errors import LLMError
 from pico.llm.types import GenerationComplete, Message, Role, StreamEvent, TextDelta, ToolSpec
 from pico.session import (
     AssistantMessageRecorded,
@@ -105,8 +106,13 @@ class RecordingClient:
     def __init__(self) -> None:
         self.seen_messages: list[list[Message]] = []
         self.seen_tools: list[list[ToolSpec]] = []
+        self.spoken = False
 
     def stream(self, messages: list[Message], tools: list[ToolSpec]) -> Iterator[StreamEvent]:
+        if self.spoken:
+            self.spoken = False
+            raise LLMError("connection lost")
+        self.spoken = True
         self.seen_messages.append(list(messages))
         self.seen_tools.append(list(tools))
         yield TextDelta(text="hi")

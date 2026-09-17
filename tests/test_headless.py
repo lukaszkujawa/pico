@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 
+from pico.core.loop import UNVERIFIED_PREFIX
 from pico.core.stuckness import STUCK_THRESHOLD
 from pico.headless import TurnResult, run_turn
 from pico.llm.errors import LLMError
@@ -74,15 +75,15 @@ def test_turn_ending_in_answer_returns_it_with_counts() -> None:
     assert result.duration_seconds >= 0
 
 
-def test_plain_text_turn_without_answer_yields_no_answer() -> None:
-    client = ScriptedClient([[TextDelta(text="thinking out loud")]])
+def test_turn_that_only_narrates_yields_its_last_narration_marked_unverified() -> None:
+    client = ScriptedClient([[TextDelta(text=f"thinking {index}")] for index in range(12)])
 
     result = run_turn(client, _session(), 128_000, "do it")
 
     assert result == TurnResult(
-        answer=None,
-        iterations=1,
-        tool_calls=0,
+        answer=f"{UNVERIFIED_PREFIX}\n\nthinking 5",
+        iterations=7,
+        tool_calls=1,
         prompt_tokens=0,
         completion_tokens=0,
         duration_seconds=result.duration_seconds,

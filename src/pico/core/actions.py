@@ -343,6 +343,8 @@ _TOOL_SPECS = {
     "set_plan": ToolSpec(
         name="set_plan",
         description=(
+            "Break work too big for one context into steps, each run with a fresh context — "
+            "so the whole task gets more thinking than your own context could hold. "
             "Replace the current plan with an ordered checklist of steps. "
             "The runtime then runs each unfinished step for you: a fresh agent executes it "
             "and its answer settles the step, so you see results rather than doing the work. "

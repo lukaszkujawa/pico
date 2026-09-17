@@ -17,12 +17,14 @@ from pico.core.actions import (
 )
 from pico.core.bus import Bus
 from pico.core.context import (
+    RECENT_UNITS,
     SYSTEM_PROMPT,
     compile_context,
     estimate_tokens,
     message_text,
     message_tokens,
     prompt_budget,
+    transcript_units,
 )
 from pico.core.errors import ToolError, UnknownToolError
 from pico.core.events import (
@@ -80,6 +82,8 @@ MAX_RUN_STEPS = 100
 MAX_STEP_ATTEMPTS = 2
 BUDGET_WIND_DOWN_FRACTION = 0.8
 MAX_ACTIONLESS_GENERATIONS = 3
+DECISION_GRACE = 3
+MAX_CROSSROADS = 2
 
 LAST_WORDS_NUDGE = (
     "this run is ending now — {cause}. this is your final generation and answer is the "
@@ -89,6 +93,20 @@ LAST_WORDS_NUDGE = (
 NO_ACTION_NUDGE = (
     "you wrote text but took no action, and your plan has unfinished steps "
     "— call a tool to continue, or finish with answer"
+)
+DECISION_NUDGE = (
+    "decision required — {cause}. either set_plan to hand the remaining work to fresh "
+    "agents, or finish with answer. say which one and why, then do it."
+)
+CONTEXT_PRESSURE_CAUSE = (
+    f"your context has passed {RECENT_UNITS} exchanges, so the earliest ones are now "
+    "falling out of it"
+)
+NARRATION_CAUSE = "you wrote text but took no action, and you have no plan running"
+CROSSROADS_ACTIONS = ("set_plan", "answer", "note")
+UNVERIFIED_PREFIX = (
+    "[unverified — the run ended without a final answer; this is its last narration, "
+    "with no citations and no verification]"
 )
 DEFAULT_CHARS_PER_TOKEN = 4.0
 MIN_CHARS_PER_TOKEN = 2.0
@@ -135,6 +153,11 @@ class LoopRunner:
         self.step_attempts: dict[tuple[tuple[str, ...], int], int] = {}
         self.dying_of: str | None = None
         self.last_words: bool = False
+        self.demanded: set[str] = set()
+        self.demanded_at: int | None = None
+        self.crossroads = False
+        self.crossroads_generations = 0
+        self.last_narration: str | None = None
         self.iterations = 0
         self._id_source = id_source if id_source is not None else itertools.count()
 
@@ -187,18 +210,86 @@ def stuckness_step(runner: LoopRunner) -> StepOutcome:
     return "continue"
 
 
-def budget_step(runner: LoopRunner) -> StepOutcome:
+def _winding_down(runner: LoopRunner) -> bool:
     max_steps = runner.config.max_steps
     if max_steps is None or runner.depth > 0 or runner.dying_of is not None:
+        return False
+    return runner.iterations >= int(max_steps * BUDGET_WIND_DOWN_FRACTION)
+
+
+def budget_step(runner: LoopRunner) -> StepOutcome:
+    if not _winding_down(runner):
         return "continue"
-    remaining = max_steps - runner.iterations
-    if runner.iterations >= int(max_steps * BUDGET_WIND_DOWN_FRACTION):
-        runner.pending_nudge = (
-            f"the generation budget is nearly spent — {remaining} generations remain. "
-            "stop exploring, complete or prune the plan, and finish with answer using "
-            "the facts you have gathered"
-        )
+    assert runner.config.max_steps is not None
+    remaining = runner.config.max_steps - runner.iterations
+    runner.pending_nudge = (
+        f"the generation budget is nearly spent — {remaining} generations remain. "
+        "stop exploring, complete or prune the plan, and finish with answer using "
+        "the facts you have gathered"
+    )
     return "continue"
+
+
+def _undecided(runner: LoopRunner) -> bool:
+    if runner.dying_of is not None or runner.final_answer is not None:
+        return False
+    current = plan(runner.session)
+    return current is None or all(step.done for step in current.steps)
+
+
+def _pressure(runner: LoopRunner) -> tuple[str, str] | None:
+    if transcript_units(runner.session.messages()) > RECENT_UNITS:
+        return "context", CONTEXT_PRESSURE_CAUSE
+    if _winding_down(runner):
+        assert runner.config.max_steps is not None
+        remaining = runner.config.max_steps - runner.iterations
+        return "budget", f"only {remaining} generations remain of your budget"
+    return None
+
+
+def decision_step(runner: LoopRunner) -> StepOutcome:
+    if runner.crossroads:
+        runner.crossroads = False
+        runner.crossroads_generations += 1
+    if not _undecided(runner):
+        runner.demanded.clear()
+        runner.demanded_at = None
+        runner.crossroads_generations = 0
+        return "continue"
+    if runner.crossroads_generations >= MAX_CROSSROADS:
+        return _degraded_ending(runner)
+    if runner.demanded_at is not None:
+        ignored_for = runner.iterations - runner.demanded_at
+        runner.crossroads = runner.crossroads_generations > 0 or ignored_for > DECISION_GRACE
+        return "continue"
+    signal = _pressure(runner)
+    if signal is not None:
+        _demand(runner, *signal)
+    return "continue"
+
+
+def _demand(runner: LoopRunner, name: str, cause: str) -> None:
+    if name in runner.demanded:
+        return
+    runner.demanded.add(name)
+    runner.demanded_at = runner.iterations
+    runner.pending_nudge = DECISION_NUDGE.format(cause=cause)
+
+
+def _degraded_ending(runner: LoopRunner) -> StepOutcome:
+    narration = runner.last_narration
+    if narration is None:
+        runner.dying_of = (
+            f"{MAX_CROSSROADS} decision points passed with neither a plan nor an answer"
+        )
+        return "continue"
+    runner.final_answer = f"{UNVERIFIED_PREFIX}\n\n{narration}"
+    runner.bus.publish(
+        AnswerSettled(
+            id=runner.new_id(), content=runner.final_answer, accepted=True, reason=None, verify=None
+        )
+    )
+    return "done"
 
 
 def specs_text(specs: list[ToolSpec]) -> str:
@@ -209,6 +300,28 @@ def specs_text(specs: list[ToolSpec]) -> str:
         ],
         sort_keys=True,
     )
+
+
+@dataclass(frozen=True)
+class Restriction:
+    allowed: tuple[str, ...]
+    nudge: str
+
+
+def _restriction(runner: LoopRunner) -> Restriction | None:
+    runner.last_words = runner.dying_of is not None
+    if runner.dying_of is not None:
+        return Restriction(
+            allowed=("answer",), nudge=LAST_WORDS_NUDGE.format(cause=runner.dying_of)
+        )
+    if runner.crossroads:
+        signal = _pressure(runner)
+        cause = CONTEXT_PRESSURE_CAUSE if signal is None else signal[1]
+        return Restriction(
+            allowed=CROSSROADS_ACTIONS,
+            nudge=runner.pending_nudge or DECISION_NUDGE.format(cause=cause),
+        )
+    return None
 
 
 def _reconcile(runner: LoopRunner, sent_chars: int, prompt_tokens: int) -> None:
@@ -225,13 +338,12 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
     cancelled = False
     runner.tool_call_pane_ids = {}
 
-    dying_of = runner.dying_of
-    runner.last_words = dying_of is not None
-    if dying_of is None:
+    restriction = _restriction(runner)
+    if restriction is None:
         specs = vocabulary(runner.tools, runner.depth)
     else:
-        specs = [RUNNER_ACTIONS["answer"].spec]
-        runner.pending_nudge = LAST_WORDS_NUDGE.format(cause=dying_of)
+        specs = restricted_vocabulary(runner.tools, restriction.allowed)
+        runner.pending_nudge = restriction.nudge
     preamble = [Message(role=Role.SYSTEM, content=SYSTEM_PROMPT)]
     postamble = (
         []
@@ -308,12 +420,16 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
     if text or thinking:
         runner.session.append(AssistantMessageRecorded(content=text, thinking=thinking))
 
+    if text.strip():
+        runner.last_narration = text
+
     if not tool_calls:
         if runner.last_words:
             return "done"
-        current = plan(runner.session)
-        if current is None or all(step.done for step in current.steps):
-            return "done"
+        if _undecided(runner):
+            runner.actionless_generations = 0
+            _demand(runner, "narration", NARRATION_CAUSE)
+            return "continue"
         runner.actionless_generations += 1
         if runner.actionless_generations >= MAX_ACTIONLESS_GENERATIONS:
             runner.fail(
@@ -678,9 +794,19 @@ def vocabulary(tools: ToolRegistry, depth: int) -> list[ToolSpec]:
     return specs
 
 
+def restricted_vocabulary(tools: ToolRegistry, allowed: tuple[str, ...]) -> list[ToolSpec]:
+    specs = {spec.name: spec for spec in vocabulary(tools, 0)}
+    return [specs[name] for name in allowed if name in specs]
+
+
 def _dispatch(runner: LoopRunner, pane_id: str, call: ToolCall) -> ActionResult:
     if runner.last_words and call.name != "answer":
         raise InvalidActionError(f"{call.name} is not available — answer is the only tool left")
+    if runner.crossroads and call.name not in CROSSROADS_ACTIONS:
+        raise InvalidActionError(
+            f"{call.name} is not available — a decision is required first; "
+            f"the tools you have are {', '.join(CROSSROADS_ACTIONS)}"
+        )
     action = RUNNER_ACTIONS.get(call.name)
     if action is not None:
         return action.execute(runner, pane_id, call.arguments)
@@ -766,6 +892,7 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
 DEFAULT_LOOP_STEPS: tuple[Step, ...] = (
     stuckness_step,
     budget_step,
+    decision_step,
     step_orchestration_step,
     stream_step,
     tool_call_step,
