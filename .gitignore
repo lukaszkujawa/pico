@@ -10,6 +10,8 @@ wheels/
 .venv
 venv/
 
+benchmark/
+
 # Tooling caches / output
 .ruff_cache/
 .pytest_cache/

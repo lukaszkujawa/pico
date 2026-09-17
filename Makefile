@@ -34,6 +34,8 @@ code_attach:
 run:
 	uv run python -m pico
 
+# Example
+# make run_in_docker ARGS="--debug --ctx 16000 --prompt 'Fetch code from https://github.com/lukaszkujawa/pico and review it. Install tools if you need any, you are root.'"
 run_in_docker:
 	bin/run_in_docker.sh $(ARGS)
 
