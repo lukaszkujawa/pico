@@ -43,7 +43,7 @@ from pico.core.events import (
     ToolCallResultDelta,
     ToolCallStarted,
 )
-from pico.core.ledger import facts, plan
+from pico.core.ledger import BOOKKEEPING_TOOLS, facts, plan
 from pico.core.search import SearchCancelled, search
 from pico.core.stuckness import assess
 from pico.core.tools import ToolRegistry
@@ -478,7 +478,7 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
             )
         )
         fact_id = None
-        if not is_error and call.name not in ("answer", "delegate"):
+        if not is_error and call.name not in ("answer", "delegate", *BOOKKEEPING_TOOLS):
             fact_id = facts(runner.session)[-1].id
         if answer_outcome is not None:
             runner.bus.publish(

@@ -1,7 +1,7 @@
 import json
 from typing import Literal
 
-from pico.core.ledger import Fact, facts, plan, render_plan
+from pico.core.ledger import BOOKKEEPING_TOOLS, Fact, facts, plan, render_plan
 from pico.llm.types import Message, Role, ToolCall, ToolResult
 from pico.session import Session
 
@@ -44,14 +44,17 @@ def estimate_tokens(text: str, chars_per_token: float = 4.0) -> int:
     return max(1, int(len(text) / chars_per_token))
 
 
-def render_tool_result(content: str, fact_id: int, level: RenderLevel) -> str:
+def render_tool_result(content: str, fact_id: int | None, level: RenderLevel) -> str:
     if level == "full":
         return content
     tokens = estimate_tokens(content)
-    summary = (
-        f"[fact {fact_id} truncated — {len(content)} chars, {tokens} tokens "
-        f"— call read_fact({fact_id}) for the full content]"
-    )
+    if fact_id is None:
+        summary = f"[result truncated — {len(content)} chars, {tokens} tokens]"
+    else:
+        summary = (
+            f"[fact {fact_id} truncated — {len(content)} chars, {tokens} tokens "
+            f"— call read_fact({fact_id}) for the full content]"
+        )
     preview = content[:_HANDLE_PREVIEW_CHARS]
     return f"{summary} {preview}"
 
@@ -110,13 +113,15 @@ def _unit_starts(messages: list[Message]) -> list[int]:
 
 def _demote_to_handle(message: Message) -> Message:
     assert message.tool_result is not None
-    fact_id = int(message.tool_result.tool_call_id)
+    result = message.tool_result
+    fact_id = None if result.name in BOOKKEEPING_TOOLS else int(result.tool_call_id)
     return Message(
         role=Role.TOOL,
         tool_result=ToolResult(
-            tool_call_id=message.tool_result.tool_call_id,
-            content=render_tool_result(message.tool_result.content, fact_id, "handle"),
+            tool_call_id=result.tool_call_id,
+            content=render_tool_result(result.content, fact_id, "handle"),
             is_error=False,
+            name=result.name,
         ),
     )
 

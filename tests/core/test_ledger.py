@@ -59,6 +59,40 @@ def test_facts_ids_are_unchanged_by_interleaved_error_calls() -> None:
     assert [fact.id for fact in facts(session)] == [1, 3]
 
 
+def test_facts_excludes_bookkeeping_tool_calls() -> None:
+    session = _session()
+    session.append(ToolCallRecorded(name="note", arguments={}, result="finding", is_error=False))
+    session.append(
+        ToolCallRecorded(name="read_fact", arguments={"id": 1}, result="finding", is_error=False)
+    )
+    session.append(
+        ToolCallRecorded(name="search_facts", arguments={}, result="[1] note", is_error=False)
+    )
+    session.append(
+        ToolCallRecorded(name="set_plan", arguments={}, result="[ ] 0. go", is_error=False)
+    )
+    session.append(
+        ToolCallRecorded(name="complete_step", arguments={}, result="[x] 0. go", is_error=False)
+    )
+    session.append(ToolCallRecorded(name="shell", arguments={}, result="ok", is_error=False))
+
+    assert facts(session) == [
+        Fact(id=1, content="finding", source="note"),
+        Fact(id=6, content="ok", source="shell"),
+    ]
+
+
+def test_recovering_a_fact_does_not_mint_a_new_fact() -> None:
+    session = _session()
+    session.append(ToolCallRecorded(name="note", arguments={}, result="finding", is_error=False))
+    before = facts(session)
+    session.append(
+        ToolCallRecorded(name="read_fact", arguments={"id": 1}, result="finding", is_error=False)
+    )
+
+    assert facts(session) == before
+
+
 def test_plan_returns_none_without_plan_events() -> None:
     session = _session()
     session.append(UserMessageRecorded(content="do it"))

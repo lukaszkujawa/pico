@@ -7,6 +7,8 @@ from pico.session import (
     ToolCallRecorded,
 )
 
+BOOKKEEPING_TOOLS = frozenset({"read_fact", "search_facts", "set_plan", "complete_step"})
+
 
 @dataclass(frozen=True)
 class Fact:
@@ -19,7 +21,9 @@ def facts(session: Session) -> list[Fact]:
     return [
         Fact(id=seq, content=event.result, source=event.name)
         for seq, event in session.records()
-        if isinstance(event, ToolCallRecorded) and not event.is_error
+        if isinstance(event, ToolCallRecorded)
+        and not event.is_error
+        and event.name not in BOOKKEEPING_TOOLS
     ]
 
 

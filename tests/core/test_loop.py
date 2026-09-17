@@ -849,6 +849,64 @@ def test_failed_tool_call_has_no_fact_id() -> None:
     assert finished.fact_id is None
 
 
+def test_bookkeeping_tool_call_finishes_without_a_fact_id() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    session.append(ToolCallRecorded(name="note", arguments={}, result="finding", is_error=False))
+    registry = ToolRegistry()
+    registry.register(
+        Tool(
+            spec=ToolSpec(name="read_fact", description="recall", parameters={"type": "object"}),
+            execute=lambda args: "finding",
+        )
+    )
+    call = ToolCall(id="1", name="read_fact", arguments={"id": 2})
+    client = ScriptedClient(
+        [
+            [ToolCallReady(tool_call=call), GenerationComplete(finish_reason="tool_calls")],
+            [GenerationComplete(finish_reason="stop")],
+        ]
+    )
+
+    runner = LoopRunner(client, registry, bus, session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    events = [next(subscriber) for _ in range(4)]
+    finished = events[3]
+    assert isinstance(finished, ToolCallFinished)
+    assert finished.is_error is False
+    assert finished.fact_id is None
+
+
+def test_answer_citing_a_bookkeeping_call_seq_is_rejected() -> None:
+    bus = Bus()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    session.append(ToolCallRecorded(name="note", arguments={}, result="finding", is_error=False))
+    session.append(
+        ToolCallRecorded(name="read_fact", arguments={"id": 2}, result="finding", is_error=False)
+    )
+    call = ToolCall(id="1", name="answer", arguments={"content": "the answer", "citations": [3]})
+    client = ScriptedClient(
+        [
+            [ToolCallReady(tool_call=call), GenerationComplete(finish_reason="tool_calls")],
+            [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
+        ]
+    )
+
+    runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    assert runner.final_answer is None
+    last_tool_event = [event for event in session.events() if isinstance(event, ToolCallRecorded)][
+        -1
+    ]
+    assert last_tool_event.is_error is True
+    assert "unknown fact citation" in last_tool_event.result
+
+
 def test_invalid_answer_call_continues_run_instead_of_ending() -> None:
     bus = Bus()
     subscriber = bus.subscribe()

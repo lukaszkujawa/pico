@@ -275,6 +275,48 @@ def test_recency_window_demoted_handle_names_the_correct_fact_id() -> None:
     assert "read_fact(41)" in demoted.tool_result.content
 
 
+def _named_pair(seq: int, name: str, result: str) -> list[Message]:
+    return [
+        Message(
+            role=Role.ASSISTANT,
+            tool_calls=(ToolCall(id=str(seq), name=name, arguments={}),),
+        ),
+        Message(
+            role=Role.TOOL,
+            tool_result=ToolResult(tool_call_id=str(seq), content=result, name=name),
+        ),
+    ]
+
+
+def test_recency_window_demotes_bookkeeping_results_without_a_recovery_hint() -> None:
+    messages = [
+        Message(role=Role.USER, content="question"),
+        *_named_pair(7, "read_fact", "z" * 5_000),
+    ]
+
+    window = recency_window(messages, budget=100)
+
+    demoted = window[-1]
+    assert demoted.tool_result is not None
+    assert len(demoted.tool_result.content) < 5_000
+    assert "read_fact(" not in demoted.tool_result.content
+    assert "fact 7" not in demoted.tool_result.content
+
+
+def test_recency_window_demoted_shell_result_keeps_its_fact_handle() -> None:
+    messages = [
+        Message(role=Role.USER, content="question"),
+        *_named_pair(9, "shell", "z" * 5_000),
+    ]
+
+    window = recency_window(messages, budget=100)
+
+    demoted = window[-1]
+    assert demoted.tool_result is not None
+    assert "fact 9 truncated" in demoted.tool_result.content
+    assert "read_fact(9)" in demoted.tool_result.content
+
+
 def _error_pair() -> list[Message]:
     return [
         Message(role=Role.ASSISTANT, tool_calls=(ToolCall(id="2", name="shell", arguments={}),)),
