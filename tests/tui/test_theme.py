@@ -15,6 +15,7 @@ GREYSCALE_FIELDS = [
     "accent",
     "text",
     "muted_text",
+    "selection_bg",
     "assistant",
     "user",
     "tool_call",

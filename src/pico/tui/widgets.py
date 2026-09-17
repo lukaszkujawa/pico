@@ -531,6 +531,7 @@ class CommandMenu(Static):
         if self.completion.error is not None:
             return Text(f"{ERROR_GLYPH} {self.completion.error}", style=f"bold {self._theme.error}")
         lines: list[Text] = []
+        width = max(len(self._label(row)) for row in self.rows)
         for index, row in enumerate(self.rows):
             chosen = index == self.selected
             line = Text(
@@ -542,10 +543,16 @@ class CommandMenu(Static):
             )
             if row.marked:
                 line.append(f" {CURRENT_GLYPH}", style=self._theme.success)
+            line.append(" " * (width - len(self._label(row))))
             if row.hint:
                 line.append(f"  {row.hint}", style=self._theme.muted_text)
+            if chosen:
+                line.stylize(f"on {self._theme.selection_bg}")
             lines.append(line)
         return Text("\n").join(lines)
+
+    def _label(self, row: Row) -> str:
+        return f"{row.label} {CURRENT_GLYPH}" if row.marked else row.label
 
 
 class SystemPane(Static):

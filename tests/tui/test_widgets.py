@@ -4,6 +4,7 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 
 from pico.tui import widgets
+from pico.tui.commands import Completion, Row
 from pico.tui.theme import PICO_THEME
 from pico.tui.widgets import (
     ERROR_GLYPH,
@@ -746,3 +747,34 @@ def test_command_menu_with_no_completion_renders_nothing_and_accepts_nothing() -
     menu.move(1)
 
     assert menu.selected == 0
+
+
+def _selected_backgrounds(menu: CommandMenu) -> list[str]:
+    rendered = menu.render()
+    return [
+        str(span.style)
+        for span in rendered.spans
+        if isinstance(span.style, str) and span.style.startswith("on ")
+    ]
+
+
+def test_command_menu_highlights_the_only_row_when_one_candidate_remains() -> None:
+    menu = CommandMenu()
+    menu.show(Completion(rows=(Row(label="model", hint="switch the model"),)))
+
+    assert _selected_backgrounds(menu) == [f"on {PICO_THEME.selection_bg}"]
+
+
+def test_command_menu_moves_the_highlight_with_the_selection() -> None:
+    menu = CommandMenu()
+    menu.show(Completion(rows=(Row(label="model"), Row(label="quit"))))
+    first, second = menu.render().plain.split("\n")
+
+    highlighted = next(span for span in menu.render().spans if str(span.style).startswith("on "))
+    assert highlighted.start == 0
+    assert highlighted.end == len(first)
+
+    menu.move(1)
+    highlighted = next(span for span in menu.render().spans if str(span.style).startswith("on "))
+    assert highlighted.start == len(first) + 1
+    assert highlighted.end == len(first) + 1 + len(second)

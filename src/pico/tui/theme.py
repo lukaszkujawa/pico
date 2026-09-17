@@ -12,6 +12,7 @@ class Theme:
     accent: str
     text: str
     muted_text: str
+    selection_bg: str
     success: str
     warning: str
     error: str
@@ -48,6 +49,7 @@ PICO_THEME = Theme(
     accent="#d6d6d6",
     text="#c4c4c4",
     muted_text="#6e6e6e",
+    selection_bg="#2f2f2f",
     success="#4fd6a8",
     warning="#e0af68",
     error="#f7768e",
