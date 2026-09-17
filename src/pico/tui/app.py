@@ -38,7 +38,7 @@ from pico.tui.widgets import (
     AssistantPane,
     ErrorPane,
     Splash,
-    StatusLine,
+    StatsStrip,
     ThinkingPane,
     ToolCallPane,
     UserPane,
@@ -57,6 +57,7 @@ class SessionHandle(Protocol):
 
 
 NEWLINE_KEYS = {"ctrl+j", "shift+enter"}
+DEFAULT_CONTEXT_SIZE = 8192
 
 
 def extract_answer_content(arguments_text: str) -> str | None:
@@ -139,9 +140,11 @@ class PicoApp(App[None]):
         cancel_handle: CancelHandle | None = None,
         session_handle: SessionHandle | None = None,
         initial_prompt: str | None = None,
+        context_size: int = DEFAULT_CONTEXT_SIZE,
     ) -> None:
         super().__init__()
         self._bus = bus
+        self._context_size = context_size
         self._input_queue = input_queue
         self._cancel_handle = cancel_handle
         self._session_handle = session_handle
@@ -171,11 +174,11 @@ class PicoApp(App[None]):
     def compose(self) -> ComposeResult:
         with Conversation(id="conversation"):
             yield Splash(self._session_id(), self._local_directory())
-            yield StatusLine()
         yield Rule()
         with Vertical(id="footer"):
             yield InputBar()
             yield Rule()
+            yield StatsStrip(self._context_size)
 
     def on_mount(self) -> None:
         self.register_theme(PICO_THEME.to_textual())
@@ -201,8 +204,11 @@ class PicoApp(App[None]):
             except Exception as error:
                 self.post_message(ErrorMessage(message=f"UI event handling failed: {error}"))
 
+    def _stats(self) -> StatsStrip:
+        return self.query_one(StatsStrip)
+
     def _stop_status(self) -> None:
-        self.query_one(StatusLine).stop()
+        self._stats().stop()
 
     def _conversation(self) -> Conversation:
         return self.query_one("#conversation", Conversation)
@@ -210,7 +216,7 @@ class PicoApp(App[None]):
     async def _mount_at_bottom(self, pane: Static) -> None:
         conversation = self._conversation()
         pinned = conversation.pinned
-        await conversation.mount(pane, before=self.query_one(StatusLine))
+        await conversation.mount(pane)
         if pinned:
             conversation.scroll_end(animate=False)
 
@@ -221,7 +227,7 @@ class PicoApp(App[None]):
         try:
             conversation = self._conversation()
             if self._pending_token_text:
-                self.query_one(StatusLine).counter.estimate(self._pending_token_text)
+                self._stats().counter.estimate(self._pending_token_text)
                 self._pending_token_text = ""
             if conversation.pinned:
                 conversation.scroll_end(animate=False, immediate=True)
@@ -307,7 +313,7 @@ class PicoApp(App[None]):
     def on_run_started_message(self, message: RunStartedMessage) -> None:
         self._run_in_flight = True
         self._error_shown_this_run = False
-        self.query_one(StatusLine).start()
+        self._stats().start()
         if self._queued_user_panes:
             self._queued_user_panes[0].queued = False
 
@@ -316,7 +322,11 @@ class PicoApp(App[None]):
             self._queued_user_panes.pop(0)
 
     def on_generation_completed_message(self, message: GenerationCompletedMessage) -> None:
-        counter = self.query_one(StatusLine).counter
+        stats = self._stats()
+        stats.requests.increment()
+        if message.prompt_tokens is not None:
+            stats.meter.used = message.prompt_tokens
+        counter = stats.counter
         if message.completion_tokens is None:
             if self._pending_token_text:
                 counter.estimate(self._pending_token_text)
@@ -360,13 +370,11 @@ class PicoApp(App[None]):
         self._answer_arguments.clear()
         self._queued_user_panes.clear()
         conversation = self._conversation()
-        status = self.query_one(StatusLine)
-        status.stop()
-        status.display = False
+        self._stats().reset()
         splash = self.query_one(Splash)
         splash.session_id = self._session_id()
         for child in list(conversation.children):
-            if child is not splash and child is not status:
+            if child is not splash:
                 child.remove()
         conversation.pinned = True
 
@@ -384,5 +392,5 @@ class PicoApp(App[None]):
             pane.queued = True
         self._queued_user_panes.append(pane)
         await self._mount_at_bottom(pane)
-        self.query_one(StatusLine).start()
+        self._stats().start()
         self._input_queue.put(text)

@@ -1,7 +1,7 @@
 import queue
 
 import pytest
-from textual.containers import VerticalScroll
+from textual.containers import Vertical, VerticalScroll
 from textual.pilot import Pilot
 
 from pico.core.bus import Bus
@@ -32,7 +32,7 @@ from pico.tui.widgets import (
     ElapsedTimer,
     ErrorPane,
     Splash,
-    StatusLine,
+    StatsStrip,
     ThinkingPane,
     TokenCounter,
     ToolCallPane,
@@ -1008,12 +1008,12 @@ async def test_submitting_input_starts_spinner_elapsed_and_tokens_together() -> 
     app = PicoApp(bus, queue.Queue())
     async with app.run_test() as pilot:
         await pilot.pause()
-        status = app.query_one(StatusLine)
-        assert status.display is False
+        strip = app.query_one(StatsStrip)
+        assert strip.display is True
+        assert app.query_one(WaitingIndicator).running is False
 
         await _submit(app, pilot)
 
-        assert status.display is True
         assert app.query_one(WaitingIndicator).running is True
         assert app.query_one(ElapsedTimer).running is True
         assert app.query_one(ElapsedTimer).elapsed == 0
@@ -1048,7 +1048,7 @@ async def test_run_ending_freezes_elapsed_and_tokens_while_stopping_spinner(
         )
 
         assert app.query_one(ElapsedTimer).running is False
-        assert app.query_one(StatusLine).display is True
+        assert app.query_one(StatsStrip).display is True
         assert app.query_one(TokenCounter).render().plain == "37 tokens"
 
 
@@ -1146,7 +1146,7 @@ async def test_new_session_action_clears_conversation_and_starts_a_session() -> 
 
         assert session_handle.start_count == 1
         assert len(app.query(Splash)) == 1
-        assert len(app.query(StatusLine)) == 1
+        assert len(app.query(StatsStrip)) == 1
 
 
 async def test_new_session_action_is_a_no_op_during_a_run() -> None:
@@ -1238,16 +1238,18 @@ async def test_new_session_action_without_a_session_handle_is_a_no_op() -> None:
         assert app.query_one(Splash).render().plain.count("session ") == 0
 
 
-async def test_status_line_stays_in_conversation_as_its_last_child() -> None:
+async def test_stats_strip_sits_under_the_input_inside_the_footer() -> None:
     bus = Bus()
     app = PicoApp(bus, queue.Queue())
     async with app.run_test() as pilot:
         await pilot.pause()
 
-        status = app.query_one(StatusLine)
-        conversation = app.query_one("#conversation", VerticalScroll)
-        assert status.parent is conversation
-        assert conversation.children[-1] is status
+        footer = app.query_one("#footer", Vertical)
+        strip = app.query_one(StatsStrip)
+        input_bar = app.query_one(InputBar)
+        assert strip.parent is footer
+        assert footer.children.index(input_bar) < footer.children.index(strip)
+        assert len(app.query_one("#conversation", VerticalScroll).query(StatsStrip)) == 0
 
 
 async def test_spinner_keeps_running_through_thinking_text_and_tool_call_panes() -> None:
@@ -1278,7 +1280,7 @@ async def test_spinner_keeps_running_through_thinking_text_and_tool_call_panes()
         bus.publish(ToolCallFinished(id="2", tool_call=tool_call, result="ok", is_error=False))
         await settle(pilot, lambda: app.query_one(ToolCallPane).finished, "the tool call finishes")
         assert app.query_one(WaitingIndicator).running is True
-        assert app.query_one(StatusLine).display is True
+        assert app.query_one(StatsStrip).display is True
 
 
 async def test_spinner_stops_on_run_cancelled_after_panes() -> None:
@@ -1368,3 +1370,75 @@ async def test_spinner_restarts_and_elapsed_resets_on_a_queued_second_turn() -> 
 
         assert app.query_one(WaitingIndicator).running is True
         assert app.query_one(ElapsedTimer).elapsed == 0
+
+
+async def test_stats_strip_meter_and_requests_follow_generations() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue(), context_size=1000)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        strip = app.query_one(StatsStrip)
+        assert strip.meter.used == 0
+        assert strip.requests.requests == 0
+
+        await _submit(app, pilot)
+        bus.publish(RunStarted())
+        bus.publish(GenerationCompleted(prompt_tokens=250, completion_tokens=10))
+        await settle(pilot, lambda: strip.meter.used == 250, "the meter follows the prompt size")
+        assert strip.requests.requests == 1
+
+        bus.publish(GenerationCompleted(prompt_tokens=400, completion_tokens=10))
+        bus.publish(RunFinished())
+        await settle(pilot, lambda: strip.meter.used == 400, "the meter follows the second call")
+        assert strip.requests.requests == 2
+        assert strip.meter.ratio == 0.4
+
+
+async def test_stats_strip_meter_survives_a_generation_without_prompt_tokens() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue(), context_size=1000)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        strip = app.query_one(StatsStrip)
+
+        bus.publish(RunStarted())
+        bus.publish(GenerationCompleted(prompt_tokens=250, completion_tokens=10))
+        await settle(pilot, lambda: strip.meter.used == 250, "the meter records the prompt size")
+
+        bus.publish(GenerationCompleted(prompt_tokens=None, completion_tokens=None))
+        await settle(pilot, lambda: strip.requests.requests == 2, "the request still counts")
+        assert strip.meter.used == 250
+
+
+async def test_new_session_resets_every_stat() -> None:
+    bus = Bus()
+    session_handle = RecordingSessionHandle()
+    app = PicoApp(bus, queue.Queue(), None, session_handle, context_size=1000)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _submit(app, pilot)
+
+        bus.publish(RunStarted())
+        bus.publish(GenerationCompleted(prompt_tokens=250, completion_tokens=37))
+        bus.publish(RunFinished())
+        strip = app.query_one(StatsStrip)
+        await settle(pilot, lambda: strip.meter.used == 250, "the first session accumulates stats")
+
+        await pilot.press("ctrl+n")
+        await settle(pilot, lambda: strip.meter.used == 0, "the meter empties")
+
+        assert strip.requests.requests == 0
+        assert strip.counter.render().plain == "~0 tokens"
+        assert strip.timer.elapsed == 0
+        assert strip.timer.running is False
+        assert strip.indicator.running is False
+        assert strip.display is True
+
+
+async def test_stats_strip_uses_the_configured_context_size() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue(), context_size=32000)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        assert "0/32k" in app.query_one(StatsStrip).meter.render().plain

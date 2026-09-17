@@ -23,6 +23,8 @@ class Theme:
     thinking_bg: str
     thinking: str
     waiting: str
+    meter: str
+    meter_empty: str
 
     def to_textual(self) -> TextualTheme:
         return TextualTheme(
@@ -40,21 +42,23 @@ class Theme:
 
 PICO_THEME = Theme(
     name="pico",
-    background="#12141c",
-    surface="#1a1d29",
-    primary="#7aa2f7",
-    accent="#7aa2f7",
-    text="#c8ccd4",
-    muted_text="#6b7280",
+    background="#101010",
+    surface="#1a1a1a",
+    primary="#d6d6d6",
+    accent="#d6d6d6",
+    text="#c4c4c4",
+    muted_text="#6e6e6e",
     success="#4fd6a8",
     warning="#e0af68",
     error="#f7768e",
-    assistant="#c8ccd4",
-    user="#7aa2f7",
-    tool_call="#9aa5ce",
-    tool_call_border="#3b3f51",
-    input_prompt="#7aa2f7",
-    thinking_bg="#232838",
-    thinking="#9aa5ce",
-    waiting="#6b7280",
+    assistant="#c4c4c4",
+    user="#f2f2f2",
+    tool_call="#9a9a9a",
+    tool_call_border="#3a3a3a",
+    input_prompt="#8a8a8a",
+    thinking_bg="#1a1a1a",
+    thinking="#8a8a8a",
+    waiting="#4fd6a8",
+    meter="#d6d6d6",
+    meter_empty="#3a3a3a",
 )

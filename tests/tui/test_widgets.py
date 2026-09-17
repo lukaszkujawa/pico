@@ -1,5 +1,6 @@
 import pytest
 from rich.console import Console
+from rich.text import Text
 from textual.app import App, ComposeResult
 
 from pico.tui import widgets
@@ -7,15 +8,20 @@ from pico.tui.theme import PICO_THEME
 from pico.tui.widgets import (
     ERROR_GLYPH,
     SUCCESS_GLYPH,
+    WAITING_FRAMES,
     AnswerPane,
     AssistantPane,
+    ContextMeter,
     ElapsedTimer,
     ErrorPane,
+    RequestCounter,
     Splash,
     ThinkingPane,
     ToolCallPane,
+    UserPane,
     WaitingIndicator,
     format_elapsed,
+    format_thousands,
 )
 from tests.conftest import settle
 
@@ -422,17 +428,17 @@ async def test_waiting_indicator_start_and_stop_toggle_state() -> None:
     async with app.run_test() as pilot:
         indicator = app.query_one(WaitingIndicator)
         assert indicator.running is False
-        assert indicator.display is False
+        assert indicator.render().plain.strip() == ""
 
         indicator.start()
         await pilot.pause()
         assert indicator.running is True
-        assert indicator.display is True
+        assert indicator.render().plain in WAITING_FRAMES
 
         indicator.stop()
         await pilot.pause()
         assert indicator.running is False
-        assert indicator.display is False
+        assert indicator.render().plain.strip() == ""
 
 
 async def test_waiting_indicator_animates_over_ticks() -> None:
@@ -565,3 +571,165 @@ def test_splash_right_column_centers_against_four_line_art_without_session() -> 
         "~/projects/pico",
         "",
     ]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(0, "0"), (999, "999"), (1000, "1k"), (1500, "1.5k"), (8192, "8.2k"), (32000, "32k")],
+)
+def test_format_thousands_compacts_large_counts(value: int, expected: str) -> None:
+    assert format_thousands(value) == expected
+
+
+class ContextMeterHarness(App[None]):
+    def __init__(self, context_size: int = 1000) -> None:
+        super().__init__()
+        self._context_size = context_size
+
+    def compose(self) -> ComposeResult:
+        yield ContextMeter(self._context_size)
+
+
+async def test_context_meter_starts_empty_and_fills_with_use() -> None:
+    app = ContextMeterHarness()
+    async with app.run_test() as pilot:
+        meter = app.query_one(ContextMeter)
+        assert meter.render().plain == f"{widgets.METER_EMPTY * widgets.METER_WIDTH} 0/1k"
+
+        meter.used = 500
+        await pilot.pause()
+        filled = widgets.METER_FILLED * 5 + widgets.METER_EMPTY * 5
+        assert meter.render().plain == f"{filled} 500/1k"
+
+
+async def test_context_meter_clamps_and_turns_error_coloured_over_budget() -> None:
+    app = ContextMeterHarness()
+    async with app.run_test() as pilot:
+        meter = app.query_one(ContextMeter)
+
+        meter.used = 400
+        await pilot.pause()
+        assert meter.render().get_style_at_offset(Console(), 0).color is not None
+        assert meter.render().get_style_at_offset(Console(), 0).color.name == PICO_THEME.meter  # type: ignore[union-attr]
+
+        meter.used = 4000
+        await pilot.pause()
+        assert meter.ratio == 1.0
+        assert meter.render().plain.startswith(widgets.METER_FILLED * widgets.METER_WIDTH)
+        assert meter.render().get_style_at_offset(Console(), 0).color.name == PICO_THEME.error  # type: ignore[union-attr]
+
+
+async def test_context_meter_with_no_context_size_stays_empty() -> None:
+    app = ContextMeterHarness(context_size=0)
+    async with app.run_test() as pilot:
+        meter = app.query_one(ContextMeter)
+        meter.used = 100
+        await pilot.pause()
+
+        assert meter.ratio == 0.0
+
+
+class RequestCounterHarness(App[None]):
+    def compose(self) -> ComposeResult:
+        yield RequestCounter()
+
+
+async def test_request_counter_increments_and_resets() -> None:
+    app = RequestCounterHarness()
+    async with app.run_test() as pilot:
+        counter = app.query_one(RequestCounter)
+        assert counter.render().plain == "0 req"
+
+        counter.increment()
+        counter.increment()
+        await pilot.pause()
+        assert counter.render().plain == "2 req"
+
+        counter.reset()
+        await pilot.pause()
+        assert counter.render().plain == "0 req"
+
+
+def _hues(text: Text) -> set[str]:
+    console = Console()
+    names: set[str] = set()
+    for offset in range(len(text.plain)):
+        color = text.get_style_at_offset(console, offset).color
+        if color is not None and color.triplet is not None:
+            red, green, blue = color.triplet
+            if len({red, green, blue}) > 1:
+                names.add(color.name)
+    return names
+
+
+async def test_answer_pane_colors_only_its_marker() -> None:
+    app = AnswerPaneHarness()
+    async with app.run_test() as pilot:
+        pane = app.query_one(AnswerPane)
+        pane.append_delta("a streaming answer")
+        await pilot.pause()
+        assert _hues(pane.render()) == set()
+
+        pane.settle(content="42", accepted=True, reason=None, verify="checked")
+        await pilot.pause()
+        assert _hues(pane.render()) == {PICO_THEME.success}
+
+        pane.settle(content="42", accepted=False, reason="try again", verify=None)
+        await pilot.pause()
+        assert _hues(pane.render()) == {PICO_THEME.warning}
+
+
+async def test_tool_call_pane_colors_only_its_glyph() -> None:
+    app = ToolCallPaneHarness()
+    async with app.run_test() as pilot:
+        pane = app.query_one(ToolCallPane)
+        await pilot.pause()
+        assert _hues(pane.render()) == {PICO_THEME.waiting}
+
+        pane.finish(result="ok", is_error=False, fact_index=3)
+        await pilot.pause()
+        assert _hues(pane.render()) == {PICO_THEME.success}
+
+        pane.finish(result="boom", is_error=True)
+        await pilot.pause()
+        assert _hues(pane.render()) == {PICO_THEME.error}
+
+
+async def test_error_pane_colors_only_its_glyph() -> None:
+    app = ErrorPaneHarness()
+    async with app.run_test() as pilot:
+        pane = app.query_one(ErrorPane)
+        await pilot.pause()
+
+        assert _hues(pane.render()) == {PICO_THEME.error}
+        assert pane.styles.border.top[1].hex.lower() == PICO_THEME.tool_call_border
+
+
+def test_splash_colors_only_the_prompt_and_cursor() -> None:
+    splash = Splash("abc123", "~/projects/pico")
+    assert _hues(splash.render()) == {PICO_THEME.success}
+
+
+@pytest.mark.parametrize(
+    "pane",
+    [AssistantPane(pane_id="0"), ThinkingPane(pane_id="0"), UserPane(text="hello")],
+)
+def test_conversation_panes_render_without_hue(
+    pane: AssistantPane | ThinkingPane | UserPane,
+) -> None:
+    if not isinstance(pane, UserPane):
+        pane.append_delta("some text")
+    assert _hues(pane.render()) == set()
+
+
+async def test_stats_strip_readouts_are_monochrome_until_over_budget() -> None:
+    app = ContextMeterHarness()
+    async with app.run_test() as pilot:
+        meter = app.query_one(ContextMeter)
+        meter.used = 500
+        await pilot.pause()
+        assert _hues(meter.render()) == set()
+
+        meter.used = 950
+        await pilot.pause()
+        assert _hues(meter.render()) == {PICO_THEME.error}

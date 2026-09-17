@@ -14,7 +14,7 @@ The input line sits at the very bottom and the only run feedback is the status l
 * **Monochrome theme**: `tui/theme.py` collapses text, borders, backgrounds, user/assistant/thinking/tool styling to greyscale steps. Color survives only where it is an icon or identity: the success `✓`, error `✗`, spinner frames, answer markers (`●`/`↺`), and the splash logo's prompt `>` and blinking cursor. The context meter bar may use one accent that shifts to the error color when usage crosses the budget.
 * **No new dependencies**; Rich/Textual primitives only. Bus protocol unchanged — the strip consumes existing events.
 
-## [ ] T001 Stats strip under a raised input line
+## [X] T001 Stats strip under a raised input line
 
 ### Description
 
@@ -26,7 +26,7 @@ Restructure the footer (input above, stats strip below), implement the strip wid
 * Input focus, submit, queueing, cancel, and new-session behaviour are unchanged.
 * `make check` passes.
 
-## [ ] T002 Monochrome theme
+## [X] T002 Monochrome theme
 
 ### Description
 

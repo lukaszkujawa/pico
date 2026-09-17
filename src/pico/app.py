@@ -137,7 +137,14 @@ def run_pico(
     core_thread.start()
 
     try:
-        PicoApp(bus, input_queue, cancel_handle, session_handle, initial_prompt).run()
+        PicoApp(
+            bus,
+            input_queue,
+            cancel_handle,
+            session_handle,
+            initial_prompt,
+            config.context_size,
+        ).run()
     finally:
         shutdown.set()
         core_thread.join(timeout=1)

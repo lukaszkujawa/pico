@@ -9,13 +9,19 @@
 #input-bar {
     height: auto;
 }
-#status-line {
-    height: auto;
+#stats-strip {
+    height: 1;
     padding: 0 1;
 }
-#status-line Static {
+#stats-strip Static {
     width: auto;
     height: 1;
+}
+.stats-label {
+    padding: 0 1 0 0;
+}
+.stats-label, .stats-separator {
+    color: $foreground 40%;
 }
 #user-input {
     height: auto;

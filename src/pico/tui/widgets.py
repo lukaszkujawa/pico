@@ -14,6 +14,8 @@ from pico.tui.theme import PICO_THEME, Theme
 SUCCESS_GLYPH = "✓"
 ERROR_GLYPH = "✗"
 SEPARATOR_GLYPH = "·"
+PENDING_GLYPH = "●"
+RETRY_GLYPH = "↺"
 WAITING_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 
@@ -57,24 +59,22 @@ class AnswerPane(Static):
         self.settled = True
 
     def render(self) -> Text:
+        body_style = f"bold {self._theme.text}"
         if not self.settled:
-            marker = Text("● ", style=f"bold {self._theme.primary}")
-            body = Text(self.content_text, style=f"bold {self._theme.primary}")
-            return marker + body
+            marker = Text(f"{PENDING_GLYPH} ", style=f"bold {self._theme.accent}")
+            return marker + Text(self.content_text, style=body_style)
         if self.accepted:
-            color = self._theme.success
-            marker = Text(f"{SUCCESS_GLYPH} ", style=f"bold {color}")
-            body = Text(self.content_text, style=f"bold {color}")
-            result = marker + body
+            marker = Text(f"{SUCCESS_GLYPH} ", style=f"bold {self._theme.success}")
+            result = marker + Text(self.content_text, style=body_style)
             if self.verify is not None:
-                result.append(f"\nverified: {self.verify}", style=f"italic {color}")
+                result.append(
+                    f"\nverified: {self.verify}", style=f"italic {self._theme.muted_text}"
+                )
             return result
-        color = self._theme.warning
-        marker = Text("↺ ", style=f"bold {color}")
-        body = Text(self.content_text, style=f"bold {color}")
-        result = marker + body
+        marker = Text(f"{RETRY_GLYPH} ", style=f"bold {self._theme.warning}")
+        result = marker + Text(self.content_text, style=body_style)
         if self.reason is not None:
-            result.append(f"\nsent back: {self.reason}", style=color)
+            result.append(f"\nsent back: {self.reason}", style=self._theme.muted_text)
         return result
 
 
@@ -176,12 +176,13 @@ class ToolCallPane(Static):
     def render(self) -> Text:
         if self.finished:
             glyph = ERROR_GLYPH if self.is_error else SUCCESS_GLYPH
-            color = self._theme.error if self.is_error else self._theme.success
+            glyph_color = self._theme.error if self.is_error else self._theme.success
         else:
             glyph = WAITING_FRAMES[self.frame_index]
-            color = self._theme.tool_call
+            glyph_color = self._theme.waiting
 
-        header = Text(f"{glyph} {self.name_label}", style=f"bold {color}")
+        header = Text(f"{glyph} ", style=f"bold {glyph_color}")
+        header.append(self.name_label, style=f"bold {self._theme.tool_call}")
         if self.fact_index is not None:
             header.append(f"  → fact #{self.fact_index}", style=f"italic {self._theme.muted_text}")
 
@@ -204,19 +205,15 @@ class WaitingIndicator(Static):
         self._theme = theme
         self._timer: Timer | None = None
         self.styles.color = theme.waiting
-        self.styles.padding = (0, 1)
-        self.display = False
 
     def start(self) -> None:
         self.stop()
         self.frame_index = 0
         self.running = True
-        self.display = True
         self._timer = self.set_interval(0.08, self._advance)
 
     def stop(self) -> None:
         self.running = False
-        self.display = False
         if self._timer is not None:
             self._timer.stop()
             self._timer = None
@@ -225,6 +222,8 @@ class WaitingIndicator(Static):
         self.frame_index = (self.frame_index + 1) % len(WAITING_FRAMES)
 
     def render(self) -> Text:
+        if not self.running:
+            return Text(" ")
         return Text(WAITING_FRAMES[self.frame_index], style=self._theme.waiting)
 
 
@@ -302,18 +301,86 @@ class TokenCounter(Static):
         return Text(f"{prefix}{self.tokens} tokens", style=self._theme.muted_text)
 
 
-class StatusLine(Horizontal):
-    def __init__(self, theme: Theme = PICO_THEME, clock: Callable[[], float] = time.monotonic):
-        super().__init__(id="status-line")
+METER_WIDTH = 10
+METER_FILLED = "█"
+METER_EMPTY = "░"
+OVER_BUDGET_RATIO = 0.9
+
+
+def format_thousands(value: int) -> str:
+    if value < 1000:
+        return str(value)
+    return f"{value / 1000:.1f}k".replace(".0k", "k")
+
+
+class ContextMeter(Static):
+    used: reactive[int] = reactive(0, layout=True)
+
+    def __init__(self, context_size: int, theme: Theme = PICO_THEME) -> None:
+        super().__init__(id="context-meter")
+        self._theme = theme
+        self._context_size = context_size
+
+    def reset(self) -> None:
+        self.used = 0
+
+    @property
+    def ratio(self) -> float:
+        if self._context_size <= 0:
+            return 0.0
+        return min(self.used / self._context_size, 1.0)
+
+    def render(self) -> Text:
+        ratio = self.ratio
+        filled = round(ratio * METER_WIDTH)
+        color = self._theme.error if ratio >= OVER_BUDGET_RATIO else self._theme.meter
+        bar = Text(METER_FILLED * filled, style=color)
+        bar.append(METER_EMPTY * (METER_WIDTH - filled), style=self._theme.meter_empty)
+        numbers = f" {format_thousands(self.used)}/{format_thousands(self._context_size)}"
+        bar.append(numbers, style=self._theme.muted_text)
+        return bar
+
+
+class RequestCounter(Static):
+    requests: reactive[int] = reactive(0, layout=True)
+
+    def __init__(self, theme: Theme = PICO_THEME) -> None:
+        super().__init__(id="request-counter")
+        self._theme = theme
+
+    def reset(self) -> None:
+        self.requests = 0
+
+    def increment(self) -> None:
+        self.requests += 1
+
+    def render(self) -> Text:
+        return Text(f"{self.requests} req", style=self._theme.muted_text)
+
+
+class StatsStrip(Horizontal):
+    def __init__(
+        self,
+        context_size: int,
+        theme: Theme = PICO_THEME,
+        clock: Callable[[], float] = time.monotonic,
+    ):
+        super().__init__(id="stats-strip")
+        self._context_size = context_size
         self._clock = clock
         self._theme = theme
-        self.display = False
 
     def compose(self) -> ComposeResult:
-        yield WaitingIndicator(self._theme)
-        yield ElapsedTimer(self._theme, self._clock)
-        yield Static(f" {SEPARATOR_GLYPH} ")
+        yield Static("ctx", classes="stats-label")
+        yield ContextMeter(self._context_size, self._theme)
+        yield Static(f" {SEPARATOR_GLYPH} ", classes="stats-separator")
+        yield RequestCounter(self._theme)
+        yield Static(f" {SEPARATOR_GLYPH} ", classes="stats-separator")
         yield TokenCounter(self._theme)
+        yield Static(f" {SEPARATOR_GLYPH} ", classes="stats-separator")
+        yield WaitingIndicator(self._theme)
+        yield Static(" ", classes="stats-separator")
+        yield ElapsedTimer(self._theme, self._clock)
 
     @property
     def indicator(self) -> WaitingIndicator:
@@ -327,8 +394,15 @@ class StatusLine(Horizontal):
     def counter(self) -> TokenCounter:
         return self.query_one(TokenCounter)
 
+    @property
+    def meter(self) -> ContextMeter:
+        return self.query_one(ContextMeter)
+
+    @property
+    def requests(self) -> RequestCounter:
+        return self.query_one(RequestCounter)
+
     def start(self) -> None:
-        self.display = True
         self.indicator.start()
         self.timer.start()
         self.counter.reset()
@@ -336,6 +410,13 @@ class StatusLine(Horizontal):
     def stop(self) -> None:
         self.indicator.stop()
         self.timer.stop()
+
+    def reset(self) -> None:
+        self.stop()
+        self.timer.elapsed = 0
+        self.counter.reset()
+        self.meter.reset()
+        self.requests.reset()
 
 
 LOGO_TOP = "╭────────╮"
@@ -363,7 +444,7 @@ class Splash(Static):
         self.set_reactive(Splash.session_id, session_id)
 
     def render(self) -> Text:
-        border = f"bold {self._theme.primary}"
+        border = f"bold {self._theme.tool_call_border}"
         art_lines = [
             Text(LOGO_TOP, style=border),
             Text.assemble(
@@ -403,9 +484,10 @@ class ErrorPane(Static):
         super().__init__(id="error-pane")
         self._theme = theme
         self._message = message
-        self.styles.border = ("heavy", theme.error)
-        self.styles.color = theme.error
+        self.styles.border = ("heavy", theme.tool_call_border)
+        self.styles.color = theme.text
         self.styles.padding = (0, 1)
 
     def render(self) -> Text:
-        return Text(f"{ERROR_GLYPH} {self._message}", style=f"bold {self._theme.error}")
+        glyph = Text(f"{ERROR_GLYPH} ", style=f"bold {self._theme.error}")
+        return glyph + Text(self._message, style=f"bold {self._theme.text}")

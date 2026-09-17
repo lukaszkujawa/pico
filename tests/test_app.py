@@ -138,9 +138,12 @@ def test_turn_loop_runs_one_turn_per_queued_message(
         cancel_handle: app_module.CancelHandle | None = None,
         session_handle: SessionHandle | None = None,
         initial_prompt: str | None = None,
+        context_size: int = 8192,
     ) -> None:
         queues.append(input_queue)
-        original_init(self, bus, input_queue, cancel_handle, session_handle, initial_prompt)
+        original_init(
+            self, bus, input_queue, cancel_handle, session_handle, initial_prompt, context_size
+        )
 
     monkeypatch.setattr(PicoApp, "__init__", tracking_init)
     monkeypatch.setattr(PicoApp, "run", driving_run)
@@ -205,12 +208,15 @@ def test_cancelling_mid_turn_stops_run_and_allows_next_turn(
         cancel_handle: app_module.CancelHandle,
         session_handle: SessionHandle | None = None,
         initial_prompt: str | None = None,
+        context_size: int = 8192,
     ) -> None:
         queues.append(input_queue)
         cancel_handles.append(cancel_handle)
         subscriber = bus.subscribe()
         threading.Thread(target=lambda: seen.extend(subscriber), daemon=True).start()
-        original_init(self, bus, input_queue, cancel_handle, session_handle, initial_prompt)
+        original_init(
+            self, bus, input_queue, cancel_handle, session_handle, initial_prompt, context_size
+        )
 
     monkeypatch.setattr(PicoApp, "__init__", tracking_init)
     monkeypatch.setattr(PicoApp, "run", driving_run)
@@ -251,9 +257,12 @@ def test_turn_persists_to_session_file_on_disk(
         cancel_handle: app_module.CancelHandle | None = None,
         session_handle: SessionHandle | None = None,
         initial_prompt: str | None = None,
+        context_size: int = 8192,
     ) -> None:
         queues.append(input_queue)
-        original_init(self, bus, input_queue, cancel_handle, session_handle, initial_prompt)
+        original_init(
+            self, bus, input_queue, cancel_handle, session_handle, initial_prompt, context_size
+        )
 
     monkeypatch.setattr(PicoApp, "__init__", tracking_init)
     monkeypatch.setattr(PicoApp, "run", driving_run)
@@ -300,9 +309,12 @@ def test_debug_true_writes_run_log(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
         cancel_handle: app_module.CancelHandle | None = None,
         session_handle: SessionHandle | None = None,
         initial_prompt: str | None = None,
+        context_size: int = 8192,
     ) -> None:
         queues.append(input_queue)
-        original_init(self, bus, input_queue, cancel_handle, session_handle, initial_prompt)
+        original_init(
+            self, bus, input_queue, cancel_handle, session_handle, initial_prompt, context_size
+        )
 
     monkeypatch.setattr(PicoApp, "__init__", tracking_init)
     monkeypatch.setattr(PicoApp, "run", driving_run)
@@ -346,9 +358,12 @@ def test_debug_false_creates_no_logs_dir(monkeypatch: pytest.MonkeyPatch, tmp_pa
         cancel_handle: app_module.CancelHandle | None = None,
         session_handle: SessionHandle | None = None,
         initial_prompt: str | None = None,
+        context_size: int = 8192,
     ) -> None:
         queues.append(input_queue)
-        original_init(self, bus, input_queue, cancel_handle, session_handle, initial_prompt)
+        original_init(
+            self, bus, input_queue, cancel_handle, session_handle, initial_prompt, context_size
+        )
 
     monkeypatch.setattr(PicoApp, "__init__", tracking_init)
     monkeypatch.setattr(PicoApp, "run", driving_run)
@@ -383,9 +398,12 @@ def _run_one_turn(monkeypatch: pytest.MonkeyPatch, config: Config, session_id: s
         cancel_handle: app_module.CancelHandle | None = None,
         session_handle: SessionHandle | None = None,
         initial_prompt: str | None = None,
+        context_size: int = 8192,
     ) -> None:
         queues.append(input_queue)
-        original_init(self, bus, input_queue, cancel_handle, session_handle, initial_prompt)
+        original_init(
+            self, bus, input_queue, cancel_handle, session_handle, initial_prompt, context_size
+        )
 
     monkeypatch.setattr(PicoApp, "__init__", tracking_init)
     monkeypatch.setattr(PicoApp, "run", driving_run)
@@ -440,3 +458,38 @@ def test_session_handle_start_new_switches_to_an_empty_session(tmp_path: Path) -
     assert handle.session_id != "original"
     assert handle.session.messages() == []
     assert len(original.messages()) == 1
+
+
+def test_run_pico_hands_the_configured_context_size_to_the_tui(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    release = threading.Event()
+    release.set()
+    _patch_ollama_client(monkeypatch, release)
+
+    seen_context_sizes: list[int] = []
+    original_init = PicoApp.__init__
+
+    def tracking_init(
+        self: PicoApp,
+        bus: Bus,
+        input_queue: "queue.Queue[str]",
+        cancel_handle: app_module.CancelHandle | None = None,
+        session_handle: SessionHandle | None = None,
+        initial_prompt: str | None = None,
+        context_size: int = 8192,
+    ) -> None:
+        seen_context_sizes.append(context_size)
+        original_init(
+            self, bus, input_queue, cancel_handle, session_handle, initial_prompt, context_size
+        )
+
+    def noop_run(self: PicoApp) -> None:
+        return None
+
+    monkeypatch.setattr(PicoApp, "__init__", tracking_init)
+    monkeypatch.setattr(PicoApp, "run", noop_run)
+
+    run_pico(_config(tmp_path, context_size=4096))
+
+    assert seen_context_sizes == [4096]
