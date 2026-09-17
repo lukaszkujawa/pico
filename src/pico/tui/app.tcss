@@ -2,6 +2,9 @@
     height: 1fr;
     scrollbar-size-vertical: 0;
 }
+#conversation > Static {
+    margin-bottom: 1;
+}
 #footer {
     dock: bottom;
     height: auto;

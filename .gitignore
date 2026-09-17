@@ -56,3 +56,4 @@ eval_results/
 
 # Autonomous loop run logs
 logs-code/
+sock/

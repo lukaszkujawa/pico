@@ -31,6 +31,15 @@ Press `ctrl+n` at any time (except mid-turn) to start a new conversation without
 
 `make run_in_docker` runs Pico in a container, with no local Python or `uv` install needed. It builds the image (tagged `pico:local`, reusing that tag on rebuild) and drops you into the same interactive TUI as `make run`, reading the same `.env` — see above to set one up first. The session database persists across runs the same way, in `.docker_data/` on the host — so two consecutive runs are independent conversations that you can still `--resume` by id (see above).
 
+Pass extra flags through `ARGS`. `--sock NAME` lets you drive the running container from another terminal: prompts written to `./sock/NAME` on the host are submitted as if you had typed them.
+
+```
+make run_in_docker ARGS="--debug --sock 0"
+echo "What is 17 * 23?" > ./sock/0
+```
+
+A FIFO on a bind mount is not shared across the container boundary, so the FIFO Pico reads lives on a tmpfs inside the container and the host-side `./sock/NAME` forwards each line into it. The forwarder holds prompts written before the TUI is ready and delivers them once it is, then removes `./sock/NAME` when the container exits.
+
 To reclaim space, remove the image with `docker rmi pico:local`, or clear any dangling build layers with `docker image prune`.
 
 ## Evals

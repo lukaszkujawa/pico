@@ -18,7 +18,7 @@ StepOutcome = Literal["continue", "done", "cancelled"]
 
 Step = Callable[["LoopRunner"], StepOutcome]
 
-MAX_RUN_STEPS = 250
+MAX_RUN_STEPS = 50
 
 
 @dataclass(frozen=True)
