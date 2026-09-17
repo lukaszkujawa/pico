@@ -74,6 +74,8 @@ Step = Callable[["LoopRunner"], StepOutcome]
 
 MAX_INVALID_ACTION_ATTEMPTS = 5
 MAX_DELEGATE_STEPS = 10
+MAX_RUN_STEPS = 100
+BUDGET_WIND_DOWN_FRACTION = 0.8
 MAX_ACTIONLESS_GENERATIONS = 3
 
 NO_ACTION_NUDGE = (
@@ -164,6 +166,23 @@ def stuckness_step(runner: LoopRunner) -> StepOutcome:
         return "done"
     if result.nudge is not None:
         runner.pending_nudge = result.nudge
+    return "continue"
+
+
+def budget_step(runner: LoopRunner) -> StepOutcome:
+    max_steps = runner.config.max_steps
+    if max_steps is None or runner.depth > 0:
+        return "continue"
+    if runner.iterations >= max_steps:
+        runner.fail(f"run stopped: generation budget of {max_steps} exhausted")
+        return "done"
+    remaining = max_steps - runner.iterations
+    if runner.iterations >= int(max_steps * BUDGET_WIND_DOWN_FRACTION):
+        runner.pending_nudge = (
+            f"the generation budget is nearly spent — {remaining} generations remain. "
+            "stop exploring, complete or prune the plan, and finish with answer using "
+            "the facts you have gathered"
+        )
     return "continue"
 
 
@@ -606,5 +625,5 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
     return outcome
 
 
-DEFAULT_LOOP_STEPS: tuple[Step, ...] = (stuckness_step, stream_step, tool_call_step)
-DEFAULT_LOOP_CONFIG = LoopConfig(steps=DEFAULT_LOOP_STEPS)
+DEFAULT_LOOP_STEPS: tuple[Step, ...] = (stuckness_step, budget_step, stream_step, tool_call_step)
+DEFAULT_LOOP_CONFIG = LoopConfig(steps=DEFAULT_LOOP_STEPS, max_steps=MAX_RUN_STEPS)

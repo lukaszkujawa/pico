@@ -37,17 +37,20 @@ from pico.core.events import (
 )
 from pico.core.ledger import facts
 from pico.core.loop import (
+    BUDGET_WIND_DOWN_FRACTION,
     DEFAULT_CHARS_PER_TOKEN,
     DEFAULT_LOOP_CONFIG,
     MAX_ACTIONLESS_GENERATIONS,
     MAX_CHARS_PER_TOKEN,
     MAX_DELEGATE_STEPS,
     MAX_INVALID_ACTION_ATTEMPTS,
+    MAX_RUN_STEPS,
     MIN_CHARS_PER_TOKEN,
     RUNNER_ACTIONS,
     LoopConfig,
     LoopRunner,
     StepOutcome,
+    budget_step,
     specs_text,
     stream_step,
     stuckness_step,
@@ -769,9 +772,14 @@ def test_cancel_set_before_second_tool_call_leaves_it_unexecuted() -> None:
     assert [event.name for event in tool_events] == ["first"]
 
 
-def test_default_loop_config_is_stuckness_then_stream_then_tool_call() -> None:
-    assert DEFAULT_LOOP_CONFIG.steps == (stuckness_step, stream_step, tool_call_step)
-    assert DEFAULT_LOOP_CONFIG.max_steps is None
+def test_default_loop_config_is_stuckness_budget_stream_then_tool_call() -> None:
+    assert DEFAULT_LOOP_CONFIG.steps == (
+        stuckness_step,
+        budget_step,
+        stream_step,
+        tool_call_step,
+    )
+    assert DEFAULT_LOOP_CONFIG.max_steps == MAX_RUN_STEPS
 
 
 def test_valid_answer_call_ends_run_and_records_result() -> None:
@@ -3086,3 +3094,182 @@ def test_answer_spec_documents_verify() -> None:
     assert "verify" in properties
     assert "verify" not in required
     assert "exits 0" in spec.description
+
+
+def test_budget_step_is_noop_when_max_steps_is_none() -> None:
+    runner = LoopRunner(
+        FailingClient(), _echo_registry(), Bus(), _session(), 128_000, LoopConfig(steps=())
+    )
+    runner.iterations = 1_000_000
+    assert budget_step(runner) == "continue"
+    assert runner.pending_nudge is None
+    assert runner.error is None
+
+
+def test_budget_step_is_noop_for_delegates_regardless_of_iterations() -> None:
+    runner = LoopRunner(
+        FailingClient(),
+        _echo_registry(),
+        Bus(),
+        _session(),
+        128_000,
+        LoopConfig(steps=(), max_steps=MAX_DELEGATE_STEPS),
+        depth=1,
+    )
+    runner.iterations = MAX_DELEGATE_STEPS
+    assert budget_step(runner) == "continue"
+    assert runner.pending_nudge is None
+    assert runner.error is None
+
+
+def test_budget_step_below_wind_down_threshold_sets_no_nudge() -> None:
+    max_steps = 10
+    runner = LoopRunner(
+        FailingClient(),
+        _echo_registry(),
+        Bus(),
+        _session(),
+        128_000,
+        LoopConfig(steps=(), max_steps=max_steps),
+    )
+    runner.iterations = int(max_steps * BUDGET_WIND_DOWN_FRACTION) - 1
+    assert budget_step(runner) == "continue"
+    assert runner.pending_nudge is None
+
+
+def test_budget_step_at_wind_down_threshold_sets_nudge_with_remaining_count() -> None:
+    max_steps = 10
+    runner = LoopRunner(
+        FailingClient(),
+        _echo_registry(),
+        Bus(),
+        _session(),
+        128_000,
+        LoopConfig(steps=(), max_steps=max_steps),
+    )
+    runner.iterations = int(max_steps * BUDGET_WIND_DOWN_FRACTION)
+    outcome = budget_step(runner)
+    remaining = max_steps - runner.iterations
+    assert outcome == "continue"
+    assert runner.pending_nudge is not None
+    assert str(remaining) in runner.pending_nudge
+    assert "answer" in runner.pending_nudge
+
+
+def test_budget_step_at_max_steps_fails_the_run_explicitly() -> None:
+    max_steps = 10
+    runner = LoopRunner(
+        FailingClient(),
+        _echo_registry(),
+        Bus(),
+        _session(),
+        128_000,
+        LoopConfig(steps=(), max_steps=max_steps),
+    )
+    runner.iterations = max_steps
+    outcome = budget_step(runner)
+    assert outcome == "done"
+    assert runner.error == f"run stopped: generation budget of {max_steps} exhausted"
+
+
+def test_run_reaching_soft_threshold_gets_wind_down_nudge_then_answers_normally() -> None:
+    bus = Bus()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    max_steps = 5
+    threshold_iteration = int(max_steps * BUDGET_WIND_DOWN_FRACTION)
+    turns: list[list[StreamEvent]] = [
+        [
+            ToolCallReady(tool_call=ToolCall(id=str(i), name="echo", arguments={"i": i})),
+            GenerationComplete(finish_reason="tool_calls"),
+        ]
+        for i in range(threshold_iteration - 1)
+    ]
+    turns.append(
+        [
+            ToolCallReady(
+                tool_call=ToolCall(
+                    id="answer", name="answer", arguments={"content": "done", "citations": []}
+                )
+            ),
+            GenerationComplete(finish_reason="tool_calls"),
+        ]
+    )
+    client = ScriptedClient(turns)
+    config = LoopConfig(
+        steps=(stuckness_step, budget_step, stream_step, tool_call_step), max_steps=max_steps
+    )
+
+    runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, config)
+    runner.execute()
+
+    last_messages = client.seen_messages[-1]
+    nudges = [m for m in last_messages if m.role is Role.USER and "generation budget" in m.content]
+    assert len(nudges) == 1
+    assert runner.final_answer == "done"
+    assert runner.error is None
+
+
+def test_run_exhausting_budget_fails_explicitly_and_stays_resumable() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    max_steps = 3
+    turns: list[list[StreamEvent]] = [
+        [
+            ToolCallReady(tool_call=ToolCall(id=str(i), name="echo", arguments={"i": i})),
+            GenerationComplete(finish_reason="tool_calls"),
+        ]
+        for i in range(max_steps - 1)
+    ]
+    client = ScriptedClient(turns)
+    config = LoopConfig(
+        steps=(stuckness_step, budget_step, stream_step, tool_call_step), max_steps=max_steps
+    )
+
+    runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, config)
+    runner.execute()
+
+    assert runner.error == f"run stopped: generation budget of {max_steps} exhausted"
+    last_event = next(subscriber)
+    while not isinstance(last_event, RunFinished):
+        last_event = next(subscriber)
+    assert last_event == RunFinished(
+        error=f"run stopped: generation budget of {max_steps} exhausted"
+    )
+
+    session.append(UserMessageRecorded(content="continue please"))
+    followup_client = ScriptedClient(
+        [[TextDelta(text="picking up"), GenerationComplete(finish_reason="stop")]]
+    )
+    followup_runner = LoopRunner(followup_client, _echo_registry(), Bus(), session, 128_000, config)
+    followup_runner.execute()
+
+    assert followup_runner.error is None
+    tool_events = [event for event in session.events() if isinstance(event, ToolCallRecorded)]
+    assert len(tool_events) == max_steps - 1
+
+
+def test_delegate_hitting_max_delegate_steps_still_returns_existing_failure_text() -> None:
+    bus = Bus()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    delegate_call = ToolCall(id="1", name="delegate", arguments={"question": "what is x?"})
+    turns: list[list[StreamEvent]] = [
+        [ToolCallReady(tool_call=delegate_call), GenerationComplete(finish_reason="tool_calls")],
+    ]
+    turns.extend(
+        [TextDelta(text="thinking"), GenerationComplete(finish_reason="stop")]
+        for _ in range(MAX_DELEGATE_STEPS)
+    )
+    client = ScriptedClient(turns)
+
+    runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    tool_events = [event for event in session.events() if isinstance(event, ToolCallRecorded)]
+    assert tool_events[-1].name == "delegate"
+    assert tool_events[-1].is_error is True
+    assert f"did not answer question within {MAX_DELEGATE_STEPS} steps" in tool_events[-1].result
+    assert "generation budget" not in tool_events[-1].result

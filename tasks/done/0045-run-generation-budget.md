@@ -10,7 +10,7 @@ Live run 2026-09-17_15-32-14 would never have ended: top-level runs have `max_st
 * **Everything is recoverable.** The session, facts, and plan survive; the user can send a follow-up message and the next run continues from the ledger. That is the vision's recoverability applied to time, not just context.
 * **No new configuration surface.** Constants in `core/loop.py`; callers that need a different budget (delegates, tests) already pass their own `LoopConfig`.
 
-## [ ] T001 Budget with wind-down
+## [X] T001 Budget with wind-down
 
 ### Description
 
