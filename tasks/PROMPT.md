@@ -18,3 +18,5 @@ Never move an incomplete milestone to `tasks/done/` or commit with a failing `ma
 For unspecified design decisions, choose the simplest option consistent with `VISION.md` and the existing codebase.
 
 You are running completely unattended. Never ask for clarification, confirmation, approval, or input. If blocked by something that cannot be resolved from the repository, stop without marking the affected task complete.
+
+You are running in one-shot mode: the process terminates the moment your final response ends, and any background jobs die with it. Never start a command in the background and end your turn expecting to be re-invoked when it finishes — that notification will never come and the run will be counted as failed. Run long commands such as `make evals` in the foreground with a sufficient timeout; if a command must run in the background, keep waiting on it with further tool calls in the same turn and only finish after it has completed and you have committed its results.

@@ -117,6 +117,19 @@ branch_exists() {
 prepare_worktree() {
   local branch_name="$1"
 
+  if [[ -d "$WORKTREE_DIR" ]]; then
+    local current_branch
+    current_branch="$(git -C "$WORKTREE_DIR" branch --show-current 2>/dev/null)"
+    if [[ "$current_branch" == "$branch_name" ]]; then
+      echo -e "${DIM}Resuming existing worktree on $branch_name.${RESET}"
+      return 0
+    fi
+    if [[ -n "$(git -C "$WORKTREE_DIR" status --porcelain 2>/dev/null)" ]]; then
+      echo -e "\033[31mWorktree at $WORKTREE_DIR is on '$current_branch' with uncommitted changes; refusing to remove it.${RESET}"
+      return 1
+    fi
+  fi
+
   remove_worktree
 
   if branch_exists "$branch_name"; then
