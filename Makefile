@@ -1,4 +1,4 @@
-.PHONY: lint format typecheck test build check code claude_attach run run_in_docker evals stop_code
+.PHONY: lint format typecheck deadcode arch test build check code claude_attach run run_in_docker evals stop_code
 
 lint:
 	uv run ruff check .
@@ -11,13 +11,19 @@ format:
 typecheck:
 	uv run pyright
 
+deadcode:
+	uv run vulture
+
+arch:
+	uv run tach check
+
 test:
 	uv run pytest
 
 build:
 	uv build
 
-check: lint typecheck test build
+check: lint typecheck deadcode arch test build
 
 code:
 	bin/code.sh

@@ -1,0 +1,33 @@
+exclude = ["**/__pycache__", "tests", ".venv"]
+source_roots = ["src"]
+
+[[modules]]
+path = "pico"
+depends_on = ["pico.core", "pico.debug", "pico.llm", "pico.session", "pico.tui"]
+
+[[modules]]
+path = "pico.llm"
+depends_on = []
+
+[[modules]]
+path = "pico.session"
+depends_on = ["pico.llm"]
+
+[[modules]]
+path = "pico.core"
+depends_on = ["pico.llm", "pico.session"]
+
+[[modules]]
+path = "pico.debug"
+depends_on = ["pico.llm"]
+
+[[modules]]
+path = "pico.tui"
+depends_on = ["pico.core"]
+
+[[modules]]
+path = "pico.evals"
+depends_on = ["pico", "pico.core", "pico.llm", "pico.session"]
+
+[cache]
+file_dependencies = ["pyproject.toml", "uv.lock"]
