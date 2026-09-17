@@ -97,4 +97,4 @@ Notes:
   observing a frame that does not change over wall-clock time.
 * Slowest TUI test fell from 2.00s to 0.50s; `tests/tui` serial wall time from 21.8s to 15.1s.
 
-Commit: d34faa6
+Commit: 267565f
