@@ -38,6 +38,16 @@ def latest_session_id(conn: sqlite3.Connection) -> str | None:
     return None if row is None else str(row["session_id"])
 
 
+def _decode(kind: str, payload: str) -> SessionEvent:
+    event_type = _EVENT_KINDS.get(kind)
+    if event_type is None:
+        raise UnknownEventKindError(kind)
+    fields = cast(dict[str, Any], json.loads(payload))
+    if event_type is PlanSet:
+        fields["steps"] = tuple(cast(list[str], fields["steps"]))
+    return event_type(**fields)
+
+
 class Session:
     def __init__(self, conn: sqlite3.Connection, session_id: str) -> None:
         self._conn = conn
@@ -46,6 +56,10 @@ class Session:
     @property
     def session_id(self) -> str:
         return self._session_id
+
+    @property
+    def root_id(self) -> str:
+        return self._session_id.split("/", 1)[0]
 
     @property
     def connection(self) -> sqlite3.Connection:
@@ -65,33 +79,48 @@ class Session:
         kind = type(event).__name__
         payload = json.dumps(asdict(event))
         created_at = datetime.now(UTC).isoformat()
+        root = self.root_id
         with self._conn:
+            fact_id = None
+            if isinstance(event, ToolCallRecorded):
+                row = self._conn.execute(
+                    "SELECT COALESCE(MAX(fact_id), 0) FROM events "
+                    "WHERE session_id = ? OR session_id LIKE ?",
+                    (root, f"{root}/%"),
+                ).fetchone()
+                fact_id = int(row[0]) + 1
             self._conn.execute(
-                "INSERT INTO events (session_id, seq, kind, payload, created_at) "
-                "SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ? FROM events WHERE session_id = ?",
-                (self._session_id, kind, payload, created_at, self._session_id),
+                "INSERT INTO events (session_id, seq, fact_id, kind, payload, created_at) "
+                "SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ? FROM events WHERE session_id = ?",
+                (self._session_id, fact_id, kind, payload, created_at, self._session_id),
             )
 
-    def records(self) -> Iterator[tuple[int, SessionEvent]]:
+    def records(self) -> Iterator[tuple[int | None, SessionEvent]]:
         rows = self._conn.execute(
-            "SELECT seq, kind, payload FROM events WHERE session_id = ? ORDER BY seq",
+            "SELECT fact_id, kind, payload FROM events WHERE session_id = ? ORDER BY seq",
             (self._session_id,),
         ).fetchall()
         for row in rows:
-            event_type = _EVENT_KINDS.get(row["kind"])
-            if event_type is None:
-                raise UnknownEventKindError(row["kind"])
-            payload = cast(dict[str, Any], json.loads(row["payload"]))
-            if event_type is PlanSet:
-                payload["steps"] = tuple(cast(list[str], payload["steps"]))
-            yield int(row["seq"]), event_type(**payload)
+            fact_id = None if row["fact_id"] is None else int(row["fact_id"])
+            yield fact_id, _decode(row["kind"], row["payload"])
+
+    def tree_records(self) -> Iterator[tuple[int, SessionEvent]]:
+        root = self.root_id
+        rows = self._conn.execute(
+            "SELECT fact_id, kind, payload FROM events "
+            "WHERE fact_id IS NOT NULL AND (session_id = ? OR session_id LIKE ?) "
+            "ORDER BY fact_id",
+            (root, f"{root}/%"),
+        ).fetchall()
+        for row in rows:
+            yield int(row["fact_id"]), _decode(row["kind"], row["payload"])
 
     def events(self) -> Iterator[SessionEvent]:
         return (event for _, event in self.records())
 
     def messages(self) -> list[Message]:
         messages: list[Message] = []
-        for seq, event in self.records():
+        for fact_id, event in self.records():
             match event:
                 case UserMessageRecorded(content=content):
                     messages.append(Message(role=Role.USER, content=content))
@@ -100,7 +129,7 @@ class Session:
                 case ToolCallRecorded(
                     name=name, arguments=arguments, result=result, is_error=is_error
                 ):
-                    call_id = str(seq)
+                    call_id = str(fact_id)
                     messages.append(
                         Message(
                             role=Role.ASSISTANT,

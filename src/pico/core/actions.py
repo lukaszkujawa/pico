@@ -344,7 +344,12 @@ _TOOL_SPECS = {
         name="set_plan",
         description=(
             "Replace the current plan with an ordered checklist of steps. "
-            "The runtime remembers it and shows it to you every turn."
+            "The runtime then runs each unfinished step for you: a fresh agent executes it "
+            "and its answer settles the step, so you see results rather than doing the work. "
+            "That agent sees only the task, the plan, earlier steps' results, and its own "
+            "step text — so write every step to stand alone: name the paths, commands, and "
+            'targets it needs, and never refer to "the files above" or anything only you '
+            "can see."
         ),
         parameters={
             "type": "object",

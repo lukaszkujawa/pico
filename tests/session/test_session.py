@@ -124,7 +124,7 @@ def test_latest_session_id_ignores_delegate_child_sessions() -> None:
     assert latest_session_id(conn) == "parent"
 
 
-def test_records_yields_seqs_in_append_order_starting_at_one() -> None:
+def test_records_pairs_each_event_with_its_fact_id_or_none() -> None:
     conn = connect(":memory:")
     session = Session(conn, "s1")
 
@@ -135,9 +135,9 @@ def test_records_yields_seqs_in_append_order_starting_at_one() -> None:
     records = list(session.records())
 
     assert records == [
-        (1, UserMessageRecorded(content="one")),
-        (2, AssistantMessageRecorded(content="two", thinking="")),
-        (3, ToolCallRecorded(name="echo", arguments={}, result="three", is_error=False)),
+        (None, UserMessageRecorded(content="one")),
+        (None, AssistantMessageRecorded(content="two", thinking="")),
+        (1, ToolCallRecorded(name="echo", arguments={}, result="three", is_error=False)),
     ]
 
 
@@ -151,7 +151,7 @@ def test_events_matches_records_events() -> None:
     assert list(session.events()) == [event for _, event in session.records()]
 
 
-def test_messages_uses_event_seq_as_tool_call_id() -> None:
+def test_messages_uses_the_fact_id_as_tool_call_id() -> None:
     conn = connect(":memory:")
     session = Session(conn, "s1")
 
@@ -163,11 +163,11 @@ def test_messages_uses_event_seq_as_tool_call_id() -> None:
     tool_results = [m.tool_result for m in messages if m.role is Role.TOOL]
     tool_calls = [call for m in messages for call in m.tool_calls]
 
-    assert [call.id for call in tool_calls] == ["1", "3"]
-    assert [result.tool_call_id for result in tool_results if result is not None] == ["1", "3"]
+    assert [call.id for call in tool_calls] == ["1", "2"]
+    assert [result.tool_call_id for result in tool_results if result is not None] == ["1", "2"]
 
 
-def test_child_session_seqs_are_independent_of_parent() -> None:
+def test_child_session_transcript_is_independent_of_parent() -> None:
     conn = connect(":memory:")
     parent = Session(conn, "parent")
     parent.append(UserMessageRecorded(content="a"))
@@ -175,8 +175,11 @@ def test_child_session_seqs_are_independent_of_parent() -> None:
     child = parent.child("delegate/1")
     child.append(UserMessageRecorded(content="c"))
 
-    assert [seq for seq, _ in parent.records()] == [1, 2]
-    assert [seq for seq, _ in child.records()] == [1]
+    assert list(parent.events()) == [
+        UserMessageRecorded(content="a"),
+        UserMessageRecorded(content="b"),
+    ]
+    assert list(child.events()) == [UserMessageRecorded(content="c")]
 
 
 def test_plan_events_round_trip_through_append_and_events() -> None:

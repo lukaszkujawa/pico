@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from pico.core.ledger import Fact, Plan, PlanStep, facts, plan, render_call
 from pico.session import (
     AssistantMessageRecorded,
@@ -28,7 +30,7 @@ def test_facts_skips_error_tool_calls() -> None:
     assert facts(session) == []
 
 
-def test_facts_ids_are_source_event_seqs() -> None:
+def test_facts_ids_number_fact_bearing_events_in_order() -> None:
     session = _session()
     session.append(UserMessageRecorded(content="do it"))
     session.append(AssistantMessageRecorded(content="", thinking=""))
@@ -45,8 +47,8 @@ def test_facts_ids_are_source_event_seqs() -> None:
     )
 
     assert facts(session) == [
-        Fact(id=3, content="a-content", source="read_file", arguments={"path": "a"}),
-        Fact(id=5, content="ok", source="shell", arguments={"command": "x"}),
+        Fact(id=1, content="a-content", source="read_file", arguments={"path": "a"}),
+        Fact(id=3, content="ok", source="shell", arguments={"command": "x"}),
     ]
 
 
@@ -172,3 +174,51 @@ def test_completion_of_superseded_plan_does_not_corrupt_current_plan() -> None:
     session.append(PlanStepCompleted(index=3))
 
     assert plan(session) == Plan(steps=(PlanStep(text="only", done=False),))
+
+
+def test_facts_span_the_whole_run_tree_in_id_order() -> None:
+    session = _session()
+    child = session.child("delegate/1")
+    session.append(ToolCallRecorded(name="shell", arguments={}, result="parent", is_error=False))
+    child.append(ToolCallRecorded(name="shell", arguments={}, result="child", is_error=False))
+    session.append(ToolCallRecorded(name="shell", arguments={}, result="after", is_error=False))
+
+    assert [(fact.id, fact.content) for fact in facts(child)] == [
+        (1, "parent"),
+        (2, "child"),
+        (3, "after"),
+    ]
+    assert facts(child) == facts(session)
+
+
+def test_fact_ids_are_unique_across_nested_sessions() -> None:
+    session = _session()
+    grandchild = session.child("delegate/1").child("delegate/1")
+    sibling = session.child("delegate/2")
+    for node, result in ((session, "a"), (grandchild, "b"), (sibling, "c")):
+        node.append(ToolCallRecorded(name="note", arguments={}, result=result, is_error=False))
+
+    assert [fact.id for fact in facts(session)] == [1, 2, 3]
+
+
+def test_facts_of_another_tree_are_not_visible() -> None:
+    session = _session()
+    other = Session(session.connection, "s2")
+    session.append(ToolCallRecorded(name="note", arguments={}, result="mine", is_error=False))
+    other.append(ToolCallRecorded(name="note", arguments={}, result="theirs", is_error=False))
+
+    assert [fact.content for fact in facts(session)] == ["mine"]
+    assert [fact.content for fact in facts(other)] == ["theirs"]
+
+
+def test_fact_ids_are_stable_across_reopening_the_store(tmp_path: Path) -> None:
+    conn = connect(tmp_path / "session.db")
+    session = Session(conn, "s1")
+    session.append(ToolCallRecorded(name="note", arguments={}, result="first", is_error=False))
+    before = facts(session)
+
+    reopened = Session(connect(tmp_path / "session.db"), "s1")
+    reopened.append(ToolCallRecorded(name="note", arguments={}, result="second", is_error=False))
+
+    assert facts(reopened)[: len(before)] == before
+    assert [fact.id for fact in facts(reopened)] == [1, 2]

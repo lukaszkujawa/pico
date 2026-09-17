@@ -25,7 +25,7 @@ class Fact:
 def facts(session: Session) -> list[Fact]:
     return [
         Fact(id=seq, content=event.result, source=event.name, arguments=event.arguments)
-        for seq, event in session.records()
+        for seq, event in session.tree_records()
         if isinstance(event, ToolCallRecorded)
         and not event.is_error
         and event.name not in BOOKKEEPING_TOOLS

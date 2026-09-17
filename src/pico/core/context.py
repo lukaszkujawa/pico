@@ -193,14 +193,20 @@ def recency_window(
     return [message for _, message in window]
 
 
-def _briefing(session: Session) -> Message | None:
+PLAN_ORCHESTRATED_HINT = (
+    "The runtime runs each unfinished step for you in a fresh agent and marks it done "
+    "when that agent answers. Between steps, revise the plan with set_plan if what came "
+    "back changes it, or finish with answer."
+)
+PLAN_INLINE_HINT = "Keep it current with set_plan and complete_step."
+
+
+def _briefing(session: Session, orchestrated: bool = False) -> Message | None:
     sections: list[str] = []
     current_plan = plan(session)
     if current_plan is not None:
-        sections.append(
-            f"Your current plan:\n{render_plan(current_plan)}\n"
-            "Keep it current with set_plan and complete_step."
-        )
+        hint = PLAN_ORCHESTRATED_HINT if orchestrated else PLAN_INLINE_HINT
+        sections.append(f"Your current plan:\n{render_plan(current_plan)}\n{hint}")
     index = fact_index(facts(session))
     if index:
         sections.append(f"Facts gathered so far:\n{index}")
@@ -214,9 +220,10 @@ def compile_context(
     context_size: int,
     overhead_tokens: int = 0,
     chars_per_token: float = 4.0,
+    orchestrated: bool = False,
 ) -> list[Message]:
     budget = prompt_budget(context_size) - overhead_tokens
-    briefing = _briefing(session)
+    briefing = _briefing(session, orchestrated)
     if briefing is None:
         return recency_window(session.messages(), budget, chars_per_token)
     budget -= message_tokens(briefing, chars_per_token)

@@ -7,6 +7,8 @@ from unittest.mock import patch
 from pico.core.actions import MAX_DELEGATE_DEPTH, register_actions
 from pico.core.bus import Bus
 from pico.core.context import (
+    PLAN_INLINE_HINT,
+    PLAN_ORCHESTRATED_HINT,
     RECENT_UNITS,
     SYSTEM_PROMPT,
     compile_context,
@@ -40,18 +42,22 @@ from pico.core.loop import (
     BUDGET_WIND_DOWN_FRACTION,
     DEFAULT_CHARS_PER_TOKEN,
     DEFAULT_LOOP_CONFIG,
+    DEFAULT_LOOP_STEPS,
     MAX_ACTIONLESS_GENERATIONS,
     MAX_CHARS_PER_TOKEN,
     MAX_DELEGATE_STEPS,
     MAX_INVALID_ACTION_ATTEMPTS,
     MAX_RUN_STEPS,
+    MAX_STEP_STEPS,
     MIN_CHARS_PER_TOKEN,
     RUNNER_ACTIONS,
     LoopConfig,
     LoopRunner,
     StepOutcome,
     budget_step,
+    root_task,
     specs_text,
+    step_orchestration_step,
     stream_step,
     stuckness_step,
     tool_call_step,
@@ -262,7 +268,7 @@ def test_max_steps_reached_without_terminal_outcome_publishes_finished() -> None
     )
     runner.execute()
 
-    assert len(calls) == 3
+    assert len(calls) == 4
     assert next(subscriber) == RunStarted()
     assert next(subscriber) == RunFinished()
 
@@ -449,7 +455,7 @@ def test_single_tool_call_round_trip() -> None:
         RunStarted(),
         GenerationCompleted(),
         ToolCallStarted(id="0", name="echo", arguments={"text": "hi"}),
-        ToolCallFinished(id="0", tool_call=call, result="hi", is_error=False, fact_id=2),
+        ToolCallFinished(id="0", tool_call=call, result="hi", is_error=False, fact_id=1),
         AssistantTextStarted(id="1"),
         AssistantTextDelta(id="1", text="done"),
         GenerationCompleted(),
@@ -588,7 +594,7 @@ def test_tool_call_delta_from_llm_is_forwarded_with_the_calls_pane_id() -> None:
         ToolCallArgumentsDelta(id="0", name="echo", text='{"text":'),
         GenerationCompleted(),
         ToolCallStarted(id="0", name="echo", arguments={"text": "hi"}),
-        ToolCallFinished(id="0", tool_call=call, result="hi", is_error=False, fact_id=2),
+        ToolCallFinished(id="0", tool_call=call, result="hi", is_error=False, fact_id=1),
         GenerationCompleted(),
         RunFinished(),
     ]
@@ -772,10 +778,11 @@ def test_cancel_set_before_second_tool_call_leaves_it_unexecuted() -> None:
     assert [event.name for event in tool_events] == ["first"]
 
 
-def test_default_loop_config_is_stuckness_budget_stream_then_tool_call() -> None:
+def test_default_loop_config_is_stuckness_budget_steps_stream_then_tool_call() -> None:
     assert DEFAULT_LOOP_CONFIG.steps == (
         stuckness_step,
         budget_step,
+        step_orchestration_step,
         stream_step,
         tool_call_step,
     )
@@ -1351,7 +1358,7 @@ def test_repeating_delegate_is_stopped_by_stuckness() -> None:
         for event in session.child("delegate/2").events()
         if isinstance(event, ToolCallRecorded)
     ]
-    assert len(child_calls) == STUCK_THRESHOLD
+    assert len(child_calls) == STUCK_THRESHOLD + 1
     parent = next(event for event in session.events() if isinstance(event, ToolCallRecorded))
     assert parent.is_error is True
     assert "delegate failed" in parent.result
@@ -1454,8 +1461,12 @@ def test_repeated_identical_action_hits_hard_stuckness_before_max_steps() -> Non
     runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    tool_events = [event for event in session.events() if isinstance(event, ToolCallRecorded)]
-    assert len(tool_events) == STUCK_THRESHOLD
+    repeats = [
+        event
+        for event in session.events()
+        if isinstance(event, ToolCallRecorded) and not event.is_error
+    ]
+    assert len(repeats) == STUCK_THRESHOLD
 
 
 def test_nudge_below_stuck_threshold_is_appended_as_user_message_not_persisted() -> None:
@@ -1630,7 +1641,7 @@ def test_model_recovers_a_truncated_fact_via_read_fact_and_cites_it() -> None:
     client = ScriptedClient(
         [
             [
-                ToolCallReady(tool_call=ToolCall(id="1", name="read_fact", arguments={"id": 2})),
+                ToolCallReady(tool_call=ToolCall(id="1", name="read_fact", arguments={"id": 1})),
                 GenerationComplete(finish_reason="tool_calls"),
             ],
             [
@@ -1638,7 +1649,7 @@ def test_model_recovers_a_truncated_fact_via_read_fact_and_cites_it() -> None:
                     tool_call=ToolCall(
                         id="2",
                         name="answer",
-                        arguments={"content": "it is needles", "citations": [2]},
+                        arguments={"content": "it is needles", "citations": [1]},
                     )
                 ),
                 GenerationComplete(finish_reason="tool_calls"),
@@ -1651,8 +1662,8 @@ def test_model_recovers_a_truncated_fact_via_read_fact_and_cites_it() -> None:
 
     handle = client.seen_messages[0][-1]
     assert handle.tool_result is not None
-    assert "fact 2 shell() truncated" in handle.tool_result.content
-    assert "call read_fact(2) for the full content" in handle.tool_result.content
+    assert "fact 1 shell() truncated" in handle.tool_result.content
+    assert "call read_fact(1) for the full content" in handle.tool_result.content
 
     recalled = [
         event
@@ -1788,7 +1799,9 @@ def test_plan_message_tracks_completion_and_appears_exactly_once() -> None:
         ]
     )
 
-    LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
+    LoopRunner(
+        client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG, depth=MAX_DELEGATE_DEPTH
+    ).execute()
 
     assert _plan_messages(client.seen_messages[0]) == []
     [after_set] = _plan_messages(client.seen_messages[1])
@@ -1820,7 +1833,9 @@ def test_plan_message_is_never_persisted_to_the_session() -> None:
         ]
     )
 
-    LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
+    LoopRunner(
+        client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG, depth=MAX_DELEGATE_DEPTH
+    ).execute()
 
     events = list(session.events())
     assert PlanSet(steps=("one",)) in events
@@ -1986,7 +2001,7 @@ def test_overhead_shrinks_the_conversation_budget() -> None:
     unaware = next(m for m in compile_context(session, context_size) if m.role is Role.TOOL)
     assert sent.tool_result is not None
     assert unaware.tool_result is not None
-    assert "fact 2" in sent.tool_result.content
+    assert "fact 1" in sent.tool_result.content
     assert unaware.tool_result.content == "a" * 3_000
 
 
@@ -2077,7 +2092,7 @@ def test_second_call_estimates_with_the_updated_ratio() -> None:
     assert first[0].tool_result is not None
     assert second[0].tool_result is not None
     assert first[0].tool_result.content == "a" * 3_600
-    assert "fact 2" in second[0].tool_result.content
+    assert "fact 1" in second[0].tool_result.content
 
 
 def test_pinned_overflow_publishes_budget_exceeded_before_the_request() -> None:
@@ -2293,10 +2308,11 @@ def test_repeated_failing_verification_hits_stuckness_not_invalid_action_cap() -
     runner.execute()
 
     assert runner.final_answer is None
-    assert runner.invalid_action_attempts == 0
     recorded = [event for event in session.events() if isinstance(event, ToolCallRecorded)]
-    assert len(recorded) == STUCK_THRESHOLD
+    assert len(recorded) == STUCK_THRESHOLD + 1
     assert all(event.is_error for event in recorded)
+    assert runner.error is not None
+    assert "stuck" in runner.error
 
 
 def test_answer_verification_timeout_is_a_tool_error_not_an_invalid_action() -> None:
@@ -2704,7 +2720,9 @@ def test_narration_with_unfinished_plan_is_nudged_and_run_continues() -> None:
         ]
     )
 
-    runner = LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner = LoopRunner(
+        client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG, depth=MAX_DELEGATE_DEPTH
+    )
     runner.execute()
 
     assert runner.final_answer == "all reviewed"
@@ -2727,7 +2745,9 @@ def test_repeated_narration_with_unfinished_plan_stops_the_run_with_an_error() -
     ]
     client = ScriptedClient(turns)
 
-    runner = LoopRunner(client, registry, bus, session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner = LoopRunner(
+        client, registry, bus, session, 128_000, DEFAULT_LOOP_CONFIG, depth=MAX_DELEGATE_DEPTH
+    )
     runner.execute()
 
     assert runner.final_answer is None
@@ -2748,6 +2768,7 @@ def test_stuck_run_carries_its_reason_on_run_finished() -> None:
         ]
         for i in range(STUCK_THRESHOLD)
     ]
+    turns.append(_text_turn("I have nothing to add"))
     runner = LoopRunner(
         ScriptedClient(turns), _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG
     )
@@ -2861,7 +2882,7 @@ def test_search_facts_returns_ids_with_reasons_from_the_sub_task() -> None:
             ],
             [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
         ],
-        ["2", "2", "[2] the note records how the core loop builds its prompt"],
+        ["1", "1", "[1] the note records how the core loop builds its prompt"],
     )
 
     LoopRunner(client, tools, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
@@ -2872,7 +2893,7 @@ def test_search_facts_returns_ids_with_reasons_from_the_sub_task() -> None:
         if isinstance(event, ToolCallRecorded) and event.name == "search_facts"
     ]
     assert recorded[0].is_error is False
-    assert recorded[0].result.startswith("[2] the note records how the core loop builds its prompt")
+    assert recorded[0].result.startswith("[1] the note records how the core loop builds its prompt")
     assert client.seen_tools[1] == []
 
 
@@ -2911,7 +2932,7 @@ def test_search_facts_inside_a_delegate_sends_no_tool_specs() -> None:
             ],
             [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
         ],
-        ["2", "2", "[2] seed is the match"],
+        ["1", "1", "[1] seed is the match"],
     )
 
     LoopRunner(client, tools, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
@@ -2921,7 +2942,7 @@ def test_search_facts_inside_a_delegate_sends_no_tool_specs() -> None:
         for event in session.child("delegate/2").events()
         if isinstance(event, ToolCallRecorded) and event.name == "search_facts"
     ]
-    assert child[0].result.startswith("[2] seed is the match")
+    assert child[0].result.startswith("[1] seed is the match")
     assert [] in client.seen_tools
 
 
@@ -2949,7 +2970,7 @@ def test_search_facts_without_relevant_facts_offers_the_fact_index() -> None:
     )
     assert recorded.is_error is False
     assert "no relevant facts found for" in recorded.result
-    assert "[2] note(): the run loop compiles context" in recorded.result
+    assert "[1] note(): the run loop compiles context" in recorded.result
 
 
 def test_search_facts_with_empty_query_is_an_invalid_action() -> None:
@@ -3156,7 +3177,7 @@ def test_budget_step_at_wind_down_threshold_sets_nudge_with_remaining_count() ->
     assert "answer" in runner.pending_nudge
 
 
-def test_budget_step_at_max_steps_fails_the_run_explicitly() -> None:
+def test_budget_step_leaves_the_kill_to_the_last_words_generation() -> None:
     max_steps = 10
     runner = LoopRunner(
         FailingClient(),
@@ -3167,9 +3188,9 @@ def test_budget_step_at_max_steps_fails_the_run_explicitly() -> None:
         LoopConfig(steps=(), max_steps=max_steps),
     )
     runner.iterations = max_steps
-    outcome = budget_step(runner)
-    assert outcome == "done"
-    assert runner.error == f"run stopped: generation budget of {max_steps} exhausted"
+
+    assert budget_step(runner) == "continue"
+    assert runner.error is None
 
 
 def test_run_reaching_soft_threshold_gets_wind_down_nudge_then_answers_normally() -> None:
@@ -3221,8 +3242,9 @@ def test_run_exhausting_budget_fails_explicitly_and_stays_resumable() -> None:
             ToolCallReady(tool_call=ToolCall(id=str(i), name="echo", arguments={"i": i})),
             GenerationComplete(finish_reason="tool_calls"),
         ]
-        for i in range(max_steps - 1)
+        for i in range(max_steps)
     ]
+    turns.append(_text_turn("I have nothing to say"))
     client = ScriptedClient(turns)
     config = LoopConfig(
         steps=(stuckness_step, budget_step, stream_step, tool_call_step), max_steps=max_steps
@@ -3231,13 +3253,12 @@ def test_run_exhausting_budget_fails_explicitly_and_stays_resumable() -> None:
     runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, config)
     runner.execute()
 
-    assert runner.error == f"run stopped: generation budget of {max_steps} exhausted"
+    expected = f"run stopped: the generation budget of {max_steps} is spent"
+    assert runner.error == expected
     last_event = next(subscriber)
     while not isinstance(last_event, RunFinished):
         last_event = next(subscriber)
-    assert last_event == RunFinished(
-        error=f"run stopped: generation budget of {max_steps} exhausted"
-    )
+    assert last_event == RunFinished(error=expected)
 
     session.append(UserMessageRecorded(content="continue please"))
     followup_client = ScriptedClient(
@@ -3248,7 +3269,7 @@ def test_run_exhausting_budget_fails_explicitly_and_stays_resumable() -> None:
 
     assert followup_runner.error is None
     tool_events = [event for event in session.events() if isinstance(event, ToolCallRecorded)]
-    assert len(tool_events) == max_steps - 1
+    assert len(tool_events) == max_steps
 
 
 def test_delegate_hitting_max_delegate_steps_still_returns_existing_failure_text() -> None:
@@ -3273,3 +3294,540 @@ def test_delegate_hitting_max_delegate_steps_still_returns_existing_failure_text
     assert tool_events[-1].is_error is True
     assert f"did not answer question within {MAX_DELEGATE_STEPS} steps" in tool_events[-1].result
     assert "generation budget" not in tool_events[-1].result
+
+
+def test_parent_can_read_and_cite_a_fact_minted_inside_a_delegate() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    tools = ToolRegistry()
+    register_actions(tools, session)
+    client = ScriptedClient(
+        [
+            [
+                ToolCallReady(
+                    tool_call=ToolCall(id="1", name="delegate", arguments={"question": "q"})
+                ),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [
+                ToolCallReady(
+                    tool_call=ToolCall(
+                        id="c1", name="note", arguments={"content": "the port is 8421"}
+                    )
+                ),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [
+                ToolCallReady(
+                    tool_call=ToolCall(
+                        id="c2", name="answer", arguments={"content": "done", "citations": [1]}
+                    )
+                ),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [
+                ToolCallReady(tool_call=ToolCall(id="2", name="read_fact", arguments={"id": 1})),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [
+                ToolCallReady(
+                    tool_call=ToolCall(
+                        id="3", name="answer", arguments={"content": "8421", "citations": [1]}
+                    )
+                ),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+        ]
+    )
+
+    runner = LoopRunner(client, tools, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    recalled = next(
+        event
+        for event in session.events()
+        if isinstance(event, ToolCallRecorded) and event.name == "read_fact"
+    )
+    assert recalled.result == "the port is 8421"
+    assert recalled.is_error is False
+    assert runner.final_answer == "8421"
+
+
+def test_child_sees_parent_facts_in_its_briefing_index() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    session.append(
+        ToolCallRecorded(name="note", arguments={}, result="the port is 8421", is_error=False)
+    )
+    tools = ToolRegistry()
+    register_actions(tools, session)
+    client = ScriptedClient(
+        [
+            [
+                ToolCallReady(
+                    tool_call=ToolCall(id="1", name="delegate", arguments={"question": "q"})
+                ),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [
+                ToolCallReady(
+                    tool_call=ToolCall(
+                        id="c1", name="answer", arguments={"content": "ok", "citations": [1]}
+                    )
+                ),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
+        ]
+    )
+
+    LoopRunner(client, tools, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
+
+    briefing = client.seen_messages[1][1]
+    assert "[1] note(): the port is 8421" in briefing.content
+
+
+def _step_children(session: Session) -> list[Session]:
+    rows = session.connection.execute(
+        "SELECT DISTINCT session_id FROM events "
+        "WHERE session_id LIKE ? AND session_id NOT LIKE ? ORDER BY id",
+        (f"{session.session_id}/step/%", f"{session.session_id}/step/%/%"),
+    ).fetchall()
+    return [Session(session.connection, str(row[0])) for row in rows]
+
+
+def _step_session() -> tuple[Session, ToolRegistry]:
+    session = _session()
+    session.append(UserMessageRecorded(content="survey the repository"))
+    registry = ToolRegistry()
+    register_actions(registry, session)
+    return session, registry
+
+
+def test_each_plan_step_runs_in_its_own_child_session() -> None:
+    session, registry = _step_session()
+    client = ScriptedClient(
+        [
+            _set_plan_turn(["count the files", "name the largest"]),
+            _answer_turn("there are 12 files"),
+            _text_turn("good"),
+            _answer_turn("loop.py is largest"),
+            _answer_turn("12 files, loop.py is largest"),
+        ]
+    )
+
+    runner = LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    assert runner.final_answer == "12 files, loop.py is largest"
+    first, second = _step_children(session)
+    assert first.session_id != second.session_id
+    assert list(first.events()) != list(second.events())
+    assert "count the files" in root_task(first)
+    assert "name the largest" in root_task(second)
+
+
+def test_second_step_prompt_carries_the_first_steps_result_and_plan_progress() -> None:
+    session, registry = _step_session()
+    client = ScriptedClient(
+        [
+            _set_plan_turn(["count the files", "name the largest"]),
+            _answer_turn("there are 12 files"),
+            _text_turn("good"),
+            _answer_turn("loop.py is largest"),
+            _answer_turn("done"),
+        ]
+    )
+
+    LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
+
+    second = root_task(_step_children(session)[1])
+    assert "survey the repository" in second
+    assert "[x] 0. count the files" in second
+    assert "[ ] 1. name the largest" in second
+    assert "there are 12 files" in second
+
+
+def test_accepted_child_answer_settles_the_step_without_complete_step() -> None:
+    session, registry = _step_session()
+    client = ScriptedClient(
+        [_set_plan_turn(["count the files"]), _answer_turn("there are 12 files"), _answer_turn()]
+    )
+
+    LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
+
+    assert PlanStepCompleted(index=0) in list(session.events())
+    assert not any(
+        isinstance(event, ToolCallRecorded) and event.name == "complete_step"
+        for event in session.events()
+    )
+    recorded = next(
+        event
+        for event in session.events()
+        if isinstance(event, ToolCallRecorded) and event.name == "step"
+    )
+    assert recorded.result == "there are 12 files"
+    assert recorded.is_error is False
+
+
+def test_step_result_is_a_fact_recoverable_from_anywhere_in_the_tree() -> None:
+    session, registry = _step_session()
+    client = ScriptedClient(
+        [_set_plan_turn(["count the files"]), _answer_turn("there are 12 files"), _answer_turn()]
+    )
+
+    LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
+
+    step_facts = [fact for fact in facts(session) if fact.source == "step"]
+    assert [fact.content for fact in step_facts] == ["there are 12 files"]
+    assert facts(_step_children(session)[0]) == facts(session)
+
+
+def test_settled_step_is_not_re_run_when_the_parent_does_nothing() -> None:
+    session, registry = _step_session()
+    client = ScriptedClient(
+        [
+            _set_plan_turn(["count the files"]),
+            _answer_turn("there are 12 files"),
+            _text_turn("thinking"),
+            _answer_turn("done"),
+        ]
+    )
+
+    LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
+
+    steps = [
+        event
+        for event in session.events()
+        if isinstance(event, ToolCallRecorded) and event.name == "step"
+    ]
+    assert len(steps) == 1
+
+
+def test_revising_the_plan_changes_which_step_runs_next() -> None:
+    session, registry = _step_session()
+    client = ScriptedClient(
+        [
+            _set_plan_turn(["count the files"]),
+            _answer_turn("there are 12 files"),
+            _set_plan_turn(["count the files", "name the largest"]),
+            _answer_turn("loop.py is largest"),
+            _answer_turn("done"),
+        ]
+    )
+
+    LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
+
+    steps = [
+        event
+        for event in session.events()
+        if isinstance(event, ToolCallRecorded) and event.name == "step"
+    ]
+    assert [event.arguments["step"] for event in steps] == ["count the files", "count the files"]
+    assert [event.result for event in steps] == ["there are 12 files", "loop.py is largest"]
+
+
+def test_failed_step_is_retried_once_then_fails_the_node() -> None:
+    session, registry = _step_session()
+    client = ScriptedClient(
+        [
+            _set_plan_turn(["count the files"]),
+            *[_text_turn(f"no idea {index}") for index in range(5)],
+        ]
+    )
+
+    runner = LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    steps = [
+        event
+        for event in session.events()
+        if isinstance(event, ToolCallRecorded) and event.name == "step"
+    ]
+    assert len(steps) == 2
+    assert all(event.is_error for event in steps)
+    assert runner.error is not None
+    assert "count the files" in runner.error
+    assert not any(isinstance(event, PlanStepCompleted) for event in session.events())
+
+
+def test_parent_context_after_a_step_holds_the_result_but_no_child_transcript() -> None:
+    session, registry = _step_session()
+    client = ScriptedClient(
+        [
+            _set_plan_turn(["count the files"]),
+            [
+                ToolCallReady(
+                    tool_call=ToolCall(id="c1", name="note", arguments={"content": "private"})
+                ),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            _answer_turn("there are 12 files"),
+            _answer_turn("done"),
+        ]
+    )
+
+    LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
+
+    parent_window = "".join(message_text(message) for message in client.seen_messages[-1][2:])
+    assert "there are 12 files" in parent_window
+    assert "private" not in parent_window
+
+
+def test_a_step_child_may_plan_and_recurse_into_its_own_children() -> None:
+    session, registry = _step_session()
+    client = ScriptedClient(
+        [
+            _set_plan_turn(["survey the code"]),
+            _set_plan_turn(["read loop.py"]),
+            _answer_turn("loop.py drives the run"),
+            _answer_turn("the survey is done"),
+            _answer_turn("all done"),
+        ]
+    )
+
+    runner = LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    [child] = _step_children(session)
+    [grandchild] = _step_children(child)
+    assert "read loop.py" in root_task(grandchild)
+    assert runner.final_answer == "all done"
+
+
+def test_plan_at_max_depth_runs_inline_with_no_child_spawned() -> None:
+    session, registry = _step_session()
+    client = ScriptedClient(
+        [
+            _set_plan_turn(["count the files"]),
+            [
+                ToolCallReady(
+                    tool_call=ToolCall(id="2", name="complete_step", arguments={"index": 0})
+                ),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            _answer_turn("done"),
+        ]
+    )
+
+    runner = LoopRunner(
+        client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG, depth=MAX_DELEGATE_DEPTH
+    )
+    runner.execute()
+
+    assert runner.final_answer == "done"
+    assert PlanStepCompleted(index=0) in list(session.events())
+    assert not any(
+        isinstance(event, ToolCallRecorded) and event.name == "step" for event in session.events()
+    )
+
+
+def test_a_run_without_a_plan_spawns_no_step_children() -> None:
+    session, registry = _step_session()
+    client = ScriptedClient([_answer_turn("nothing to plan")])
+
+    runner = LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    assert runner.final_answer == "nothing to plan"
+    assert not any(
+        isinstance(event, ToolCallRecorded) and event.name == "step" for event in session.events()
+    )
+
+
+def test_set_plan_description_names_fresh_agents_and_self_contained_steps() -> None:
+    registry = ToolRegistry()
+    register_actions(registry, _session())
+
+    description = next(spec for spec in registry.specs() if spec.name == "set_plan").description
+
+    assert "fresh agent" in description
+    assert "stand alone" in description
+
+
+def test_orchestrated_briefing_replaces_the_complete_step_hint() -> None:
+    session, registry = _step_session()
+    client = ScriptedClient(
+        [_set_plan_turn(["count the files"]), _answer_turn("12"), _answer_turn("done")]
+    )
+
+    LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
+
+    briefing = client.seen_messages[-1][1]
+    assert PLAN_ORCHESTRATED_HINT in briefing.content
+    assert PLAN_INLINE_HINT not in briefing.content
+
+
+def _repeat_turns(count: int) -> list[list[StreamEvent]]:
+    return [
+        [
+            ToolCallReady(tool_call=ToolCall(id=str(i), name="echo", arguments={"text": "same"})),
+            GenerationComplete(finish_reason="tool_calls"),
+        ]
+        for i in range(count)
+    ]
+
+
+def test_budget_exhaustion_forces_a_final_answer_that_becomes_the_result() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    max_steps = 3
+    turns = [*_repeat_turns(max_steps), _answer_turn("what I found so far")]
+    client = ScriptedClient(turns)
+    config = LoopConfig(steps=DEFAULT_LOOP_STEPS, max_steps=max_steps)
+
+    runner = LoopRunner(client, _echo_registry(), Bus(), session, 128_000, config)
+    runner.execute()
+
+    assert runner.final_answer == "what I found so far"
+    assert runner.error is None
+    nudge = client.seen_messages[-1][-1]
+    assert nudge.role is Role.USER
+    assert "final generation" in nudge.content
+    assert "budget" in nudge.content
+
+
+def test_the_final_generation_offers_only_the_answer_tool() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    max_steps = 2
+    client = ScriptedClient([*_repeat_turns(max_steps), _answer_turn("all I have")])
+    config = LoopConfig(steps=DEFAULT_LOOP_STEPS, max_steps=max_steps)
+
+    LoopRunner(client, _echo_registry(), Bus(), session, 128_000, config).execute()
+
+    assert [spec.name for spec in client.seen_tools[-1]] == ["answer"]
+    assert len(client.seen_tools[0]) > 1
+
+
+def test_a_stuck_node_answers_before_the_stuck_failure() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    turns = [*_repeat_turns(STUCK_THRESHOLD), _answer_turn("partial findings")]
+
+    runner = LoopRunner(
+        ScriptedClient(turns), _echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG
+    )
+    runner.execute()
+
+    assert runner.final_answer == "partial findings"
+    assert runner.error is None
+
+
+def test_a_non_answer_call_in_the_final_generation_keeps_the_original_failure() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    max_steps = 2
+    turns = [*_repeat_turns(max_steps + 1)]
+    client = ScriptedClient(turns)
+    config = LoopConfig(steps=DEFAULT_LOOP_STEPS, max_steps=max_steps)
+
+    runner = LoopRunner(client, _echo_registry(), Bus(), session, 128_000, config)
+    runner.execute()
+
+    assert runner.final_answer is None
+    assert runner.error == f"run stopped: the generation budget of {max_steps} is spent"
+    rejected = [event for event in session.events() if isinstance(event, ToolCallRecorded)][-1]
+    assert rejected.is_error is True
+    assert "answer is the only tool left" in rejected.result
+
+
+def test_silence_in_the_final_generation_fails_with_the_original_error() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    max_steps = 2
+    client = ScriptedClient([*_repeat_turns(max_steps), _text_turn("no comment")])
+    config = LoopConfig(steps=DEFAULT_LOOP_STEPS, max_steps=max_steps)
+
+    runner = LoopRunner(client, _echo_registry(), Bus(), session, 128_000, config)
+    runner.execute()
+
+    assert runner.final_answer is None
+    assert runner.error == f"run stopped: the generation budget of {max_steps} is spent"
+
+
+def test_a_step_child_that_dies_returns_a_partial_answer_marked_partial() -> None:
+    session, registry = _step_session()
+    repeat: list[StreamEvent] = [
+        ToolCallReady(tool_call=ToolCall(id="c", name="shell", arguments={"command": "true"})),
+        GenerationComplete(finish_reason="tool_calls"),
+    ]
+    client = ScriptedClient(
+        [
+            _set_plan_turn(["count the files"]),
+            *[list(repeat) for _ in range(STUCK_THRESHOLD)],
+            _answer_turn("I counted 7 before running out"),
+            _answer_turn("done"),
+        ]
+    )
+
+    runner = LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    recorded = next(
+        event
+        for event in session.events()
+        if isinstance(event, ToolCallRecorded) and event.name == "step"
+    )
+    assert recorded.is_error is False
+    assert recorded.result.startswith("partial — you are stuck")
+    assert "I counted 7 before running out" in recorded.result
+    assert PlanStepCompleted(index=0) in list(session.events())
+    assert runner.final_answer == "done"
+
+
+def test_the_wind_down_nudge_still_fires_before_the_final_generation() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    max_steps = 5
+    client = ScriptedClient([*_repeat_turns(max_steps), _answer_turn("wrapping up")])
+    config = LoopConfig(steps=DEFAULT_LOOP_STEPS, max_steps=max_steps)
+
+    LoopRunner(client, _echo_registry(), Bus(), session, 128_000, config).execute()
+
+    nudges = [
+        message.content
+        for messages in client.seen_messages
+        for message in messages[-1:]
+        if message.role is Role.USER and "generation budget" in message.content
+    ]
+    assert any("generations remain" in nudge for nudge in nudges)
+    assert "final generation" in client.seen_messages[-1][-1].content
+
+
+def test_a_step_child_exhausting_its_budget_answers_partially() -> None:
+    session, registry = _step_session()
+    client = ScriptedClient(
+        [
+            _set_plan_turn(["count the files"]),
+            *[
+                [
+                    ToolCallReady(
+                        tool_call=ToolCall(
+                            id="c", name="shell", arguments={"command": f"echo {index}"}
+                        )
+                    ),
+                    GenerationComplete(finish_reason="tool_calls"),
+                ]
+                for index in range(MAX_STEP_STEPS)
+            ],
+            _answer_turn("I got as far as 7 files"),
+            _answer_turn("done"),
+        ]
+    )
+
+    runner = LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    recorded = next(
+        event
+        for event in session.events()
+        if isinstance(event, ToolCallRecorded) and event.name == "step"
+    )
+    assert recorded.is_error is False
+    assert recorded.result == (
+        f"partial — the generation budget of {MAX_STEP_STEPS} is spent:\nI got as far as 7 files"
+    )
+    parent_prompt = "".join(message_text(message) for message in client.seen_messages[-1])
+    assert "partial —" in parent_prompt
+    assert runner.final_answer == "done"

@@ -271,6 +271,68 @@ def _check_locate_owner(directory: Path, answer: str) -> bool:
     )
 
 
+DEPOT_NAMES = ("harbour", "quarry", "foundry", "orchard")
+DEPOT_ENTRIES = 700
+AUTHORITATIVE_MARK = "7"
+MANIFEST_DEPOT = "harbour"
+
+
+def _depot_amount(depot: int, entry: int) -> int:
+    return (depot + 1) * 3 + (entry % 11)
+
+
+def _is_authoritative(entry: int) -> bool:
+    return str(entry).endswith(AUTHORITATIVE_MARK)
+
+
+def _depot_lines(depot: int) -> list[str]:
+    return [
+        f"seal={entry:05d} amount={_depot_amount(depot, entry)} "
+        f"note=routine consignment logged at dock {entry % 13}"
+        for entry in range(DEPOT_ENTRIES)
+    ]
+
+
+def _depot_total(depot: int) -> int:
+    return sum(
+        _depot_amount(depot, entry) for entry in range(DEPOT_ENTRIES) if _is_authoritative(entry)
+    )
+
+
+EXPECTED_DEPOT_TOTALS = {name: _depot_total(depot) for depot, name in enumerate(DEPOT_NAMES)}
+EXPECTED_DEPOT_GRAND_TOTAL = sum(EXPECTED_DEPOT_TOTALS.values())
+
+MANIFEST_TEXT = (
+    "CUSTOMS MANIFEST — read before totalling anything\n"
+    "Every depot ledger mixes audited consignments with unaudited decoys.\n"
+    f"A consignment is audited if and only if its seal number ends in {AUTHORITATIVE_MARK}.\n"
+    "All other lines are decoys and must be excluded from every total.\n"
+)
+
+
+def _setup_state_carrying_decomposition(directory: Path) -> None:
+    for depot, name in enumerate(DEPOT_NAMES):
+        depot_dir = directory / "depots" / name
+        depot_dir.mkdir(parents=True)
+        (depot_dir / "ledger.txt").write_text("\n".join(_depot_lines(depot)) + "\n")
+        if name == MANIFEST_DEPOT:
+            (depot_dir / "MANIFEST.txt").write_text(MANIFEST_TEXT)
+
+
+def _check_state_carrying_decomposition(directory: Path, answer: str) -> bool:
+    path = directory / "audited_totals.txt"
+    if not path.is_file():
+        return False
+    report = path.read_text()
+    if not all(
+        _mentions(report, name, str(total)) for name, total in EXPECTED_DEPOT_TOTALS.items()
+    ):
+        return False
+    return _mentions(report, str(EXPECTED_DEPOT_GRAND_TOTAL)) and _mentions(
+        answer, str(EXPECTED_DEPOT_GRAND_TOTAL)
+    )
+
+
 SUITE: tuple[EvalTask, ...] = (
     EvalTask(
         name="read_one_file",
@@ -380,5 +442,19 @@ SUITE: tuple[EvalTask, ...] = (
         ),
         setup=_setup_many_small_steps,
         check=_check_many_small_steps,
+    ),
+    EvalTask(
+        name="state_carrying_decomposition",
+        prompt=(
+            "The depots directory holds one ledger per depot: "
+            f"{', '.join(DEPOT_NAMES)}. "
+            "One depot also holds a customs manifest whose rule decides which lines in every "
+            "ledger count. Find that rule first, then apply it to all four ledgers. "
+            "Write audited_totals.txt with one line per depot as depot,total, followed by a "
+            "final line holding the grand total across all depots. "
+            "Then report the grand total."
+        ),
+        setup=_setup_state_carrying_decomposition,
+        check=_check_state_carrying_decomposition,
     ),
 )

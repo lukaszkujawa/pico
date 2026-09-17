@@ -19,7 +19,7 @@ Everything rides on one thing: the state a child starts from. A fresh context th
 * **Depth is bounded, degrading to inline.** At `MAX_DELEGATE_DEPTH` a plan's steps execute inline in the node's own context — exactly today's behavior — rather than spawning children.
 * **Out of scope, recorded here so it is not forgotten:** step children run on the delegate's quiet `Bus`, so the TUI shows nothing while a step runs; surfacing child progress is follow-up work.
 
-## [ ] T001 Tree-scoped fact ledger
+## [X] T001 Tree-scoped fact ledger
 
 ### Description
 
@@ -33,7 +33,7 @@ Make the fact ledger span the run tree: `facts()` and everything derived from it
 * A run that never spawns children keeps working end to end (ids may differ from today's per-session numbering).
 * `make check` passes.
 
-## [ ] T002 Step orchestration with deterministic handoff
+## [X] T002 Step orchestration with deterministic handoff
 
 ### Description
 
@@ -51,7 +51,7 @@ Add step orchestration to the loop: when the node's plan has unfinished steps an
 * The `set_plan` tool description names the fresh-agent execution model and the self-containment requirement.
 * `make check` passes.
 
-## [ ] T003 Forced partial answer on node death
+## [X] T003 Forced partial answer on node death
 
 ### Description
 
@@ -66,7 +66,7 @@ When any node is about to fail — generation budget exhausted, or the stuckness
 * The root run gets the same guarantee; the wind-down nudge still fires ahead of it unchanged.
 * `make check` passes.
 
-## [ ] T004 State-carrying decomposition eval
+## [X] T004 State-carrying decomposition eval
 
 ### Description
 

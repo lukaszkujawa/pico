@@ -7,8 +7,12 @@ from pico.core.context import (
     prompt_budget,
 )
 from pico.evals.tasks import (
+    AUTHORITATIVE_MARK,
     BROKEN_MODULE,
+    DEPOT_NAMES,
     EXPECTED_BROKEN_TEAM,
+    EXPECTED_DEPOT_GRAND_TOTAL,
+    EXPECTED_DEPOT_TOTALS,
     EXPECTED_INVENTORY_VALUE,
     EXPECTED_LARGEST_REGION,
     EXPECTED_SALES_TOTALS,
@@ -17,6 +21,7 @@ from pico.evals.tasks import (
     EXPECTED_TOP_REGION,
     EXPECTED_TOP_SALES,
     LOG_MARKER,
+    MANIFEST_DEPOT,
     MEASUREMENT_TOTAL,
     REFERENCE_CONTEXT_SIZE,
     SUITE,
@@ -307,3 +312,70 @@ def test_group_by_region_accepts_thousand_separators_in_the_total(tmp_path: Path
 
     assert task.check(tmp_path, f"{EXPECTED_TOP_REGION} with a total of {grouped}")
     assert not task.check(tmp_path, f"{EXPECTED_TOP_REGION} with a total of {EXPECTED_TOP_SALES}0")
+
+
+def _totals_report(totals: dict[str, int]) -> str:
+    lines = [f"{name},{total}" for name, total in totals.items()]
+    return "\n".join([*lines, f"grand_total,{sum(totals.values())}"]) + "\n"
+
+
+def test_state_carrying_decomposition_ledgers_dwarf_the_reference_window(
+    tmp_path: Path,
+) -> None:
+    _seeded("state_carrying_decomposition", tmp_path)
+    ledgers = [(tmp_path / "depots" / name / "ledger.txt").read_text() for name in DEPOT_NAMES]
+    budget = prompt_budget(REFERENCE_CONTEXT_SIZE)
+
+    assert sum(estimate_tokens(ledger) for ledger in ledgers) > 4 * budget
+    assert all(estimate_tokens(ledger) > budget for ledger in ledgers)
+
+
+def test_state_carrying_decomposition_hides_the_rule_in_one_depot(tmp_path: Path) -> None:
+    _seeded("state_carrying_decomposition", tmp_path)
+
+    manifests = list(tmp_path.rglob("MANIFEST.txt"))
+    assert [path.parent.name for path in manifests] == [MANIFEST_DEPOT]
+    assert AUTHORITATIVE_MARK in manifests[0].read_text()
+
+
+def test_state_carrying_decomposition_accepts_the_audited_totals(tmp_path: Path) -> None:
+    task = _seeded("state_carrying_decomposition", tmp_path)
+    (tmp_path / "audited_totals.txt").write_text(_totals_report(EXPECTED_DEPOT_TOTALS))
+
+    assert task.check(tmp_path, f"the audited grand total is {EXPECTED_DEPOT_GRAND_TOTAL}")
+    assert not task.check(tmp_path, "the audited grand total is 12")
+
+
+def test_state_carrying_decomposition_rejects_totals_that_ignore_the_manifest(
+    tmp_path: Path,
+) -> None:
+    task = _seeded("state_carrying_decomposition", tmp_path)
+    unfiltered = {
+        name: sum(
+            int(line.split("amount=")[1].split()[0])
+            for line in (tmp_path / "depots" / name / "ledger.txt").read_text().splitlines()
+        )
+        for name in DEPOT_NAMES
+    }
+    (tmp_path / "audited_totals.txt").write_text(_totals_report(unfiltered))
+
+    assert unfiltered != EXPECTED_DEPOT_TOTALS
+    assert not task.check(tmp_path, f"the grand total is {sum(unfiltered.values())}")
+
+
+def test_state_carrying_decomposition_rejects_a_missing_depot(tmp_path: Path) -> None:
+    task = _seeded("state_carrying_decomposition", tmp_path)
+    partial = dict(list(EXPECTED_DEPOT_TOTALS.items())[:-1])
+    (tmp_path / "audited_totals.txt").write_text(
+        _totals_report(partial).replace(
+            f"grand_total,{sum(partial.values())}", f"grand_total,{EXPECTED_DEPOT_GRAND_TOTAL}"
+        )
+    )
+
+    assert not task.check(tmp_path, f"the grand total is {EXPECTED_DEPOT_GRAND_TOTAL}")
+
+
+def test_state_carrying_decomposition_requires_the_report_file(tmp_path: Path) -> None:
+    task = _seeded("state_carrying_decomposition", tmp_path)
+
+    assert not task.check(tmp_path, f"the grand total is {EXPECTED_DEPOT_GRAND_TOTAL}")

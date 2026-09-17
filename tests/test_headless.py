@@ -101,7 +101,9 @@ def test_turn_ending_by_stuckness_yields_no_answer() -> None:
     repeats = [
         event
         for event in session.events()
-        if isinstance(event, ToolCallRecorded) and event.name == "read_file"
+        if isinstance(event, ToolCallRecorded)
+        and event.name == "read_file"
+        and "could not read" in event.result
     ]
     assert len(repeats) == STUCK_THRESHOLD
 

@@ -44,7 +44,7 @@ from pico.core.events import (
     ToolCallResultDelta,
     ToolCallStarted,
 )
-from pico.core.ledger import BOOKKEEPING_TOOLS, facts, plan
+from pico.core.ledger import BOOKKEEPING_TOOLS, Plan, facts, plan, render_plan
 from pico.core.search import SearchCancelled, search
 from pico.core.stuckness import assess
 from pico.core.tools import ToolRegistry
@@ -63,6 +63,7 @@ from pico.llm.types import (
 )
 from pico.session import (
     AssistantMessageRecorded,
+    PlanStepCompleted,
     Session,
     ToolCallRecorded,
     UserMessageRecorded,
@@ -74,10 +75,17 @@ Step = Callable[["LoopRunner"], StepOutcome]
 
 MAX_INVALID_ACTION_ATTEMPTS = 5
 MAX_DELEGATE_STEPS = 10
+MAX_STEP_STEPS = 30
 MAX_RUN_STEPS = 100
+MAX_STEP_ATTEMPTS = 2
 BUDGET_WIND_DOWN_FRACTION = 0.8
 MAX_ACTIONLESS_GENERATIONS = 3
 
+LAST_WORDS_NUDGE = (
+    "this run is ending now — {cause}. this is your final generation and answer is the "
+    "only tool you have left. answer with what you have found so far, citing the facts "
+    "that support it, and say plainly what is still unresolved."
+)
 NO_ACTION_NUDGE = (
     "you wrote text but took no action, and your plan has unfinished steps "
     "— call a tool to continue, or finish with answer"
@@ -124,6 +132,9 @@ class LoopRunner:
         self.final_answer: str | None = None
         self.invalid_action_attempts = 0
         self.actionless_generations = 0
+        self.step_attempts: dict[tuple[tuple[str, ...], int], int] = {}
+        self.dying_of: str | None = None
+        self.last_words: bool = False
         self.iterations = 0
         self._id_source = id_source if id_source is not None else itertools.count()
 
@@ -137,7 +148,10 @@ class LoopRunner:
     def execute(self) -> None:
         self.bus.publish(RunStarted())
         try:
-            while self.config.max_steps is None or self.iterations < self.config.max_steps:
+            max_steps = self.config.max_steps
+            while max_steps is None or self.iterations <= max_steps:
+                if max_steps is not None and self.iterations == max_steps:
+                    self.dying_of = f"the generation budget of {max_steps} is spent"
                 self.iterations += 1
                 outcome = self._run_iteration()
                 if outcome == "cancelled":
@@ -145,6 +159,8 @@ class LoopRunner:
                     return
                 if outcome == "done":
                     break
+            if self.last_words and self.final_answer is None:
+                self.fail(f"run stopped: {self.dying_of}")
         except Exception as error:
             self.fail(str(error))
         self.bus.publish(RunFinished(error=self.error))
@@ -160,10 +176,12 @@ class LoopRunner:
 
 
 def stuckness_step(runner: LoopRunner) -> StepOutcome:
+    if runner.dying_of is not None:
+        return "continue"
     result = assess(runner.session)
     if result.stuck:
-        runner.fail(f"run stopped as stuck: {result.reason}")
-        return "done"
+        runner.dying_of = f"you are stuck: {result.reason}"
+        return "continue"
     if result.nudge is not None:
         runner.pending_nudge = result.nudge
     return "continue"
@@ -171,11 +189,8 @@ def stuckness_step(runner: LoopRunner) -> StepOutcome:
 
 def budget_step(runner: LoopRunner) -> StepOutcome:
     max_steps = runner.config.max_steps
-    if max_steps is None or runner.depth > 0:
+    if max_steps is None or runner.depth > 0 or runner.dying_of is not None:
         return "continue"
-    if runner.iterations >= max_steps:
-        runner.fail(f"run stopped: generation budget of {max_steps} exhausted")
-        return "done"
     remaining = max_steps - runner.iterations
     if runner.iterations >= int(max_steps * BUDGET_WIND_DOWN_FRACTION):
         runner.pending_nudge = (
@@ -210,7 +225,13 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
     cancelled = False
     runner.tool_call_pane_ids = {}
 
-    specs = vocabulary(runner.tools, runner.depth)
+    dying_of = runner.dying_of
+    runner.last_words = dying_of is not None
+    if dying_of is None:
+        specs = vocabulary(runner.tools, runner.depth)
+    else:
+        specs = [RUNNER_ACTIONS["answer"].spec]
+        runner.pending_nudge = LAST_WORDS_NUDGE.format(cause=dying_of)
     preamble = [Message(role=Role.SYSTEM, content=SYSTEM_PROMPT)]
     postamble = (
         []
@@ -223,7 +244,11 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
     )
     overhead_tokens = estimate_tokens(overhead_text, runner.chars_per_token)
     conversation = compile_context(
-        runner.session, runner.context_size, overhead_tokens, runner.chars_per_token
+        runner.session,
+        runner.context_size,
+        overhead_tokens,
+        runner.chars_per_token,
+        runner.depth < MAX_DELEGATE_DEPTH,
     )
     messages = [*preamble, *conversation, *postamble]
     estimated = overhead_tokens + sum(
@@ -284,6 +309,8 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
         runner.session.append(AssistantMessageRecorded(content=text, thinking=thinking))
 
     if not tool_calls:
+        if runner.last_words:
+            return "done"
         current = plan(runner.session)
         if current is None or all(step.done for step in current.steps):
             return "done"
@@ -302,12 +329,15 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
     return "continue"
 
 
-def _run_delegate(runner: LoopRunner, delegate: Delegate) -> tuple[str, bool]:
-    if runner.depth >= MAX_DELEGATE_DEPTH:
-        raise InvalidActionError("delegate is not available at this depth")
-    child_session = runner.session.child(f"delegate/{runner.session.next_seq()}")
-    prompt = "" if delegate.shape is None else delegate.shape.prompt()
-    child_session.append(UserMessageRecorded(content=delegate.question + prompt))
+def _run_child(
+    runner: LoopRunner,
+    suffix: str,
+    prompt: str,
+    max_steps: int,
+    shape: ResultShape | None = None,
+) -> LoopRunner:
+    child_session = runner.session.child(suffix)
+    child_session.append(UserMessageRecorded(content=prompt))
     child_tools = ToolRegistry()
     register_actions(child_tools, child_session, depth=runner.depth + 1)
     child_runner = LoopRunner(
@@ -316,12 +346,26 @@ def _run_delegate(runner: LoopRunner, delegate: Delegate) -> tuple[str, bool]:
         Bus(),
         child_session,
         runner.context_size,
-        LoopConfig(steps=DEFAULT_LOOP_STEPS, max_steps=MAX_DELEGATE_STEPS),
+        LoopConfig(steps=DEFAULT_LOOP_STEPS, max_steps=max_steps),
         cancel=runner.cancel,
-        result_shape=delegate.shape,
+        result_shape=shape,
         depth=runner.depth + 1,
     )
     child_runner.execute()
+    return child_runner
+
+
+def _run_delegate(runner: LoopRunner, delegate: Delegate) -> tuple[str, bool]:
+    if runner.depth >= MAX_DELEGATE_DEPTH:
+        raise InvalidActionError("delegate is not available at this depth")
+    prompt = "" if delegate.shape is None else delegate.shape.prompt()
+    child_runner = _run_child(
+        runner,
+        f"delegate/{runner.session.next_seq()}",
+        delegate.question + prompt,
+        MAX_DELEGATE_STEPS,
+        delegate.shape,
+    )
     if child_runner.final_answer is not None:
         return child_runner.final_answer, False
     if child_runner.error is not None:
@@ -331,6 +375,98 @@ def _run_delegate(runner: LoopRunner, delegate: Delegate) -> tuple[str, bool]:
         f"{delegate.question!r}",
         True,
     )
+
+
+def root_task(session: Session) -> str:
+    return next(
+        (event.content for event in session.events() if isinstance(event, UserMessageRecorded)), ""
+    )
+
+
+def completed_step_results(session: Session) -> list[tuple[str, str]]:
+    return [
+        (str(event.arguments.get("step", "")), event.result)
+        for event in session.events()
+        if isinstance(event, ToolCallRecorded) and event.name == "step" and not event.is_error
+    ]
+
+
+def compose_handoff(session: Session, current: Plan, index: int) -> str:
+    sections = [
+        f"You are working on this task:\n{root_task(session)}",
+        f"It has been broken into steps:\n{render_plan(current)}",
+    ]
+    results = completed_step_results(session)
+    if results:
+        finished = "\n\n".join(f'Result of "{text}":\n{result}' for text, result in results)
+        sections.append(f"Earlier steps produced these results:\n\n{finished}")
+    sections.append(
+        f"Your step is step {index}: {current.steps[index].text}\n"
+        "Do only this step, then answer with its result. Your answer is all that survives "
+        "your context, so state the findings the later steps need, not just that you are done."
+    )
+    return "\n\n".join(sections)
+
+
+def _first_unfinished(current: Plan | None) -> int | None:
+    if current is None:
+        return None
+    return next((index for index, step in enumerate(current.steps) if not step.done), None)
+
+
+def _step_result(child: LoopRunner, index: int, text: str) -> tuple[str, bool]:
+    if child.final_answer is not None:
+        if not child.last_words:
+            return child.final_answer, False
+        return f"partial — {child.dying_of}:\n{child.final_answer}", False
+    reason = child.error if child.error is not None else f"no answer within {MAX_STEP_STEPS} steps"
+    return f'step {index} failed — {reason}\nstep was: "{text}"', True
+
+
+def step_orchestration_step(runner: LoopRunner) -> StepOutcome:
+    if runner.depth >= MAX_DELEGATE_DEPTH or runner.dying_of is not None:
+        return "continue"
+    current = plan(runner.session)
+    index = _first_unfinished(current)
+    if current is None or index is None:
+        runner.step_attempts = {}
+        return "continue"
+    signature = (tuple(step.text for step in current.steps), index)
+    attempts = runner.step_attempts.get(signature, 0)
+    if attempts >= MAX_STEP_ATTEMPTS:
+        runner.dying_of = f'step {index} failed twice: "{current.steps[index].text}"'
+        return "continue"
+    runner.step_attempts[signature] = attempts + 1
+
+    text = current.steps[index].text
+    pane_id = runner.new_id()
+    arguments: Mapping[str, object] = {"step": text}
+    runner.bus.publish(ToolCallStarted(id=pane_id, name="step", arguments=arguments))
+    child = _run_child(
+        runner,
+        f"step/{runner.session.next_seq()}",
+        compose_handoff(runner.session, current, index),
+        MAX_STEP_STEPS,
+    )
+    if runner.cancel.is_set():
+        return "cancelled"
+    result, is_error = _step_result(child, index, text)
+    runner.session.append(
+        ToolCallRecorded(name="step", arguments=arguments, result=result, is_error=is_error)
+    )
+    if not is_error:
+        runner.session.append(PlanStepCompleted(index=index))
+    fact_id = facts(runner.session)[-1].id if not is_error else None
+    runner.bus.publish(
+        ToolCallFinished(
+            id=pane_id,
+            tool_call=ToolCall(id=pane_id, name="step", arguments=arguments),
+            result=result,
+            is_error=is_error,
+            fact_id=fact_id,
+        )
+    )
+    return "continue"
 
 
 @dataclass(frozen=True)
@@ -543,6 +679,8 @@ def vocabulary(tools: ToolRegistry, depth: int) -> list[ToolSpec]:
 
 
 def _dispatch(runner: LoopRunner, pane_id: str, call: ToolCall) -> ActionResult:
+    if runner.last_words and call.name != "answer":
+        raise InvalidActionError(f"{call.name} is not available — answer is the only tool left")
     action = RUNNER_ACTIONS.get(call.name)
     if action is not None:
         return action.execute(runner, pane_id, call.arguments)
@@ -622,8 +760,14 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
             runner.invalid_action_attempts = 0
             if not is_error and runner.final_answer is not None:
                 outcome = "done"
-    return outcome
+    return "done" if runner.last_words else outcome
 
 
-DEFAULT_LOOP_STEPS: tuple[Step, ...] = (stuckness_step, budget_step, stream_step, tool_call_step)
+DEFAULT_LOOP_STEPS: tuple[Step, ...] = (
+    stuckness_step,
+    budget_step,
+    step_orchestration_step,
+    stream_step,
+    tool_call_step,
+)
 DEFAULT_LOOP_CONFIG = LoopConfig(steps=DEFAULT_LOOP_STEPS, max_steps=MAX_RUN_STEPS)

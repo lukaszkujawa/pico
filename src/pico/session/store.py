@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT NOT NULL,
     seq INTEGER NOT NULL,
+    fact_id INTEGER,
     kind TEXT NOT NULL,
     payload TEXT NOT NULL,
     created_at TEXT NOT NULL
