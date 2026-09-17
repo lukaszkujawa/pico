@@ -1826,6 +1826,7 @@ def test_plan_message_is_never_persisted_to_the_session() -> None:
 def test_stream_step_sends_briefing_and_window_not_the_full_transcript() -> None:
     session = _session()
     session.append(PlanSet(steps=("keep going",)))
+    session.append(PlanStepCompleted(index=0))
     session.append(UserMessageRecorded(content="start"))
     session.append(ToolCallRecorded(name="echo", arguments={}, result="noted", is_error=False))
     for index in range(RECENT_UNITS + 4):

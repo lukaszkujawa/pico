@@ -9,7 +9,7 @@ Live run 2026-09-17_15-32-14: 62 generations of alternating re-reads sailed past
 * **A stagnant plan is a progress signal.** When a plan has unfinished steps and neither `set_plan` nor `complete_step` has been recorded within the last `PLAN_STALL_GENERATIONS` assistant generations, the nudge reminds the model to either complete the step it has finished or revise the plan, quoting the first unfinished step. Stale plans nudge; they never stop the run — termination belongs to the run budget.
 * **Deterministic and derived.** Everything is computed from session events in `core/stuckness.py`; no model judgement, no new state, no new events.
 
-## [ ] T001 Windowed repetition and plan-stall signals
+## [X] T001 Windowed repetition and plan-stall signals
 
 ### Description
 
