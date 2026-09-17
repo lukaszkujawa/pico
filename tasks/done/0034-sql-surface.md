@@ -76,4 +76,4 @@ One real bug surfaced during measurement and is fixed: the model wrote `verify: 
 
 Also fixed: `test_shell_run_timeout_raises_tool_error_and_kills_process` asserted machine-wide that no `sleep 5` process existed, which raced under xdist once the suite grew. It now matches a per-run unique marker and polls for the asynchronous kill.
 
-Commit: 6293079
+Commit: c2fadb8
