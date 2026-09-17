@@ -1,3 +1,4 @@
+import codecs
 import json
 import os
 import selectors
@@ -106,19 +107,24 @@ class WriteFile:
         return f"wrote {len(self.content)} bytes to {self.path}"
 
 
-def _read_timeout(stream: IO[str], timeout: float) -> Iterator[str]:
+def _read_timeout(stream: IO[bytes], deadline: float) -> Iterator[str]:
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
     selector = selectors.DefaultSelector()
     selector.register(stream, selectors.EVENT_READ)
     try:
-        deadline = time.monotonic() + timeout
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0 or not selector.select(remaining):
                 raise TimeoutError
-            line = stream.readline()
-            if not line:
+            data = os.read(stream.fileno(), 65536)
+            if not data:
+                tail = decoder.decode(b"", final=True)
+                if tail:
+                    yield tail
                 return
-            yield line
+            chunk = decoder.decode(data)
+            if chunk:
+                yield chunk
     finally:
         selector.close()
 
@@ -140,21 +146,24 @@ class Shell:
             shell=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
             start_new_session=True,
         )
         chunks: list[str] = []
         assert process.stdout is not None
+        deadline = time.monotonic() + timeout
         with process:
             try:
-                for line in _read_timeout(process.stdout, timeout):
-                    chunks.append(line)
+                for chunk in _read_timeout(process.stdout, deadline):
+                    chunks.append(chunk)
                     if on_chunk is not None:
-                        on_chunk(line)
-            except TimeoutError as error:
+                        on_chunk(chunk)
+                code = process.wait(timeout=max(0.0, deadline - time.monotonic()))
+            except (TimeoutError, subprocess.TimeoutExpired) as error:
                 os.killpg(process.pid, signal.SIGKILL)
                 raise ToolError(f"command timed out after {timeout}s: {self.command}") from error
-            code = process.wait()
+            except BaseException:
+                os.killpg(process.pid, signal.SIGKILL)
+                raise
         return code, "".join(chunks)
 
     def execute(self, timeout: float = 30) -> str:
@@ -238,18 +247,10 @@ def _require_fields(arguments: Mapping[str, object]) -> Mapping[str, FieldType] 
 
 
 @dataclass(frozen=True)
-class Delegate:
-    question: str
-    fields: Mapping[str, FieldType] | None = None
+class ResultShape:
+    fields: Mapping[str, FieldType]
 
-    @classmethod
-    def from_arguments(cls, arguments: Mapping[str, object]) -> Self:
-        question = _require(arguments, "question", str)
-        return cls(question=question, fields=_require_fields(arguments))
-
-    def shape(self) -> str:
-        if self.fields is None:
-            return ""
+    def prompt(self) -> str:
         shape = ", ".join(f'"{name}": <{type_name}>' for name, type_name in self.fields.items())
         return (
             "\n\nAnswer with content that is exactly one JSON object of this shape, "
@@ -257,8 +258,6 @@ class Delegate:
         )
 
     def check(self, content: str) -> str | None:
-        if self.fields is None:
-            return None
         try:
             parsed: object = json.loads(content)
         except ValueError:
@@ -278,7 +277,17 @@ class Delegate:
         return None
 
 
-Action = ReadFile | WriteFile | Shell | Answer | Delegate | SetPlan | CompleteStep
+@dataclass(frozen=True)
+class Delegate:
+    question: str
+    shape: ResultShape | None = None
+
+    @classmethod
+    def from_arguments(cls, arguments: Mapping[str, object]) -> Self:
+        question = _require(arguments, "question", str)
+        fields = _require_fields(arguments)
+        return cls(question=question, shape=None if fields is None else ResultShape(fields))
+
 
 _TOOL_SPECS = {
     "read_file": ToolSpec(
@@ -426,11 +435,7 @@ _TOOL_SPECS = {
 
 def _action_tool(action_type: type[ReadFile | WriteFile | Shell], name: str) -> Tool:
     def execute(arguments: Mapping[str, object]) -> str:
-        try:
-            action = action_type.from_arguments(arguments)
-        except InvalidActionError as error:
-            return str(error)
-        return action.execute()
+        return action_type.from_arguments(arguments).execute()
 
     return Tool(spec=_TOOL_SPECS[name], execute=execute)
 
@@ -441,10 +446,7 @@ def _answer_tool() -> Tool:
 
 def fact_recall_tool(session: Session) -> Tool:
     def execute(arguments: Mapping[str, object]) -> str:
-        try:
-            fact_id = _require(arguments, "id", int)
-        except InvalidActionError as error:
-            return str(error)
+        fact_id = _require(arguments, "id", int)
         for fact in facts(session):
             if fact.id == fact_id:
                 return fact.content
@@ -455,10 +457,7 @@ def fact_recall_tool(session: Session) -> Tool:
 
 def set_plan_tool(session: Session) -> Tool:
     def execute(arguments: Mapping[str, object]) -> str:
-        try:
-            action = SetPlan.from_arguments(arguments)
-        except InvalidActionError as error:
-            return str(error)
+        action = SetPlan.from_arguments(arguments)
         session.append(PlanSet(steps=action.steps))
         current = plan(session)
         assert current is not None
@@ -469,10 +468,7 @@ def set_plan_tool(session: Session) -> Tool:
 
 def complete_step_tool(session: Session) -> Tool:
     def execute(arguments: Mapping[str, object]) -> str:
-        try:
-            action = CompleteStep.from_arguments(arguments)
-        except InvalidActionError as error:
-            return str(error)
+        action = CompleteStep.from_arguments(arguments)
         current = plan(session)
         if current is None:
             raise ToolError("no plan set; call set_plan first")
@@ -492,11 +488,8 @@ def complete_step_tool(session: Session) -> Tool:
 
 def load_table_tool(scratch: Scratch) -> Tool:
     def execute(arguments: Mapping[str, object]) -> str:
-        try:
-            path = _require(arguments, "path", str)
-            table = _require(arguments, "table", str)
-        except InvalidActionError as error:
-            return str(error)
+        path = _require(arguments, "path", str)
+        table = _require(arguments, "table", str)
         return load_table(scratch, path, table)
 
     return Tool(spec=_TOOL_SPECS["load_table"], execute=execute)
@@ -504,29 +497,22 @@ def load_table_tool(scratch: Scratch) -> Tool:
 
 def sql_tool(scratch: Scratch) -> Tool:
     def execute(arguments: Mapping[str, object]) -> str:
-        try:
-            statement = _require(arguments, "query", str)
-        except InvalidActionError as error:
-            return str(error)
+        statement = _require(arguments, "query", str)
         return query(scratch, statement)
 
     return Tool(spec=_TOOL_SPECS["sql"], execute=execute)
 
 
-def delegate_depth(session: Session) -> int:
-    return session.session_id.count("/")
-
-
-def register_actions(registry: ToolRegistry, session: Session) -> None:
+def register_actions(registry: ToolRegistry, session: Session, depth: int = 0) -> None:
     registry.register(_action_tool(ReadFile, "read_file"))
     registry.register(_action_tool(WriteFile, "write_file"))
     registry.register(_action_tool(Shell, "shell"))
-    scratch = Scratch(session)
+    scratch = Scratch(session, in_memory=depth > 0)
     registry.register(load_table_tool(scratch))
     registry.register(sql_tool(scratch))
     registry.register(fact_recall_tool(session))
     registry.register(set_plan_tool(session))
     registry.register(complete_step_tool(session))
     registry.register(_answer_tool())
-    if delegate_depth(session) < MAX_DELEGATE_DEPTH:
+    if depth < MAX_DELEGATE_DEPTH:
         registry.register(Tool(spec=_TOOL_SPECS["delegate"], execute=lambda _: ""))

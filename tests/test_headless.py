@@ -96,7 +96,8 @@ def test_turn_ending_by_stuckness_yields_no_answer() -> None:
     result = run_turn(LoopingClient(), session, 128_000, "do it")
 
     assert result.answer is None
-    assert result.error is None
+    assert result.error is not None
+    assert "stuck" in result.error
     repeats = [
         event
         for event in session.events()

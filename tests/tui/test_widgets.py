@@ -271,12 +271,12 @@ async def test_tool_call_pane_animation_stops_once_finished() -> None:
     async with app.run_test() as pilot:
         pane = app.query_one(ToolCallPane)
         await pilot.pause()
-        assert pane.spinning is True
+        assert pane._timer is not None  # pyright: ignore[reportPrivateUsage]
 
         pane.finish(result="done", is_error=False)
         await pilot.pause()
 
-        assert pane.spinning is False
+        assert pane._timer is None  # pyright: ignore[reportPrivateUsage]
         frame_after_finish = pane.render().plain
         await pilot.pause()
         assert pane.render().plain == frame_after_finish

@@ -11,7 +11,9 @@ CREATE TABLE IF NOT EXISTS events (
     created_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_events_session_seq ON events (session_id, seq);
+DROP INDEX IF EXISTS idx_events_session_seq;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_session_seq_unique ON events (session_id, seq);
 """
 
 

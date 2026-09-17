@@ -839,12 +839,12 @@ async def test_run_cancelled_closes_open_tool_call_pane_and_stops_its_timer() ->
 
         pane = app.query_one(ToolCallPane)
         assert pane.finished is False
-        assert pane.spinning is True
+        assert pane._timer is not None  # pyright: ignore[reportPrivateUsage]
 
         bus.publish(RunCancelled())
         await settle(pilot, lambda: pane.finished, "the cancelled pane finishes")
 
-        assert pane.spinning is False
+        assert pane._timer is None  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_new_session_closes_open_tool_call_pane_and_stops_its_timer() -> None:
@@ -870,7 +870,7 @@ async def test_new_session_closes_open_tool_call_pane_and_stops_its_timer() -> N
         await pilot.press("ctrl+n")
         await settle(pilot, lambda: pane.finished, "the pane is closed by the new session")
 
-        assert pane.spinning is False
+        assert pane._timer is None  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_run_cancelled_stops_waiting_indicator() -> None:

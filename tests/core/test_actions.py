@@ -10,11 +10,11 @@ from pico.core.actions import (
     Delegate,
     InvalidActionError,
     ReadFile,
+    ResultShape,
     SetPlan,
     Shell,
     WriteFile,
     complete_step_tool,
-    delegate_depth,
     fact_recall_tool,
     load_table_tool,
     register_actions,
@@ -205,12 +205,17 @@ def test_shell_run_returns_exit_code_and_output() -> None:
 
 def test_shell_run_invokes_callback_per_chunk_and_preserves_combined_output() -> None:
     chunks: list[str] = []
-    code, output = Shell(command="echo one; echo two; echo three").run(on_chunk=chunks.append)
+    code, output = Shell(command="echo one; sleep 0.2; echo two").run(on_chunk=chunks.append)
 
     assert code == 0
     assert len(chunks) > 1
     assert "".join(chunks) == output
-    assert output == "one\ntwo\nthree\n"
+    assert output == "one\ntwo\n"
+
+
+def test_shell_run_times_out_on_output_without_a_trailing_newline() -> None:
+    with pytest.raises(ToolError, match="timed out"):
+        Shell(command="printf partial; sleep 5").run(timeout=0.2)
 
 
 def test_shell_run_reports_non_zero_exit_code_with_callback() -> None:
@@ -250,11 +255,13 @@ def test_delegate_from_arguments_with_fields() -> None:
         {"question": "how many?", "fields": {"count": "number", "name": "string"}}
     )
 
-    assert action == Delegate(question="how many?", fields={"count": "number", "name": "string"})
+    assert action == Delegate(
+        question="how many?", shape=ResultShape({"count": "number", "name": "string"})
+    )
 
 
 def test_delegate_from_arguments_with_null_fields_is_untyped() -> None:
-    assert Delegate.from_arguments({"question": "q", "fields": None}).fields is None
+    assert Delegate.from_arguments({"question": "q", "fields": None}).shape is None
 
 
 def test_delegate_from_arguments_rejects_unknown_field_type() -> None:
@@ -272,32 +279,32 @@ def test_delegate_from_arguments_rejects_empty_fields() -> None:
         Delegate.from_arguments({"question": "q", "fields": {}})
 
 
-def test_delegate_shape_names_every_field() -> None:
-    action = Delegate(question="q", fields={"count": "number", "ok": "boolean"})
+def test_result_shape_prompt_names_every_field() -> None:
+    shape = ResultShape({"count": "number", "ok": "boolean"})
 
-    assert '"count": <number>' in action.shape()
-    assert '"ok": <boolean>' in action.shape()
-
-
-def test_delegate_check_accepts_conforming_record() -> None:
-    action = Delegate(question="q", fields={"count": "number", "ok": "boolean", "n": "string"})
-
-    assert action.check('{"count": 3, "ok": true, "n": "a"}') is None
+    assert '"count": <number>' in shape.prompt()
+    assert '"ok": <boolean>' in shape.prompt()
 
 
-def test_delegate_check_rejects_boolean_where_number_expected() -> None:
-    action = Delegate(question="q", fields={"count": "number"})
+def test_result_shape_check_accepts_conforming_record() -> None:
+    shape = ResultShape({"count": "number", "ok": "boolean", "n": "string"})
 
-    problem = action.check('{"count": true}')
+    assert shape.check('{"count": 3, "ok": true, "n": "a"}') is None
+
+
+def test_result_shape_check_rejects_boolean_where_number_expected() -> None:
+    shape = ResultShape({"count": "number"})
+
+    problem = shape.check('{"count": true}')
 
     assert problem is not None
     assert "must be a number" in problem
 
 
-def test_delegate_check_rejects_non_object_json() -> None:
-    action = Delegate(question="q", fields={"count": "number"})
+def test_result_shape_check_rejects_non_object_json() -> None:
+    shape = ResultShape({"count": "number"})
 
-    problem = action.check("[1, 2]")
+    problem = shape.check("[1, 2]")
 
     assert problem is not None
     assert "must be a JSON object" in problem
@@ -326,20 +333,18 @@ def test_read_fact_error_result_is_not_a_fact() -> None:
         fact_recall_tool(session).execute({"id": 1})
 
 
-def test_read_fact_non_integer_id_returns_invalid_field_error() -> None:
+def test_read_fact_non_integer_id_raises_invalid_action_error() -> None:
     session, _ = _session_with_fact("hello")
 
-    result = fact_recall_tool(session).execute({"id": "1"})
+    with pytest.raises(InvalidActionError, match="must be a int"):
+        fact_recall_tool(session).execute({"id": "1"})
 
-    assert "must be a int" in result
 
-
-def test_read_fact_missing_id_returns_invalid_field_error() -> None:
+def test_read_fact_missing_id_raises_invalid_action_error() -> None:
     session, _ = _session_with_fact("hello")
 
-    result = fact_recall_tool(session).execute({})
-
-    assert "missing required field" in result
+    with pytest.raises(InvalidActionError, match="missing required field"):
+        fact_recall_tool(session).execute({})
 
 
 def test_register_actions_populates_all_tool_names() -> None:
@@ -362,9 +367,11 @@ def test_register_actions_populates_all_tool_names() -> None:
     }
 
 
-def test_register_actions_on_delegate_session_still_has_full_names() -> None:
+def test_register_actions_below_max_depth_still_has_full_names() -> None:
     registry = ToolRegistry()
-    register_actions(registry, Session(connect(":memory:"), "s1/delegate/1"))
+    register_actions(
+        registry, Session(connect(":memory:"), "s1/delegate/1"), depth=MAX_DELEGATE_DEPTH - 1
+    )
 
     names = {spec.name for spec in registry.specs()}
 
@@ -375,20 +382,12 @@ def test_register_actions_on_delegate_session_still_has_full_names() -> None:
 
 def test_register_actions_withholds_delegate_at_max_depth() -> None:
     registry = ToolRegistry()
-    deep = "s1" + "/" * MAX_DELEGATE_DEPTH
-    register_actions(registry, Session(connect(":memory:"), deep))
+    register_actions(registry, Session(connect(":memory:"), "s1"), depth=MAX_DELEGATE_DEPTH)
 
     names = {spec.name for spec in registry.specs()}
 
     assert "delegate" not in names
     assert "shell" in names
-
-
-def test_delegate_depth_counts_session_id_separators() -> None:
-    conn = connect(":memory:")
-
-    assert delegate_depth(Session(conn, "s1")) == 0
-    assert delegate_depth(Session(conn, "s1/delegate/1")) == 2
 
 
 def test_register_actions_read_file_round_trips(tmp_path: Path) -> None:
@@ -424,13 +423,12 @@ def test_register_actions_shell_round_trips() -> None:
     assert result.strip() == "hi"
 
 
-def test_register_actions_invalid_arguments_return_error_string_not_raise() -> None:
+def test_register_actions_invalid_arguments_raise_invalid_action_error() -> None:
     registry = ToolRegistry()
     register_actions(registry, Session(connect(":memory:"), "s1"))
 
-    result = registry.execute(ToolCall(id="1", name="read_file", arguments={}))
-
-    assert "missing required field" in result
+    with pytest.raises(InvalidActionError, match="missing required field"):
+        registry.execute(ToolCall(id="1", name="read_file", arguments={}))
 
 
 def _planless_session() -> Session:
@@ -464,22 +462,22 @@ def test_set_plan_appends_event_and_returns_checklist() -> None:
     assert result == "plan set:\n[ ] 0. read the file\n[ ] 1. write the answer"
 
 
-def test_set_plan_with_empty_steps_appends_nothing() -> None:
+def test_set_plan_with_empty_steps_raises_and_appends_nothing() -> None:
     session = _planless_session()
 
-    result = set_plan_tool(session).execute({"steps": []})
+    with pytest.raises(InvalidActionError, match="must not be empty"):
+        set_plan_tool(session).execute({"steps": []})
 
     assert list(session.events()) == []
-    assert "must not be empty" in result
 
 
-def test_set_plan_with_malformed_steps_appends_nothing() -> None:
+def test_set_plan_with_malformed_steps_raises_and_appends_nothing() -> None:
     session = _planless_session()
 
-    result = set_plan_tool(session).execute({"steps": "one"})
+    with pytest.raises(InvalidActionError, match="must be a list"):
+        set_plan_tool(session).execute({"steps": "one"})
 
     assert list(session.events()) == []
-    assert "must be a list" in result
 
 
 def test_complete_step_checks_the_box() -> None:
@@ -523,13 +521,12 @@ def test_complete_step_already_done_raises_tool_error_and_appends_nothing() -> N
     assert list(session.events()) == before
 
 
-def test_complete_step_non_integer_index_returns_invalid_field_error() -> None:
+def test_complete_step_non_integer_index_raises_invalid_action_error() -> None:
     session = _planless_session()
     set_plan_tool(session).execute({"steps": ["one"]})
 
-    result = complete_step_tool(session).execute({"index": "0"})
-
-    assert "must be a int" in result
+    with pytest.raises(InvalidActionError, match="must be a int"):
+        complete_step_tool(session).execute({"index": "0"})
 
 
 def _scratch(tmp_path: Path) -> Scratch:
@@ -622,10 +619,23 @@ def test_load_table_blank_header_row_raises_tool_error(tmp_path: Path) -> None:
         load_table_tool(scratch).execute({"path": path, "table": "t"})
 
 
-def test_load_table_missing_argument_returns_error_string(tmp_path: Path) -> None:
-    result = load_table_tool(_scratch(tmp_path)).execute({"path": "a.csv"})
+def test_load_table_missing_argument_raises_invalid_action_error(tmp_path: Path) -> None:
+    with pytest.raises(InvalidActionError, match="missing required field 'table'"):
+        load_table_tool(_scratch(tmp_path)).execute({"path": "a.csv"})
 
-    assert "missing required field 'table'" in result
+
+def test_load_table_row_longer_than_header_raises_tool_error(tmp_path: Path) -> None:
+    path = _csv(tmp_path, "a.csv", "id,name\n1,Smith, John\n")
+
+    with pytest.raises(ToolError, match="line 2 has 3 cells"):
+        load_table_tool(_scratch(tmp_path)).execute({"path": path, "table": "t"})
+
+
+def test_load_table_protected_table_name_raises_tool_error(tmp_path: Path) -> None:
+    path = _csv(tmp_path, "a.csv", "a,b\n1,2\n")
+
+    with pytest.raises(ToolError):
+        load_table_tool(_scratch(tmp_path)).execute({"path": path, "table": "sqlite_master"})
 
 
 def test_scratch_path_sits_next_to_the_session_database(tmp_path: Path) -> None:
@@ -680,7 +690,7 @@ def test_sql_truncates_beyond_the_row_cap_with_a_more_rows_note(tmp_path: Path) 
 
     result = sql_tool(scratch).execute({"query": "SELECT name FROM big ORDER BY n"})
 
-    assert result.splitlines()[-1] == "+7 more rows"
+    assert result.splitlines()[-1] == f"only the first {MAX_ROWS} rows are shown"
     assert len(result.splitlines()) == MAX_ROWS + 2
 
 
@@ -728,8 +738,9 @@ def test_sql_create_and_insert_stage_intermediate_results(tmp_path: Path) -> Non
     assert sql_tool(scratch).execute({"query": "SELECT SUM(value) AS t FROM totals"}) == "t\n54"
 
 
-def test_sql_missing_query_argument_returns_error_string(tmp_path: Path) -> None:
-    assert "missing required field 'query'" in sql_tool(_scratch(tmp_path)).execute({})
+def test_sql_missing_query_argument_raises_invalid_action_error(tmp_path: Path) -> None:
+    with pytest.raises(InvalidActionError, match="missing required field 'query'"):
+        sql_tool(_scratch(tmp_path)).execute({})
 
 
 def test_sql_aborts_a_runaway_statement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

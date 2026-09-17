@@ -54,20 +54,22 @@ class Session:
     def child(self, suffix: str) -> "Session":
         return Session(self._conn, f"{self._session_id}/{suffix}")
 
+    def next_seq(self) -> int:
+        row = self._conn.execute(
+            "SELECT COALESCE(MAX(seq), 0) FROM events WHERE session_id = ?",
+            (self._session_id,),
+        ).fetchone()
+        return int(row[0]) + 1
+
     def append(self, event: SessionEvent) -> None:
         kind = type(event).__name__
         payload = json.dumps(asdict(event))
         created_at = datetime.now(UTC).isoformat()
         with self._conn:
-            row = self._conn.execute(
-                "SELECT COALESCE(MAX(seq), 0) FROM events WHERE session_id = ?",
-                (self._session_id,),
-            ).fetchone()
-            next_seq = row[0] + 1
             self._conn.execute(
                 "INSERT INTO events (session_id, seq, kind, payload, created_at) "
                 "VALUES (?, ?, ?, ?, ?)",
-                (self._session_id, next_seq, kind, payload, created_at),
+                (self._session_id, self.next_seq(), kind, payload, created_at),
             )
 
     def records(self) -> Iterator[tuple[int, SessionEvent]]:
@@ -109,7 +111,7 @@ class Session:
                         Message(
                             role=Role.TOOL,
                             tool_result=ToolResult(
-                                tool_call_id=call_id, content=result, is_error=is_error
+                                tool_call_id=call_id, content=result, is_error=is_error, name=name
                             ),
                         )
                     )

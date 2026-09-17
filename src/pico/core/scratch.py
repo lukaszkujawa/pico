@@ -22,8 +22,8 @@ def scratch_path(session: Session) -> str:
 
 
 class Scratch:
-    def __init__(self, session: Session) -> None:
-        self._path = scratch_path(session)
+    def __init__(self, session: Session, in_memory: bool = False) -> None:
+        self._path = ":memory:" if in_memory else scratch_path(session)
         self._conn: sqlite3.Connection | None = None
 
     @property
@@ -90,20 +90,26 @@ def load_table(scratch: Scratch, path: str, table: str) -> str:
     name = identifier(table, "scratch")
     header, data = _read_csv(path)
     columns = _columns(header)
-    grid = [
-        [row[index] if index < len(row) else "" for index in range(len(columns))] for row in data
-    ]
-    numeric = [_numeric([row[index] for row in grid]) for index in range(len(columns))]
+    width = len(columns)
+    for number, row in enumerate(data, start=2):
+        if len(row) > width:
+            raise ToolError(f"{path} line {number} has {len(row)} cells but the header has {width}")
+    grid = [row + [""] * (width - len(row)) for row in data]
+    transposed = list(zip(*grid, strict=True)) if grid else [()] * width
+    numeric = [_numeric(column) for column in transposed]
     types = ["NUMERIC" if flag else "TEXT" for flag in numeric]
     definition = ", ".join(f'"{c}" {t}' for c, t in zip(columns, types, strict=True))
     values = [
         [_cell(value, flag) for value, flag in zip(row, numeric, strict=True)] for row in grid
     ]
     conn = scratch.connection
-    with conn:
-        conn.execute(f'DROP TABLE IF EXISTS "{name}"')
-        conn.execute(f'CREATE TABLE "{name}" ({definition})')
-        conn.executemany(f'INSERT INTO "{name}" VALUES ({", ".join("?" * len(columns))})', values)
+    try:
+        with conn:
+            conn.execute(f'DROP TABLE IF EXISTS "{name}"')
+            conn.execute(f'CREATE TABLE "{name}" ({definition})')
+            conn.executemany(f'INSERT INTO "{name}" VALUES ({", ".join("?" * width)})', values)
+    except sqlite3.Error as error:
+        raise ToolError(str(error)) from error
     return f"table {name}({', '.join(columns)}) loaded with {len(values)} rows"
 
 
@@ -115,7 +121,7 @@ def render(columns: Sequence[str], rows: Sequence[Sequence[object]]) -> str:
         for row in [list(columns), *shown]
     ]
     if len(rows) > MAX_ROWS:
-        lines.append(f"+{len(rows) - MAX_ROWS} more rows")
+        lines.append(f"only the first {MAX_ROWS} rows are shown")
     return "\n".join(lines)
 
 
@@ -126,7 +132,7 @@ def query(scratch: Scratch, statement: str) -> str:
     try:
         with conn:
             cursor = conn.execute(statement)
-            rows = cursor.fetchall()
+            rows = cursor.fetchmany(MAX_ROWS + 1)
             description = cursor.description
     except sqlite3.Error as error:
         if time.monotonic() > deadline:

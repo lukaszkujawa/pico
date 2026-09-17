@@ -20,10 +20,10 @@ _.on_run_finished_message
 _.on_run_cancelled_message
 _.on_error_message
 _.on_user_input_submitted
+_.on_unmount
 _.padding
 _.display
 _.running
-_.spinning
 _._flush_timer
 _.row_factory
 _.finish_reason

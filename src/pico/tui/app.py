@@ -8,6 +8,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.timer import Timer
 from textual.widgets import Rule, Static, TextArea
 
@@ -39,7 +40,6 @@ from pico.tui.widgets import (
     Splash,
     StatusLine,
     ThinkingPane,
-    TokenCounter,
     ToolCallPane,
     UserPane,
 )
@@ -218,16 +218,19 @@ class PicoApp(App[None]):
         self._pending_token_text += text
 
     def _flush_pending_updates(self) -> None:
-        conversations = self.query(Conversation)
-        counters = self.query(TokenCounter)
-        if not conversations or not counters:
+        try:
+            conversation = self._conversation()
+            if self._pending_token_text:
+                self.query_one(StatusLine).counter.estimate(self._pending_token_text)
+                self._pending_token_text = ""
+            if conversation.pinned:
+                conversation.scroll_end(animate=False, immediate=True)
+        except NoMatches:
             return
-        if self._pending_token_text:
-            counters.first(TokenCounter).estimate(self._pending_token_text)
-            self._pending_token_text = ""
-        conversation = conversations.first(Conversation)
-        if conversation.pinned:
-            conversation.scroll_end(animate=False, immediate=True)
+
+    def on_unmount(self) -> None:
+        if self._flush_timer is not None:
+            self._flush_timer.stop()
 
     async def on_assistant_pane_create(self, message: AssistantPaneCreate) -> None:
         pane = AssistantPane(pane_id=message.pane_id)
@@ -368,11 +371,9 @@ class PicoApp(App[None]):
         conversation.pinned = True
 
     async def on_error_message(self, message: ErrorMessage) -> None:
-        self._run_in_flight = False
         self._error_shown_this_run = True
         self._stop_status()
         await self._mount_at_bottom(ErrorPane(message.message))
-        self._advance_queue()
 
     async def on_user_input_submitted(self, message: UserInputSubmitted) -> None:
         text = message.text.strip()

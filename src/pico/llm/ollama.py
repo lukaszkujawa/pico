@@ -24,7 +24,10 @@ def _message_to_payload(message: Message) -> dict[str, Any]:
     if message.role is Role.TOOL:
         result = message.tool_result
         assert result is not None
-        return {"role": Role.TOOL.value, "content": result.content}
+        payload = {"role": Role.TOOL.value, "content": result.content}
+        if result.name:
+            payload["tool_name"] = result.name
+        return payload
 
     payload: dict[str, Any] = {"role": message.role.value, "content": message.content}
     if message.tool_calls:
@@ -82,7 +85,7 @@ class OllamaClient:
                     f"{self._base_url}/api/chat",
                     json=payload,
                     headers=headers,
-                    timeout=None,
+                    timeout=httpx.Timeout(connect=10.0, read=None, write=None, pool=None),
                 ) as response,
             ):
                 response.raise_for_status()

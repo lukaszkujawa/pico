@@ -1,5 +1,6 @@
 import re
 import subprocess
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,8 +17,10 @@ class EvalTask:
 
 
 def _mentions(answer: str, *needles: str) -> bool:
-    lowered = answer.lower()
-    return all(needle.lower() in lowered for needle in needles)
+    lowered = re.sub(r"(?<=\d),(?=\d)", "", answer.lower())
+    return all(
+        re.search(rf"\b{re.escape(needle.lower())}\b", lowered) is not None for needle in needles
+    )
 
 
 def _setup_read_one_file(directory: Path) -> None:
@@ -204,10 +207,14 @@ def _sales_rows() -> list[tuple[str, int]]:
     ]
 
 
-EXPECTED_SALES_TOTALS = {
-    region: sum(amount for name, amount in _sales_rows() if name == region)
-    for region in SALES_REGIONS
-}
+def _sales_totals() -> dict[str, int]:
+    totals: Counter[str] = Counter()
+    for region, amount in _sales_rows():
+        totals[region] += amount
+    return dict(totals)
+
+
+EXPECTED_SALES_TOTALS = _sales_totals()
 EXPECTED_TOP_REGION = max(EXPECTED_SALES_TOTALS, key=lambda region: EXPECTED_SALES_TOTALS[region])
 EXPECTED_TOP_SALES = EXPECTED_SALES_TOTALS[EXPECTED_TOP_REGION]
 

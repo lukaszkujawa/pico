@@ -22,6 +22,7 @@ class ToolResult:
     tool_call_id: str
     content: str
     is_error: bool = False
+    name: str = ""
 
 
 @dataclass(frozen=True)

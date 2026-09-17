@@ -16,7 +16,7 @@ def test_connect_creates_events_table_and_index() -> None:
     }
 
     assert "events" in tables
-    assert "idx_events_session_seq" in indexes
+    assert "idx_events_session_seq_unique" in indexes
 
 
 def test_connect_is_idempotent_on_same_path(tmp_path: Path) -> None:

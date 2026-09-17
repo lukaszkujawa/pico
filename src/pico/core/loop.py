@@ -6,9 +6,11 @@ from dataclasses import dataclass
 from typing import Literal
 
 from pico.core.actions import (
+    MAX_DELEGATE_DEPTH,
     Answer,
     Delegate,
     InvalidActionError,
+    ResultShape,
     Shell,
     register_actions,
 )
@@ -41,10 +43,9 @@ from pico.core.events import (
     ToolCallStarted,
 )
 from pico.core.ledger import facts
-from pico.core.stuckness import assess
+from pico.core.stuckness import STUCK_THRESHOLD, assess
 from pico.core.tools import ToolRegistry
 from pico.llm.client import LLMClient
-from pico.llm.errors import LLMError
 from pico.llm.types import (
     GenerationComplete,
     Message,
@@ -91,7 +92,8 @@ class LoopRunner:
         config: LoopConfig,
         cancel: threading.Event | None = None,
         id_source: Iterator[int] | None = None,
-        result_shape: Delegate | None = None,
+        result_shape: ResultShape | None = None,
+        depth: int = 0,
     ) -> None:
         self.llm = llm
         self.tools = tools
@@ -101,13 +103,14 @@ class LoopRunner:
         self.config = config
         self.cancel = cancel if cancel is not None else threading.Event()
         self.result_shape = result_shape
+        self.depth = depth
+        self.error: str | None = None
         self.pending_tool_calls: list[ToolCall] = []
         self.tool_call_pane_ids: dict[str, str] = {}
         self.pending_nudge: str | None = None
         self.chars_per_token = DEFAULT_CHARS_PER_TOKEN
         self.final_answer: str | None = None
         self.invalid_action_attempts = 0
-        self.delegate_calls = 0
         self.iterations = 0
         self._id_source = id_source if id_source is not None else itertools.count()
 
@@ -125,7 +128,8 @@ class LoopRunner:
                     return
                 if outcome == "done":
                     break
-        except LLMError as error:
+        except Exception as error:
+            self.error = str(error)
             self.bus.publish(ErrorOccurred(message=str(error)))
             self.bus.publish(RunFinished(error=str(error)))
             return
@@ -133,6 +137,8 @@ class LoopRunner:
 
     def _run_iteration(self) -> StepOutcome:
         for step in self.config.steps:
+            if self.cancel.is_set():
+                return "cancelled"
             outcome = step(self)
             if outcome != "continue":
                 return outcome
@@ -142,6 +148,12 @@ class LoopRunner:
 def stuckness_step(runner: LoopRunner) -> StepOutcome:
     result = assess(runner.session)
     if result.stuck:
+        reason = (
+            f"repeated the same action {result.repeated_action_streak} times"
+            if result.repeated_action_streak >= STUCK_THRESHOLD
+            else f"{result.tool_failure_streak} tool calls failed in a row"
+        )
+        runner.bus.publish(ErrorOccurred(message=f"run stopped as stuck: {reason}"))
         return "done"
     runner.pending_nudge = result.nudge
     return "continue"
@@ -240,7 +252,8 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
     if cancelled:
         return "cancelled"
 
-    runner.session.append(AssistantMessageRecorded(content=text, thinking=thinking))
+    if text or thinking:
+        runner.session.append(AssistantMessageRecorded(content=text, thinking=thinking))
 
     if not tool_calls:
         return "done"
@@ -250,11 +263,11 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
 
 
 def _run_delegate(runner: LoopRunner, delegate: Delegate) -> tuple[str, bool]:
-    runner.delegate_calls += 1
-    child_session = runner.session.child(f"delegate/{runner.delegate_calls}")
-    child_session.append(UserMessageRecorded(content=delegate.question + delegate.shape()))
+    child_session = runner.session.child(f"delegate/{runner.session.next_seq()}")
+    prompt = "" if delegate.shape is None else delegate.shape.prompt()
+    child_session.append(UserMessageRecorded(content=delegate.question + prompt))
     child_tools = ToolRegistry()
-    register_actions(child_tools, child_session)
+    register_actions(child_tools, child_session, depth=runner.depth + 1)
     child_runner = LoopRunner(
         runner.llm,
         child_tools,
@@ -263,11 +276,14 @@ def _run_delegate(runner: LoopRunner, delegate: Delegate) -> tuple[str, bool]:
         runner.context_size,
         LoopConfig(steps=DEFAULT_LOOP_STEPS, max_steps=MAX_DELEGATE_STEPS),
         cancel=runner.cancel,
-        result_shape=delegate,
+        result_shape=delegate.shape,
+        depth=runner.depth + 1,
     )
     child_runner.execute()
     if child_runner.final_answer is not None:
         return child_runner.final_answer, False
+    if child_runner.error is not None:
+        return f"delegate failed: {child_runner.error}", True
     return (
         f"delegate did not answer question within {MAX_DELEGATE_STEPS} steps: "
         f"{delegate.question!r}",
@@ -379,7 +395,7 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
                     reason=output,
                     verify=None,
                 )
-        elif call.name == "delegate":
+        elif call.name == "delegate" and runner.depth < MAX_DELEGATE_DEPTH:
             try:
                 delegate = Delegate.from_arguments(call.arguments)
                 output, is_error = _run_delegate(runner, delegate)
@@ -407,7 +423,7 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
             except ToolError as error:
                 output = str(error)
                 is_error = True
-            except UnknownToolError as error:
+            except (InvalidActionError, UnknownToolError) as error:
                 output = str(error)
                 is_error = True
                 invalid = True
@@ -438,9 +454,17 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
         if invalid:
             runner.invalid_action_attempts += 1
             if runner.invalid_action_attempts >= MAX_INVALID_ACTION_ATTEMPTS:
+                runner.bus.publish(
+                    ErrorOccurred(
+                        message=f"run stopped: {runner.invalid_action_attempts} "
+                        "invalid actions in a row"
+                    )
+                )
                 outcome = "done"
-        elif not is_error and runner.final_answer is not None:
-            outcome = "done"
+        else:
+            runner.invalid_action_attempts = 0
+            if not is_error and runner.final_answer is not None:
+                outcome = "done"
     return outcome
 
 

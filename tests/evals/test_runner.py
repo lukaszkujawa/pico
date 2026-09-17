@@ -143,12 +143,14 @@ class ExplodingClient:
         yield
 
 
-def test_cwd_is_restored_when_the_turn_blows_up() -> None:
+def test_turn_that_blows_up_is_recorded_as_error_and_cwd_is_restored() -> None:
     origin = Path.cwd()
-    with pytest.raises(RuntimeError):
-        run_suite(ExplodingClient(), _config(), [_task("boom")])
+
+    outcomes = run_suite(ExplodingClient(), _config(), [_task("boom")])
 
     assert Path.cwd() == origin
+    assert outcomes[0].passed is False
+    assert outcomes[0].result.error is not None
 
 
 def test_report_contains_one_entry_per_task_with_turn_metrics(tmp_path: Path) -> None:

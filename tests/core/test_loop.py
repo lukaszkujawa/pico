@@ -442,7 +442,7 @@ def test_single_tool_call_round_trip() -> None:
         RunStarted(),
         GenerationCompleted(),
         ToolCallStarted(id="0", name="echo", arguments={"text": "hi"}),
-        ToolCallFinished(id="0", tool_call=call, result="hi", is_error=False, fact_id=3),
+        ToolCallFinished(id="0", tool_call=call, result="hi", is_error=False, fact_id=2),
         AssistantTextStarted(id="1"),
         AssistantTextDelta(id="1", text="done"),
         GenerationCompleted(),
@@ -451,7 +451,6 @@ def test_single_tool_call_round_trip() -> None:
     ]
     assert list(session.events()) == [
         UserMessageRecorded(content="hi"),
-        AssistantMessageRecorded(content="", thinking=""),
         ToolCallRecorded(name="echo", arguments={"text": "hi"}, result="hi", is_error=False),
         AssistantMessageRecorded(content="done", thinking=""),
     ]
@@ -582,7 +581,7 @@ def test_tool_call_delta_from_llm_is_forwarded_with_the_calls_pane_id() -> None:
         ToolCallArgumentsDelta(id="0", name="echo", text='{"text":'),
         GenerationCompleted(),
         ToolCallStarted(id="0", name="echo", arguments={"text": "hi"}),
-        ToolCallFinished(id="0", tool_call=call, result="hi", is_error=False, fact_id=3),
+        ToolCallFinished(id="0", tool_call=call, result="hi", is_error=False, fact_id=2),
         GenerationCompleted(),
         RunFinished(),
     ]
@@ -1124,7 +1123,7 @@ def test_delegate_can_run_shell_and_answer_with_verify(tmp_path: Path) -> None:
 
     child_tool_events = [
         event
-        for event in session.child("delegate/1").events()
+        for event in session.child("delegate/2").events()
         if isinstance(event, ToolCallRecorded)
     ]
     assert [event.name for event in child_tool_events] == ["shell", "answer"]
@@ -1175,8 +1174,8 @@ def test_delegate_can_delegate_further_and_session_ids_nest() -> None:
     runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    grandchild = session.child("delegate/1").child("delegate/1")
-    assert grandchild.session_id == "s1/delegate/1/delegate/1"
+    grandchild = session.child("delegate/2").child("delegate/2")
+    assert grandchild.session_id == "s1/delegate/2/delegate/2"
     assert [event for event in grandchild.events() if isinstance(event, UserMessageRecorded)] == [
         UserMessageRecorded(content="inner")
     ]
@@ -1186,7 +1185,7 @@ def test_delegate_can_delegate_further_and_session_ids_nest() -> None:
 
 def test_delegate_at_max_depth_is_not_offered_the_delegate_tool() -> None:
     conn = connect(":memory:")
-    session = Session(conn, "s1" + "/" * (MAX_DELEGATE_DEPTH - 2))
+    session = Session(conn, "s1")
     session.append(UserMessageRecorded(content="hi"))
     client = ScriptedClient(
         [
@@ -1208,9 +1207,11 @@ def test_delegate_at_max_depth_is_not_offered_the_delegate_tool() -> None:
         ]
     )
     tools = ToolRegistry()
-    register_actions(tools, session)
+    register_actions(tools, session, depth=MAX_DELEGATE_DEPTH - 1)
 
-    runner = LoopRunner(client, tools, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner = LoopRunner(
+        client, tools, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG, depth=MAX_DELEGATE_DEPTH - 1
+    )
     runner.execute()
 
     child_specs = client.seen_tools[1]
@@ -1247,7 +1248,7 @@ def test_cancelling_parent_mid_delegate_cancels_the_child_run() -> None:
     )
     runner.execute()
 
-    child_events = list(session.child("delegate/1").events())
+    child_events = list(session.child("delegate/2").events())
     assert [event for event in child_events if isinstance(event, AssistantMessageRecorded)] == []
     parent = [event for event in session.events() if isinstance(event, ToolCallRecorded)]
     assert parent == []
@@ -1277,7 +1278,7 @@ def test_repeating_delegate_is_stopped_by_stuckness() -> None:
 
     child_calls = [
         event
-        for event in session.child("delegate/1").events()
+        for event in session.child("delegate/2").events()
         if isinstance(event, ToolCallRecorded)
     ]
     assert len(child_calls) == STUCK_THRESHOLD
@@ -1312,7 +1313,7 @@ def test_delegate_child_session_is_distinct_from_parent() -> None:
     runner = LoopRunner(client, _echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    child_session = session.child("delegate/1")
+    child_session = session.child("delegate/2")
     child_user_messages = [
         event for event in child_session.events() if isinstance(event, UserMessageRecorded)
     ]
@@ -1656,7 +1657,7 @@ def test_delegate_read_fact_cannot_reach_parent_facts() -> None:
     runner = LoopRunner(client, tools, bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    child = session.child("delegate/1")
+    child = session.child("delegate/3")
     recalled = [
         event
         for event in child.events()
@@ -2254,7 +2255,7 @@ def _parent_delegate_result(session: Session) -> ToolCallRecorded:
 def _child_answers(session: Session) -> list[ToolCallRecorded]:
     return [
         event
-        for event in session.child("delegate/1").events()
+        for event in session.child("delegate/2").events()
         if isinstance(event, ToolCallRecorded)
     ]
 
@@ -2268,7 +2269,7 @@ def test_typed_delegate_returns_conforming_json_verbatim() -> None:
     assert result.result == record
     child_question = next(
         event
-        for event in session.child("delegate/1").events()
+        for event in session.child("delegate/2").events()
         if isinstance(event, UserMessageRecorded)
     )
     assert '"count": <number>' in child_question.content
@@ -2324,7 +2325,7 @@ def test_untyped_delegate_passes_prose_answer_unchanged() -> None:
     assert result.result == "there are three files"
     child_question = next(
         event
-        for event in session.child("delegate/1").events()
+        for event in session.child("delegate/2").events()
         if isinstance(event, UserMessageRecorded)
     )
     assert child_question.content == "how many?"
@@ -2355,7 +2356,7 @@ def test_invalid_delegate_fields_is_an_invalid_action_on_the_parent() -> None:
     assert all(event.is_error for event in recorded)
     assert "unknown type 'date'" in recorded[0].result
     assert runner.invalid_action_attempts == MAX_INVALID_ACTION_ATTEMPTS
-    assert list(session.child("delegate/1").events()) == []
+    assert list(session.child("delegate/2").events()) == []
 
 
 def test_non_object_delegate_fields_is_an_invalid_action_on_the_parent() -> None:
@@ -2382,3 +2383,165 @@ def test_non_object_delegate_fields_is_an_invalid_action_on_the_parent() -> None
     recorded = next(event for event in session.events() if isinstance(event, ToolCallRecorded))
     assert recorded.is_error is True
     assert "must be an object" in recorded.result
+
+
+def _delegate_turn(question: str = "q") -> list[list[StreamEvent]]:
+    return [
+        [
+            ToolCallReady(
+                tool_call=ToolCall(id="1", name="delegate", arguments={"question": question})
+            ),
+            GenerationComplete(finish_reason="tool_calls"),
+        ],
+        [
+            ToolCallReady(
+                tool_call=ToolCall(
+                    id="c1", name="answer", arguments={"content": "done", "citations": []}
+                )
+            ),
+            GenerationComplete(finish_reason="tool_calls"),
+        ],
+        [TextDelta(text="ok"), GenerationComplete(finish_reason="stop")],
+    ]
+
+
+def test_delegates_across_turns_get_distinct_child_sessions() -> None:
+    session = _session()
+
+    session.append(UserMessageRecorded(content="first"))
+    client = ScriptedClient(_delegate_turn("first question"))
+    LoopRunner(client, _echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
+
+    session.append(UserMessageRecorded(content="second"))
+    client = ScriptedClient(_delegate_turn("second question"))
+    LoopRunner(client, _echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
+
+    first_child_questions = [
+        event
+        for event in session.child("delegate/2").events()
+        if isinstance(event, UserMessageRecorded)
+    ]
+    second_child_questions = [
+        event
+        for event in session.child("delegate/5").events()
+        if isinstance(event, UserMessageRecorded)
+    ]
+    assert first_child_questions == [UserMessageRecorded(content="first question")]
+    assert second_child_questions == [UserMessageRecorded(content="second question")]
+
+
+def test_delegate_call_at_max_depth_is_rejected_without_spawning_a_child() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    client = ScriptedClient(
+        [
+            [
+                ToolCallReady(
+                    tool_call=ToolCall(id="1", name="delegate", arguments={"question": "q"})
+                ),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
+        ]
+    )
+    tools = ToolRegistry()
+    register_actions(tools, session, depth=MAX_DELEGATE_DEPTH)
+
+    runner = LoopRunner(
+        client, tools, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG, depth=MAX_DELEGATE_DEPTH
+    )
+    runner.execute()
+
+    recorded = next(event for event in session.events() if isinstance(event, ToolCallRecorded))
+    assert recorded.is_error is True
+    assert runner.invalid_action_attempts == 1
+    assert list(session.child("delegate/2").events()) == []
+
+
+def test_invalid_registry_tool_arguments_are_recorded_as_errors_not_facts() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    client = ScriptedClient(
+        [
+            [
+                ToolCallReady(tool_call=ToolCall(id="1", name="set_plan", arguments={})),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
+        ]
+    )
+    tools = ToolRegistry()
+    register_actions(tools, session)
+
+    runner = LoopRunner(client, tools, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    recorded = next(event for event in session.events() if isinstance(event, ToolCallRecorded))
+    assert recorded.is_error is True
+    assert "missing required field" in recorded.result
+    assert runner.invalid_action_attempts == 1
+    assert facts(session) == []
+
+
+def test_unexpected_tool_exception_finishes_run_with_error() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+
+    def blow_up(arguments: Mapping[str, object]) -> str:
+        raise RuntimeError("wired wrong")
+
+    registry = ToolRegistry()
+    registry.register(
+        Tool(
+            spec=ToolSpec(name="echo", description="echo", parameters={"type": "object"}),
+            execute=blow_up,
+        )
+    )
+    client = ScriptedClient(
+        [
+            [
+                ToolCallReady(tool_call=ToolCall(id="1", name="echo", arguments={})),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+        ]
+    )
+
+    runner = LoopRunner(client, registry, bus, session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    events = [next(subscriber) for _ in range(5)]
+    assert runner.error == "wired wrong"
+    assert events[-2] == ErrorOccurred(message="wired wrong")
+    assert events[-1] == RunFinished(error="wired wrong")
+
+
+def test_invalid_action_streak_resets_on_a_valid_call() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    invalid: list[list[StreamEvent]] = [
+        [
+            ToolCallReady(tool_call=ToolCall(id=str(i), name="missing", arguments={"n": i})),
+            GenerationComplete(finish_reason="tool_calls"),
+        ]
+        for i in range(2 * (MAX_INVALID_ACTION_ATTEMPTS - 1))
+    ]
+    valid: list[StreamEvent] = [
+        ToolCallReady(tool_call=ToolCall(id="v", name="echo", arguments={"text": "hi"})),
+        GenerationComplete(finish_reason="tool_calls"),
+    ]
+    turns: list[list[StreamEvent]] = [
+        *invalid[: MAX_INVALID_ACTION_ATTEMPTS - 1],
+        valid,
+        *invalid[MAX_INVALID_ACTION_ATTEMPTS - 1 :],
+        [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
+    ]
+    client = ScriptedClient(turns)
+
+    runner = LoopRunner(client, _echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    recorded = [event for event in session.events() if isinstance(event, ToolCallRecorded)]
+    assert len(recorded) == 2 * (MAX_INVALID_ACTION_ATTEMPTS - 1) + 1
+    assert runner.invalid_action_attempts == MAX_INVALID_ACTION_ATTEMPTS - 1

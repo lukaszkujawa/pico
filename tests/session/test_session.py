@@ -54,7 +54,7 @@ def test_messages_derives_expected_shape() -> None:
     assert messages[3] == Message(
         role=Role.TOOL,
         tool_result=ToolResult(
-            tool_call_id=messages[2].tool_calls[0].id, content="hi", is_error=False
+            tool_call_id=messages[2].tool_calls[0].id, content="hi", is_error=False, name="echo"
         ),
     )
     assert messages[4] == Message(role=Role.ASSISTANT, content="done")

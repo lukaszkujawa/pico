@@ -291,3 +291,19 @@ def test_locate_owner_accepts_the_owning_team_and_rejects_others(tmp_path: Path)
     assert task.check(tmp_path, EXPECTED_BROKEN_TEAM)
     assert not task.check(tmp_path, "atlas")
     assert not task.check(tmp_path, f"{EXPECTED_BROKEN_TEAM} or maybe dynamo")
+
+
+def test_locate_owner_accepts_prose_containing_another_team_as_a_substring(
+    tmp_path: Path,
+) -> None:
+    task = _seeded("locate_owner", tmp_path)
+
+    assert task.check(tmp_path, f"remember: the {EXPECTED_BROKEN_TEAM} team owns it")
+
+
+def test_group_by_region_accepts_thousand_separators_in_the_total(tmp_path: Path) -> None:
+    task = _seeded("group_by_region", tmp_path)
+    grouped = f"{EXPECTED_TOP_SALES:,}"
+
+    assert task.check(tmp_path, f"{EXPECTED_TOP_REGION} with a total of {grouped}")
+    assert not task.check(tmp_path, f"{EXPECTED_TOP_REGION} with a total of {EXPECTED_TOP_SALES}0")
