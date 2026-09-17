@@ -78,3 +78,5 @@ fail_under = 94
 
 [tool.vulture]
 paths = ["src/pico", "vulture_whitelist.py"]
+min_confidence = 60
+sort_by_size = true
