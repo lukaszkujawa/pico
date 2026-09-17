@@ -5,8 +5,11 @@ from typing import Self
 from pico.core.actions.arguments import InvalidActionError, require, require_int_list
 from pico.core.actions.context import ActionContext, ActionResult, AnswerOutcome, RunnerAction
 from pico.core.actions.shell import Shell
-from pico.core.ledger import facts
+from pico.core.context import fact_index
+from pico.core.ledger import Fact, facts
 from pico.llm.types import ToolSpec
+
+INLINE_CITATION_INDEX_MAX = 20
 
 ANSWER_SPEC = ToolSpec(
     name="answer",
@@ -25,6 +28,14 @@ ANSWER_SPEC = ToolSpec(
         },
         "required": ["content", "citations"],
     },
+)
+
+_PINNING = (
+    "Keep your answer's content, fix only the citations, and drop any claim no fact supports."
+)
+_SEARCH_ROUTE = (
+    "Find the ids with search_facts: describe the claim in plain words, "
+    'e.g. search_facts("reddit request blocked by bot detection").'
 )
 
 
@@ -67,12 +78,39 @@ def _accepted(context: ActionContext, answer: Answer, result: str) -> AnswerOutc
     )
 
 
+def _citation_rejection(answer: Answer, problem: str, known: list[Fact]) -> AnswerOutcome:
+    if not known:
+        route = "No facts exist yet to cite — gather one before answering."
+    elif len(known) <= INLINE_CITATION_INDEX_MAX:
+        route = f"Cite one of the facts you have:\n{fact_index(known)}"
+    else:
+        route = _SEARCH_ROUTE
+    return _rejected(answer, f"{problem}\n{route}\n{_PINNING}")
+
+
+def _unknown_citations(answer: Answer, known: list[Fact]) -> str | None:
+    ids = {fact.id for fact in known}
+    unknown = [citation for citation in answer.citations if citation not in ids]
+    if not unknown:
+        return None
+    cited = ", ".join(f"[{citation}]" for citation in unknown)
+    verb = "does" if len(unknown) == 1 else "do"
+    return f"unknown fact citation(s): fact {cited} {verb} not exist"
+
+
 def run_answer(context: ActionContext, arguments: Mapping[str, object]) -> ActionResult:
-    answer = Answer.from_arguments(arguments)
-    known = {fact.id for fact in facts(context.session)}
-    unknown = [citation for citation in answer.citations if citation not in known]
-    if unknown:
-        raise InvalidActionError(f"unknown fact citation(s): {unknown}")
+    known = facts(context.session)
+    try:
+        answer = Answer.from_arguments(arguments)
+    except InvalidActionError as error:
+        if "citations" not in str(error):
+            raise
+        content = arguments.get("content")
+        draft = Answer(content=content if isinstance(content, str) else "", citations=())
+        return _citation_rejection(draft, str(error), known)
+    problem = _unknown_citations(answer, known)
+    if problem is not None:
+        return _citation_rejection(answer, problem, known)
     problem = None if context.result_shape is None else context.result_shape.check(answer.content)
     if problem is not None:
         return _rejected(answer, problem)

@@ -14,7 +14,7 @@ The rejection taught nothing. It named what was wrong while leaving the model in
 * **A missing or malformed `citations` field teaches the same lesson.** The generic `missing required field 'citations'` from argument parsing becomes a citation rejection with the same route and pinning text, so attempt three's failure mode also gets a road back.
 * **Out of scope, recorded so it is not forgotten:** rejecting vacuous `verify` commands (`echo`, bare `test` on paths the answer makes no claims about) — the same session gamed verify with `echo "task finished"`; an `[uncited]` degradation floor after repeated repair failures, symmetric with `UNVERIFIED_PREFIX`; and adversarial spot-checking that a cited fact actually supports its claim, which is the real groundedness work and needs its own milestone.
 
-## [ ] T001 Teaching citation rejections
+## [X] T001 Teaching citation rejections
 
 ### Description
 
@@ -29,7 +29,7 @@ In `core/actions/answer.py`, replace the bare unknown-citation raise with a reje
 * Valid answers, result-shape checking, and verify behaviour are unchanged under the existing tests.
 * `make check` passes.
 
-## [ ] T002 Final soundness sweep
+## [X] T002 Final soundness sweep
 
 ### Description
 
