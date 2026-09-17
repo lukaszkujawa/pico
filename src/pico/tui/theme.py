@@ -16,6 +16,7 @@ class Theme:
     warning: str
     error: str
     assistant: str
+    user: str
     tool_call: str
     tool_call_border: str
     idle: str
@@ -53,6 +54,7 @@ PICO_THEME = Theme(
     warning="#e0af68",
     error="#f7768e",
     assistant="#c8ccd4",
+    user="#7aa2f7",
     tool_call="#9aa5ce",
     tool_call_border="#3b3f51",
     idle="#6b7280",

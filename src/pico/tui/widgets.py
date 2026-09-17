@@ -102,7 +102,7 @@ class UserPane(Static):
         super().__init__(id=None)
         self._theme = theme
         self._text = text
-        self.styles.color = theme.text
+        self.styles.color = theme.user
         self.styles.padding = (0, 1)
 
     def render(self) -> Text:
@@ -112,7 +112,7 @@ class UserPane(Static):
                 "  ",
                 ("queued", f"italic {self._theme.muted_text}"),
             )
-        return Text(self._text, style=f"bold {self._theme.text}")
+        return Text(self._text, style=f"bold {self._theme.user}")
 
 
 RESULT_TRUNCATE_LENGTH = 300

@@ -19,6 +19,7 @@ SEMANTIC_FIELDS = [
     "warning",
     "error",
     "assistant",
+    "user",
     "tool_call",
     "tool_call_border",
     "idle",
