@@ -1,7 +1,7 @@
 import itertools
 import json
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -191,7 +191,7 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
     cancelled = False
     runner.tool_call_pane_ids = {}
 
-    specs = runner.tools.specs()
+    specs = vocabulary(runner.tools, runner.depth)
     preamble = [Message(role=Role.SYSTEM, content=SYSTEM_PROMPT)]
     postamble = (
         []
@@ -373,6 +373,171 @@ def _run_shell(runner: LoopRunner, pane_id: str, shell: Shell) -> tuple[str, boo
     return output, False
 
 
+ActionResult = AnswerOutcome | tuple[str, bool] | None
+
+
+@dataclass(frozen=True)
+class RunnerAction:
+    spec: ToolSpec
+    execute: Callable[[LoopRunner, str, Mapping[str, object]], ActionResult]
+
+
+def _shell_action(
+    runner: LoopRunner, pane_id: str, arguments: Mapping[str, object]
+) -> ActionResult:
+    return _run_shell(runner, pane_id, Shell.from_arguments(arguments))
+
+
+def _answer_action(
+    runner: LoopRunner, pane_id: str, arguments: Mapping[str, object]
+) -> ActionResult:
+    answer = Answer.from_arguments(arguments)
+    known = {fact.id for fact in facts(runner.session)}
+    unknown = [citation for citation in answer.citations if citation not in known]
+    if unknown:
+        raise InvalidActionError(f"unknown fact citation(s): {unknown}")
+    return _verified_answer(runner, answer)
+
+
+def _search_action(
+    runner: LoopRunner, pane_id: str, arguments: Mapping[str, object]
+) -> ActionResult:
+    query = require(arguments, "query", str)
+    if not query.strip():
+        raise InvalidActionError("field 'query' must not be empty")
+    try:
+        output = search(
+            runner.llm,
+            runner.session,
+            query,
+            runner.context_size,
+            runner.chars_per_token,
+            runner.cancel,
+        )
+    except LLMError as error:
+        return f"search failed: {error}", True
+    return output, False
+
+
+def _delegate_action(
+    runner: LoopRunner, pane_id: str, arguments: Mapping[str, object]
+) -> ActionResult:
+    result = _run_delegate(runner, Delegate.from_arguments(arguments))
+    if runner.cancel.is_set():
+        return None
+    return result
+
+
+RUNNER_ACTIONS: dict[str, RunnerAction] = {
+    action.spec.name: action
+    for action in (
+        RunnerAction(
+            spec=ToolSpec(
+                name="shell",
+                description="Run a shell command and return its combined stdout and stderr.",
+                parameters={
+                    "type": "object",
+                    "properties": {"command": {"type": "string"}},
+                    "required": ["command"],
+                },
+            ),
+            execute=_shell_action,
+        ),
+        RunnerAction(
+            spec=ToolSpec(
+                name="answer",
+                description=(
+                    "Give the final answer to the user and end the run. "
+                    "Whenever the task has a checkable outcome, pass verify: a shell command "
+                    "that exits 0 exactly when your answer's claim is true. The runtime runs "
+                    "it before accepting the answer and rejects the answer if it fails."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "content": {"type": "string"},
+                        "citations": {"type": "array", "items": {"type": "integer"}},
+                        "verify": {"type": "string"},
+                    },
+                    "required": ["content", "citations"],
+                },
+            ),
+            execute=_answer_action,
+        ),
+        RunnerAction(
+            spec=ToolSpec(
+                name="search_facts",
+                description=(
+                    "Search all recorded facts (tool results and notes) by describing what you "
+                    "are looking for in plain words. A sub-task reads every recorded fact and "
+                    "judges relevance against your query, so keywords need not appear "
+                    "literally. Returns the relevant fact ids, each with a reason; "
+                    "read_fact(id) recovers any of them in full."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                },
+            ),
+            execute=_search_action,
+        ),
+        RunnerAction(
+            spec=ToolSpec(
+                name="delegate",
+                description=(
+                    "Spawn a sub-agent with its own fresh context to answer a single scoped "
+                    "question and return its answer. It has the same tools as you: it can "
+                    "explore with shell, work to its own plan, and delegate further. Use it "
+                    "to keep large exploration out of your own context. Pass fields to "
+                    "require a typed result: a mapping of field name to 'string', 'number', "
+                    "or 'boolean'. The runtime then rejects any answer that is not a JSON "
+                    "object with exactly those fields, so what comes back is "
+                    "machine-readable."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "question": {"type": "string"},
+                        "fields": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string",
+                                "enum": ["string", "number", "boolean"],
+                            },
+                        },
+                    },
+                    "required": ["question"],
+                },
+            ),
+            execute=_delegate_action,
+        ),
+    )
+}
+
+
+def vocabulary(tools: ToolRegistry, depth: int) -> list[ToolSpec]:
+    specs = [*tools.specs(), *(action.spec for action in RUNNER_ACTIONS.values())]
+    if depth >= MAX_DELEGATE_DEPTH:
+        return [spec for spec in specs if spec.name != "delegate"]
+    return specs
+
+
+def _dispatch(runner: LoopRunner, pane_id: str, call: ToolCall) -> ActionResult:
+    action = RUNNER_ACTIONS.get(call.name)
+    if action is not None:
+        return action.execute(runner, pane_id, call.arguments)
+    return runner.tools.execute(call), False
+
+
+def _failed(call: ToolCall, message: str) -> AnswerOutcome | tuple[str, bool]:
+    if call.name != "answer":
+        return message, True
+    return AnswerOutcome(
+        content="", result=message, is_error=True, accepted=False, reason=message, verify=None
+    )
+
+
 def tool_call_step(runner: LoopRunner) -> StepOutcome:
     tool_calls = runner.pending_tool_calls
     runner.pending_tool_calls = []
@@ -385,94 +550,24 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
             pane_id = runner.new_id()
         runner.bus.publish(ToolCallStarted(id=pane_id, name=call.name, arguments=call.arguments))
         invalid = False
-        answer_outcome: AnswerOutcome | None = None
-        if call.name == "answer":
-            try:
-                answer = Answer.from_arguments(call.arguments)
-                known = {fact.id for fact in facts(runner.session)}
-                unknown = [citation for citation in answer.citations if citation not in known]
-                if unknown:
-                    raise InvalidActionError(f"unknown fact citation(s): {unknown}")
-                answer_outcome = _verified_answer(runner, answer)
-                output, is_error = answer_outcome.result, answer_outcome.is_error
-            except InvalidActionError as error:
-                output = str(error)
-                is_error = True
-                invalid = True
-                answer_outcome = AnswerOutcome(
-                    content="",
-                    result=output,
-                    is_error=True,
-                    accepted=False,
-                    reason=output,
-                    verify=None,
-                )
-            except ToolError as error:
-                output = str(error)
-                is_error = True
-                answer_outcome = AnswerOutcome(
-                    content="",
-                    result=output,
-                    is_error=True,
-                    accepted=False,
-                    reason=output,
-                    verify=None,
-                )
-        elif call.name == "delegate":
-            try:
-                delegate = Delegate.from_arguments(call.arguments)
-                output, is_error = _run_delegate(runner, delegate)
-                if runner.cancel.is_set():
-                    return "cancelled"
-            except InvalidActionError as error:
-                output = str(error)
-                is_error = True
-                invalid = True
-        elif call.name == "search_facts":
-            try:
-                query = require(call.arguments, "query", str)
-                if not query.strip():
-                    raise InvalidActionError("field 'query' must not be empty")
-                output = search(
-                    runner.llm,
-                    runner.session,
-                    query,
-                    runner.context_size,
-                    runner.chars_per_token,
-                    runner.cancel,
-                )
-                is_error = False
-            except SearchCancelled:
-                return "cancelled"
-            except InvalidActionError as error:
-                output = str(error)
-                is_error = True
-                invalid = True
-            except LLMError as error:
-                output = f"search failed: {error}"
-                is_error = True
-        elif call.name == "shell":
-            try:
-                shell = Shell.from_arguments(call.arguments)
-                output, is_error = _run_shell(runner, pane_id, shell)
-            except InvalidActionError as error:
-                output = str(error)
-                is_error = True
-                invalid = True
-            except ToolError as error:
-                output = str(error)
-                is_error = True
+        result: ActionResult
+        try:
+            result = _dispatch(runner, pane_id, call)
+        except SearchCancelled:
+            return "cancelled"
+        except (InvalidActionError, UnknownToolError) as error:
+            result = _failed(call, str(error))
+            invalid = True
+        except (ToolError, LLMError) as error:
+            result = _failed(call, str(error))
+        if result is None:
+            return "cancelled"
+        if isinstance(result, AnswerOutcome):
+            answer_outcome = result
+            output, is_error = result.result, result.is_error
         else:
-            try:
-                output = runner.tools.execute(call)
-                is_error = False
-            except ToolError as error:
-                output = str(error)
-                is_error = True
-            except (InvalidActionError, UnknownToolError) as error:
-                output = str(error)
-                is_error = True
-                invalid = True
+            answer_outcome = None
+            output, is_error = result
         runner.session.append(
             ToolCallRecorded(
                 name=call.name, arguments=call.arguments, result=output, is_error=is_error

@@ -314,33 +314,6 @@ _TOOL_SPECS = {
             "required": ["path", "content"],
         },
     ),
-    "shell": ToolSpec(
-        name="shell",
-        description="Run a shell command and return its combined stdout and stderr.",
-        parameters={
-            "type": "object",
-            "properties": {"command": {"type": "string"}},
-            "required": ["command"],
-        },
-    ),
-    "answer": ToolSpec(
-        name="answer",
-        description=(
-            "Give the final answer to the user and end the run. "
-            "Whenever the task has a checkable outcome, pass verify: a shell command that "
-            "exits 0 exactly when your answer's claim is true. The runtime runs it before "
-            "accepting the answer and rejects the answer if it fails."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "content": {"type": "string"},
-                "citations": {"type": "array", "items": {"type": "integer"}},
-                "verify": {"type": "string"},
-            },
-            "required": ["content", "citations"],
-        },
-    ),
     "note": ToolSpec(
         name="note",
         description=(
@@ -353,21 +326,6 @@ _TOOL_SPECS = {
             "type": "object",
             "properties": {"content": {"type": "string"}},
             "required": ["content"],
-        },
-    ),
-    "search_facts": ToolSpec(
-        name="search_facts",
-        description=(
-            "Search all recorded facts (tool results and notes) by describing what you "
-            "are looking for in plain words. A sub-task reads every recorded fact and "
-            "judges relevance against your query, so keywords need not appear literally. "
-            "Returns the relevant fact ids, each with a reason; read_fact(id) recovers "
-            "any of them in full."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {"query": {"type": "string"}},
-            "required": ["query"],
         },
     ),
     "read_fact": ToolSpec(
@@ -436,44 +394,14 @@ _TOOL_SPECS = {
             "required": ["query"],
         },
     ),
-    "delegate": ToolSpec(
-        name="delegate",
-        description=(
-            "Spawn a sub-agent with its own fresh context to answer a single scoped question "
-            "and return its answer. It has the same tools as you: it can explore with shell, "
-            "work to its own plan, and delegate further. Use it to keep large exploration out "
-            "of your own context. Pass fields to require a typed result: a mapping of field "
-            "name to 'string', 'number', or 'boolean'. The runtime then rejects any answer "
-            "that is not a JSON object with exactly those fields, so what comes back is "
-            "machine-readable."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "question": {"type": "string"},
-                "fields": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string",
-                        "enum": ["string", "number", "boolean"],
-                    },
-                },
-            },
-            "required": ["question"],
-        },
-    ),
 }
 
 
-def _action_tool(action_type: type[ReadFile | WriteFile | Shell], name: str) -> Tool:
+def _action_tool(action_type: type[ReadFile | WriteFile], name: str) -> Tool:
     def execute(arguments: Mapping[str, object]) -> str:
         return action_type.from_arguments(arguments).execute()
 
     return Tool(spec=_TOOL_SPECS[name], execute=execute)
-
-
-def _answer_tool() -> Tool:
-    return Tool(spec=_TOOL_SPECS["answer"], execute=lambda _: "")
 
 
 def note_tool() -> Tool:
@@ -548,15 +476,10 @@ def sql_tool(scratch: Scratch) -> Tool:
 def register_actions(registry: ToolRegistry, session: Session, depth: int = 0) -> None:
     registry.register(_action_tool(ReadFile, "read_file"))
     registry.register(_action_tool(WriteFile, "write_file"))
-    registry.register(_action_tool(Shell, "shell"))
     scratch = Scratch(session, in_memory=depth > 0)
     registry.register(load_table_tool(scratch))
     registry.register(sql_tool(scratch))
     registry.register(note_tool())
-    registry.register(Tool(spec=_TOOL_SPECS["search_facts"], execute=lambda _: ""))
     registry.register(fact_recall_tool(session))
     registry.register(set_plan_tool(session))
     registry.register(complete_step_tool(session))
-    registry.register(_answer_tool())
-    if depth < MAX_DELEGATE_DEPTH:
-        registry.register(Tool(spec=_TOOL_SPECS["delegate"], execute=lambda _: ""))

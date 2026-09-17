@@ -44,6 +44,7 @@ from pico.core.loop import (
     MAX_DELEGATE_STEPS,
     MAX_INVALID_ACTION_ATTEMPTS,
     MIN_CHARS_PER_TOKEN,
+    RUNNER_ACTIONS,
     LoopConfig,
     LoopRunner,
     StepOutcome,
@@ -51,6 +52,7 @@ from pico.core.loop import (
     stream_step,
     stuckness_step,
     tool_call_step,
+    vocabulary,
 )
 from pico.core.stuckness import NUDGE_THRESHOLD, STUCK_THRESHOLD
 from pico.core.tools import Tool, ToolRegistry
@@ -1069,7 +1071,7 @@ def test_stream_step_sends_budget_rendered_messages_to_llm() -> None:
     )
     client = ScriptedClient([[TextDelta(text="ok"), GenerationComplete(finish_reason="stop")]])
 
-    runner = LoopRunner(client, ToolRegistry(), bus, session, 400, DEFAULT_LOOP_CONFIG)
+    runner = LoopRunner(client, ToolRegistry(), bus, session, 1_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
     sent_tool_messages = [m for m in client.seen_messages[0] if m.role.value == "tool"]
@@ -1908,7 +1910,7 @@ def test_overhead_reflects_the_registered_tool_specs() -> None:
 
     LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
 
-    assert client.seen_specs[0] == registry.specs()
+    assert client.seen_specs[0] == vocabulary(registry, 0)
     assert _sent_overhead(client, 0) > estimate_tokens(SYSTEM_PROMPT)
 
 
@@ -1957,7 +1959,7 @@ def test_overhead_shrinks_the_conversation_budget() -> None:
     session.append(ToolCallRecorded(name="echo", arguments={}, result="a" * 3_000, is_error=False))
     registry = _echo_registry()
     overhead = estimate_tokens(
-        specs_text(registry.specs()) + SYSTEM_PROMPT, DEFAULT_CHARS_PER_TOKEN
+        specs_text(vocabulary(registry, 0)) + SYSTEM_PROMPT, DEFAULT_CHARS_PER_TOKEN
     )
     conversation = sum(
         estimate_tokens(message_text(message), DEFAULT_CHARS_PER_TOKEN)
@@ -3038,3 +3040,48 @@ def test_cancelling_mid_search_cancels_the_run_without_recording_a_result() -> N
         for event in session.events()
         if isinstance(event, ToolCallRecorded) and event.name == "search_facts"
     ] == []
+
+
+def test_vocabulary_lists_plain_tools_then_runner_actions() -> None:
+    registry = ToolRegistry()
+    register_actions(registry, _session())
+
+    specs = vocabulary(registry, 0)
+
+    assert [spec.name for spec in specs] == [
+        "read_file",
+        "write_file",
+        "load_table",
+        "sql",
+        "note",
+        "read_fact",
+        "set_plan",
+        "complete_step",
+        "shell",
+        "answer",
+        "search_facts",
+        "delegate",
+    ]
+    assert specs[-4:] == [action.spec for action in RUNNER_ACTIONS.values()]
+
+
+def test_vocabulary_omits_delegate_at_max_depth() -> None:
+    registry = ToolRegistry()
+    register_actions(registry, _session(), depth=MAX_DELEGATE_DEPTH)
+
+    names = [spec.name for spec in vocabulary(registry, MAX_DELEGATE_DEPTH)]
+
+    assert "delegate" not in names
+    assert "shell" in names
+    assert names == [spec.name for spec in vocabulary(registry, 0) if spec.name != "delegate"]
+
+
+def test_answer_spec_documents_verify() -> None:
+    spec = RUNNER_ACTIONS["answer"].spec
+    properties = spec.parameters["properties"]
+    required = spec.parameters["required"]
+    assert isinstance(properties, dict)
+    assert isinstance(required, list)
+    assert "verify" in properties
+    assert "verify" not in required
+    assert "exits 0" in spec.description

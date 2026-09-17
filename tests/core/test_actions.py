@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 from pico.core.actions import (
-    MAX_DELEGATE_DEPTH,
     Answer,
     CompleteStep,
     Delegate,
@@ -187,19 +186,6 @@ def test_answer_from_arguments_verify_empty_string() -> None:
         Answer.from_arguments({"content": "the answer", "citations": [], "verify": "   "})
 
 
-def test_answer_tool_spec_documents_verify() -> None:
-    registry = ToolRegistry()
-    register_actions(registry, _session_with_fact("x")[0])
-    spec = next(spec for spec in registry.specs() if spec.name == "answer")
-    properties = spec.parameters["properties"]
-    required = spec.parameters["required"]
-    assert isinstance(properties, dict)
-    assert isinstance(required, list)
-    assert "verify" in properties
-    assert "verify" not in required
-    assert "exits 0" in spec.description
-
-
 def test_shell_run_returns_exit_code_and_output() -> None:
     assert Shell(command="echo hi").run() == (0, "hi\n")
     code, output = Shell(command="echo boom >&2; exit 3").run()
@@ -373,7 +359,7 @@ def test_read_fact_missing_id_raises_invalid_action_error() -> None:
         fact_recall_tool(session).execute({})
 
 
-def test_register_actions_populates_all_tool_names() -> None:
+def test_register_actions_populates_all_plain_tool_names() -> None:
     registry = ToolRegistry()
     register_actions(registry, Session(connect(":memory:"), "s1"))
 
@@ -382,40 +368,22 @@ def test_register_actions_populates_all_tool_names() -> None:
     assert names == {
         "read_file",
         "write_file",
-        "shell",
         "load_table",
         "sql",
         "note",
-        "search_facts",
         "read_fact",
         "set_plan",
         "complete_step",
-        "answer",
-        "delegate",
     }
 
 
-def test_register_actions_below_max_depth_still_has_full_names() -> None:
+def test_register_actions_has_no_placeholder_executors() -> None:
     registry = ToolRegistry()
-    register_actions(
-        registry, Session(connect(":memory:"), "s1/delegate/1"), depth=MAX_DELEGATE_DEPTH - 1
-    )
+    register_actions(registry, Session(connect(":memory:"), "s1"))
 
-    names = {spec.name for spec in registry.specs()}
-
-    assert "shell" in names
-    assert "set_plan" in names
-    assert "delegate" in names
-
-
-def test_register_actions_withholds_delegate_at_max_depth() -> None:
-    registry = ToolRegistry()
-    register_actions(registry, Session(connect(":memory:"), "s1"), depth=MAX_DELEGATE_DEPTH)
-
-    names = {spec.name for spec in registry.specs()}
-
-    assert "delegate" not in names
-    assert "shell" in names
+    for spec in registry.specs():
+        with pytest.raises((InvalidActionError, ToolError)):
+            registry.execute(ToolCall(id="1", name=spec.name, arguments={"bogus": True}))
 
 
 def test_register_actions_read_file_round_trips(tmp_path: Path) -> None:
@@ -440,15 +408,6 @@ def test_register_actions_write_file_round_trips(tmp_path: Path) -> None:
 
     assert "wrote" in result
     assert path.read_text() == "hi"
-
-
-def test_register_actions_shell_round_trips() -> None:
-    registry = ToolRegistry()
-    register_actions(registry, Session(connect(":memory:"), "s1"))
-
-    result = registry.execute(ToolCall(id="1", name="shell", arguments={"command": "echo hi"}))
-
-    assert result.strip() == "hi"
 
 
 def test_register_actions_invalid_arguments_raise_invalid_action_error() -> None:

@@ -11,7 +11,7 @@ Tool dispatch is split across two mechanisms. `ToolRegistry` executes the self-c
 * **Recording is uniform.** Every call still appends one `ToolCallRecorded`; fact-id lookup and event publication happen once, after the unified dispatch, for all tools alike.
 * **Pure refactor.** No tool gains or loses behaviour; the model sees identical specs, results, and error texts. Existing tests may be restructured but their asserted behaviour stands.
 
-## [ ] T001 Collapse dispatch into one path
+## [X] T001 Collapse dispatch into one path
 
 ### Description
 
