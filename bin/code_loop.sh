@@ -112,7 +112,7 @@ for ((step = 1; step <= MAX_STEPS; step++)); do
   task_name="$(basename "$before_task")"
   step_line="STEP $step/$MAX_STEPS  ·  $before_count task(s) remaining"
   next_line="next: $task_name"
-  attach_line="watch live: make claude_attach"
+  attach_line="watch live: make code_attach"
 
   branch_name="${task_name%.md}"
 
@@ -120,7 +120,7 @@ for ((step = 1; step <= MAX_STEPS; step++)); do
   box_border "┌" "┐"
   box_line "$step_line" "${BOLD}STEP $step/$MAX_STEPS${RESET}  ${DIM}·${RESET}  ${before_count} task(s) remaining"
   box_line "$next_line" "${DIM}next:${RESET} ${YELLOW}$task_name${RESET}"
-  box_line "$attach_line" "${DIM}watch live:${RESET} ${BOLD}make claude_attach${RESET}"
+  box_line "$attach_line" "${DIM}watch live:${RESET} ${BOLD}make code_attach${RESET}"
   box_border "└" "┘"
   echo
 

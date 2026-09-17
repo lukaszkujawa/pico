@@ -1,4 +1,4 @@
-.PHONY: lint format typecheck deadcode arch test build check code claude_attach run run_in_docker evals stop_code
+.PHONY: lint format typecheck deadcode arch test build check code code_attach run run_in_docker evals stop_code
 
 lint:
 	uv run ruff check .
@@ -28,7 +28,7 @@ check: lint typecheck deadcode arch test build
 code:
 	bin/code.sh
 
-claude_attach:
+code_attach:
 	tmux attach -t claude-pico
 
 run:
