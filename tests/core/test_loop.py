@@ -2726,3 +2726,234 @@ def test_long_single_prompt_run_keeps_the_prompt_bounded() -> None:
     task = client.seen_messages[-1][2]
     assert task.role is Role.USER
     assert task.content == "review everything"
+
+
+def _search_call(query: str = "review findings architecture core loop") -> ToolCall:
+    return ToolCall(id="1", name="search_facts", arguments={"query": query})
+
+
+class SearchScriptedClient:
+    def __init__(self, turns: list[list[StreamEvent]], replies: list[str]) -> None:
+        self._turns = turns
+        self._replies = replies
+        self.seen_tools: list[list[ToolSpec]] = []
+
+    def stream(self, messages: list[Message], tools: list[ToolSpec]) -> Iterator[StreamEvent]:
+        self.seen_tools.append(tools)
+        if not tools:
+            yield TextDelta(text=self._replies.pop(0))
+            return
+        yield from self._turns.pop(0)
+
+
+def _seeded_session() -> Session:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    session.append(
+        ToolCallRecorded(
+            name="note", arguments={}, result="the run loop compiles context", is_error=False
+        )
+    )
+    return session
+
+
+def test_search_facts_returns_ids_with_reasons_from_the_sub_task() -> None:
+    session = _seeded_session()
+    tools = ToolRegistry()
+    register_actions(tools, session)
+    client = SearchScriptedClient(
+        [
+            [
+                ToolCallReady(tool_call=_search_call()),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
+        ],
+        ["2", "2", "[2] the note records how the core loop builds its prompt"],
+    )
+
+    LoopRunner(client, tools, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
+
+    recorded = [
+        event
+        for event in session.events()
+        if isinstance(event, ToolCallRecorded) and event.name == "search_facts"
+    ]
+    assert recorded[0].is_error is False
+    assert recorded[0].result.startswith("[2] the note records how the core loop builds its prompt")
+    assert client.seen_tools[1] == []
+
+
+def test_search_facts_inside_a_delegate_sends_no_tool_specs() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="hi"))
+    tools = ToolRegistry()
+    register_actions(tools, session)
+    client = SearchScriptedClient(
+        [
+            [
+                ToolCallReady(
+                    tool_call=ToolCall(id="1", name="delegate", arguments={"question": "q"})
+                ),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [
+                ToolCallReady(
+                    tool_call=ToolCall(id="c1", name="note", arguments={"content": "seed"})
+                ),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [
+                ToolCallReady(
+                    tool_call=ToolCall(id="c2", name="search_facts", arguments={"query": "seed"})
+                ),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [
+                ToolCallReady(
+                    tool_call=ToolCall(
+                        id="c3", name="answer", arguments={"content": "ok", "citations": []}
+                    )
+                ),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
+        ],
+        ["2", "2", "[2] seed is the match"],
+    )
+
+    LoopRunner(client, tools, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
+
+    child = [
+        event
+        for event in session.child("delegate/2").events()
+        if isinstance(event, ToolCallRecorded) and event.name == "search_facts"
+    ]
+    assert child[0].result.startswith("[2] seed is the match")
+    assert [] in client.seen_tools
+
+
+def test_search_facts_without_relevant_facts_offers_the_fact_index() -> None:
+    session = _seeded_session()
+    tools = ToolRegistry()
+    register_actions(tools, session)
+    client = SearchScriptedClient(
+        [
+            [
+                ToolCallReady(tool_call=_search_call()),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
+        ],
+        ["none"],
+    )
+
+    LoopRunner(client, tools, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
+
+    recorded = next(
+        event
+        for event in session.events()
+        if isinstance(event, ToolCallRecorded) and event.name == "search_facts"
+    )
+    assert recorded.is_error is False
+    assert "no relevant facts found for" in recorded.result
+    assert "[2] note: the run loop compiles context" in recorded.result
+
+
+def test_search_facts_with_empty_query_is_an_invalid_action() -> None:
+    session = _seeded_session()
+    tools = ToolRegistry()
+    register_actions(tools, session)
+    client = SearchScriptedClient(
+        [
+            [
+                ToolCallReady(tool_call=_search_call("   ")),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
+        ],
+        [],
+    )
+
+    runner = LoopRunner(client, tools, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    recorded = next(
+        event
+        for event in session.events()
+        if isinstance(event, ToolCallRecorded) and event.name == "search_facts"
+    )
+    assert recorded.is_error is True
+    assert runner.invalid_action_attempts == 1
+
+
+def test_llm_error_mid_search_records_a_failed_call_and_the_run_continues() -> None:
+    session = _seeded_session()
+    tools = ToolRegistry()
+    register_actions(tools, session)
+
+    class ExplodingSearch:
+        def __init__(self) -> None:
+            self.turns = [
+                [
+                    ToolCallReady(tool_call=_search_call()),
+                    GenerationComplete(finish_reason="tool_calls"),
+                ],
+                [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
+            ]
+
+        def stream(self, messages: list[Message], tools: list[ToolSpec]) -> Iterator[StreamEvent]:
+            if not tools:
+                raise LLMError("connection lost")
+            yield from self.turns.pop(0)
+
+    runner = LoopRunner(ExplodingSearch(), tools, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    recorded = next(
+        event
+        for event in session.events()
+        if isinstance(event, ToolCallRecorded) and event.name == "search_facts"
+    )
+    assert recorded.is_error is True
+    assert "search failed" in recorded.result
+    assert runner.error is None
+    assert runner.iterations == 2
+
+
+def test_cancelling_mid_search_cancels_the_run_without_recording_a_result() -> None:
+    session = _seeded_session()
+    tools = ToolRegistry()
+    register_actions(tools, session)
+    cancel = threading.Event()
+
+    class CancelDuringSearch:
+        def __init__(self) -> None:
+            self.turns = [
+                [
+                    ToolCallReady(tool_call=_search_call()),
+                    GenerationComplete(finish_reason="tool_calls"),
+                ]
+            ]
+
+        def stream(self, messages: list[Message], tools: list[ToolSpec]) -> Iterator[StreamEvent]:
+            if not tools:
+                cancel.set()
+                yield TextDelta(text="2")
+                return
+            yield from self.turns.pop(0)
+
+    bus = Bus()
+    subscriber = bus.subscribe()
+    runner = LoopRunner(
+        CancelDuringSearch(), tools, bus, session, 128_000, DEFAULT_LOOP_CONFIG, cancel
+    )
+    runner.execute()
+
+    published = [next(subscriber) for _ in range(4)]
+    assert RunCancelled() in published
+    assert [
+        event
+        for event in session.events()
+        if isinstance(event, ToolCallRecorded) and event.name == "search_facts"
+    ] == []

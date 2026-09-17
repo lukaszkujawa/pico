@@ -24,7 +24,7 @@ class InvalidActionError(ValueError):
     pass
 
 
-def _require[T](arguments: Mapping[str, object], field: str, expected: type[T]) -> T:
+def require[T](arguments: Mapping[str, object], field: str, expected: type[T]) -> T:
     if field not in arguments:
         raise InvalidActionError(f"missing required field {field!r}")
     value = arguments[field]
@@ -77,7 +77,7 @@ class ReadFile:
 
     @classmethod
     def from_arguments(cls, arguments: Mapping[str, object]) -> Self:
-        path = _require(arguments, "path", str)
+        path = require(arguments, "path", str)
         return cls(path=path)
 
     def execute(self) -> str:
@@ -95,8 +95,8 @@ class WriteFile:
 
     @classmethod
     def from_arguments(cls, arguments: Mapping[str, object]) -> Self:
-        path = _require(arguments, "path", str)
-        content = _require(arguments, "content", str)
+        path = require(arguments, "path", str)
+        content = require(arguments, "content", str)
         return cls(path=path, content=content)
 
     def execute(self) -> str:
@@ -136,7 +136,7 @@ class Shell:
 
     @classmethod
     def from_arguments(cls, arguments: Mapping[str, object]) -> Self:
-        command = _require(arguments, "command", str)
+        command = require(arguments, "command", str)
         return cls(command=command)
 
     def run(
@@ -184,9 +184,9 @@ class Answer:
 
     @classmethod
     def from_arguments(cls, arguments: Mapping[str, object]) -> Self:
-        content = _require(arguments, "content", str)
+        content = require(arguments, "content", str)
         citations = _require_int_list(arguments, "citations")
-        verify = None if arguments.get("verify") is None else _require(arguments, "verify", str)
+        verify = None if arguments.get("verify") is None else require(arguments, "verify", str)
         if verify is not None and not verify.strip():
             raise InvalidActionError("field 'verify' must not be empty")
         return cls(content=content, citations=citations, verify=verify)
@@ -208,7 +208,7 @@ class CompleteStep:
 
     @classmethod
     def from_arguments(cls, arguments: Mapping[str, object]) -> Self:
-        index = _require(arguments, "index", int)
+        index = require(arguments, "index", int)
         return cls(index=index)
 
 
@@ -287,7 +287,7 @@ class Delegate:
 
     @classmethod
     def from_arguments(cls, arguments: Mapping[str, object]) -> Self:
-        question = _require(arguments, "question", str)
+        question = require(arguments, "question", str)
         fields = _require_fields(arguments)
         return cls(question=question, shape=None if fields is None else ResultShape(fields))
 
@@ -358,10 +358,11 @@ _TOOL_SPECS = {
     "search_facts": ToolSpec(
         name="search_facts",
         description=(
-            "Search all recorded facts (tool results and notes) for a text query "
-            "and return matching fact ids with previews. Use it to rediscover "
-            "earlier work that is no longer in your context, then read_fact(id) "
-            "to recover a match in full."
+            "Search all recorded facts (tool results and notes) by describing what you "
+            "are looking for in plain words. A sub-task reads every recorded fact and "
+            "judges relevance against your query, so keywords need not appear literally. "
+            "Returns the relevant fact ids, each with a reason; read_fact(id) recovers "
+            "any of them in full."
         ),
         parameters={
             "type": "object",
@@ -477,7 +478,7 @@ def _answer_tool() -> Tool:
 
 def note_tool() -> Tool:
     def execute(arguments: Mapping[str, object]) -> str:
-        content = _require(arguments, "content", str)
+        content = require(arguments, "content", str)
         if not content.strip():
             raise InvalidActionError("field 'content' must not be empty")
         return content
@@ -485,43 +486,9 @@ def note_tool() -> Tool:
     return Tool(spec=_TOOL_SPECS["note"], execute=execute)
 
 
-MAX_SEARCH_MATCHES = 20
-_SNIPPET_CHARS = 120
-
-
-def _flatten(text: str) -> str:
-    return " ".join(text.split())
-
-
-def _snippet(content: str, needle: str) -> str:
-    flat = _flatten(content)
-    position = flat.lower().find(needle)
-    start = max(0, position - _SNIPPET_CHARS // 3)
-    return flat[start : start + _SNIPPET_CHARS]
-
-
-def search_facts_tool(session: Session) -> Tool:
-    def execute(arguments: Mapping[str, object]) -> str:
-        query = _require(arguments, "query", str)
-        needle = _flatten(query).lower()
-        if not needle:
-            raise InvalidActionError("field 'query' must not be empty")
-        matches = [fact for fact in facts(session) if needle in _flatten(fact.content).lower()]
-        if not matches:
-            return f"no facts match {query!r}"
-        shown = matches[-MAX_SEARCH_MATCHES:]
-        lines = [f"[{fact.id}] {fact.source}: {_snippet(fact.content, needle)}" for fact in shown]
-        if len(matches) > len(shown):
-            lines.append(f"+{len(matches) - len(shown)} earlier matches")
-        lines.append("Call read_fact(id) to recover any fact in full.")
-        return "\n".join(lines)
-
-    return Tool(spec=_TOOL_SPECS["search_facts"], execute=execute)
-
-
 def fact_recall_tool(session: Session) -> Tool:
     def execute(arguments: Mapping[str, object]) -> str:
-        fact_id = _require(arguments, "id", int)
+        fact_id = require(arguments, "id", int)
         for fact in facts(session):
             if fact.id == fact_id:
                 return fact.content
@@ -563,8 +530,8 @@ def complete_step_tool(session: Session) -> Tool:
 
 def load_table_tool(scratch: Scratch) -> Tool:
     def execute(arguments: Mapping[str, object]) -> str:
-        path = _require(arguments, "path", str)
-        table = _require(arguments, "table", str)
+        path = require(arguments, "path", str)
+        table = require(arguments, "table", str)
         return load_table(scratch, path, table)
 
     return Tool(spec=_TOOL_SPECS["load_table"], execute=execute)
@@ -572,7 +539,7 @@ def load_table_tool(scratch: Scratch) -> Tool:
 
 def sql_tool(scratch: Scratch) -> Tool:
     def execute(arguments: Mapping[str, object]) -> str:
-        statement = _require(arguments, "query", str)
+        statement = require(arguments, "query", str)
         return query(scratch, statement)
 
     return Tool(spec=_TOOL_SPECS["sql"], execute=execute)
@@ -586,7 +553,7 @@ def register_actions(registry: ToolRegistry, session: Session, depth: int = 0) -
     registry.register(load_table_tool(scratch))
     registry.register(sql_tool(scratch))
     registry.register(note_tool())
-    registry.register(search_facts_tool(session))
+    registry.register(Tool(spec=_TOOL_SPECS["search_facts"], execute=lambda _: ""))
     registry.register(fact_recall_tool(session))
     registry.register(set_plan_tool(session))
     registry.register(complete_step_tool(session))

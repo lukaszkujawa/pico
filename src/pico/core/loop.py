@@ -13,6 +13,7 @@ from pico.core.actions import (
     ResultShape,
     Shell,
     register_actions,
+    require,
 )
 from pico.core.bus import Bus
 from pico.core.context import (
@@ -43,9 +44,11 @@ from pico.core.events import (
     ToolCallStarted,
 )
 from pico.core.ledger import facts, plan
+from pico.core.search import SearchCancelled, search
 from pico.core.stuckness import assess
 from pico.core.tools import ToolRegistry
 from pico.llm.client import LLMClient
+from pico.llm.errors import LLMError
 from pico.llm.types import (
     GenerationComplete,
     Message,
@@ -424,6 +427,29 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
                 output = str(error)
                 is_error = True
                 invalid = True
+        elif call.name == "search_facts":
+            try:
+                query = require(call.arguments, "query", str)
+                if not query.strip():
+                    raise InvalidActionError("field 'query' must not be empty")
+                output = search(
+                    runner.llm,
+                    runner.session,
+                    query,
+                    runner.context_size,
+                    runner.chars_per_token,
+                    runner.cancel,
+                )
+                is_error = False
+            except SearchCancelled:
+                return "cancelled"
+            except InvalidActionError as error:
+                output = str(error)
+                is_error = True
+                invalid = True
+            except LLMError as error:
+                output = f"search failed: {error}"
+                is_error = True
         elif call.name == "shell":
             try:
                 shell = Shell.from_arguments(call.arguments)

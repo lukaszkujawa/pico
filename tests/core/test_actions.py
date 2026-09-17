@@ -22,7 +22,6 @@ from pico.core.actions import (
     load_table_tool,
     note_tool,
     register_actions,
-    search_facts_tool,
     set_plan_tool,
     sql_tool,
 )
@@ -800,60 +799,3 @@ def test_note_records_its_content_as_the_result() -> None:
 def test_note_empty_content_raises_invalid_action_error() -> None:
     with pytest.raises(InvalidActionError, match="must not be empty"):
         note_tool().execute({"content": "   "})
-
-
-def test_noted_finding_becomes_a_searchable_fact() -> None:
-    session = Session(connect(":memory:"), "s1")
-    session.append(
-        ToolCallRecorded(
-            name="note", arguments={}, result="the Bus drops subscribers", is_error=False
-        )
-    )
-
-    result = search_facts_tool(session).execute({"query": "bus"})
-
-    assert "[1] note:" in result
-    assert "Bus drops subscribers" in result
-
-
-def test_search_facts_matches_case_insensitively_and_names_recovery() -> None:
-    session, fact_id = _session_with_fact("The LIMIT constant lives in beta.py")
-
-    result = search_facts_tool(session).execute({"query": "limit"})
-
-    assert f"[{fact_id}] shell:" in result
-    assert "read_fact(id)" in result
-
-
-def test_search_facts_without_match_says_so() -> None:
-    session, _ = _session_with_fact("nothing relevant here")
-
-    assert "no facts match 'quantum'" in search_facts_tool(session).execute({"query": "quantum"})
-
-
-def test_search_facts_skips_error_results() -> None:
-    session = Session(connect(":memory:"), "s1")
-    session.append(ToolCallRecorded(name="shell", arguments={}, result="boom", is_error=True))
-
-    assert "no facts match" in search_facts_tool(session).execute({"query": "boom"})
-
-
-def test_search_facts_caps_matches_and_reports_the_overflow() -> None:
-    session = Session(connect(":memory:"), "s1")
-    for index in range(25):
-        session.append(
-            ToolCallRecorded(name="shell", arguments={}, result=f"needle {index}", is_error=False)
-        )
-
-    result = search_facts_tool(session).execute({"query": "needle"})
-
-    lines = result.splitlines()
-    assert lines[0].startswith("[6] shell:")
-    assert "+5 earlier matches" in result
-
-
-def test_search_facts_empty_query_raises_invalid_action_error() -> None:
-    session, _ = _session_with_fact("content")
-
-    with pytest.raises(InvalidActionError, match="must not be empty"):
-        search_facts_tool(session).execute({"query": "  "})
