@@ -1,6 +1,5 @@
 import queue
 import threading
-import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -21,6 +20,7 @@ from pico.session import (
     latest_session_id,
 )
 from pico.tui import PicoApp
+from tests.conftest import wait_until
 
 
 class SlowClient:
@@ -67,10 +67,13 @@ def test_unsupported_vendor_raises_before_starting_threads(
     assert started == []
 
 
+@pytest.mark.parametrize("released_before_shutdown", [False, True])
 def test_stopping_tui_does_not_leave_core_thread_running(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, released_before_shutdown: bool
 ) -> None:
     release = threading.Event()
+    if released_before_shutdown:
+        release.set()
     _patch_ollama_client(monkeypatch, release)
 
     core_threads: list[threading.Thread] = []
@@ -120,12 +123,9 @@ def test_turn_loop_runs_one_turn_per_queued_message(
     def driving_run(self: PicoApp) -> None:
         input_queue = queues[0]
         input_queue.put("hello")
-        deadline = time.monotonic() + 5
-        while len(client.seen_messages) < 1 and time.monotonic() < deadline:
-            time.sleep(0.01)
+        wait_until(lambda: len(client.seen_messages) >= 1, "the first turn reaches the client")
         input_queue.put("world")
-        while len(client.seen_messages) < 2 and time.monotonic() < deadline:
-            time.sleep(0.01)
+        wait_until(lambda: len(client.seen_messages) >= 2, "the second turn reaches the client")
 
     original_init = PicoApp.__init__
 
@@ -175,18 +175,21 @@ def test_cancelling_mid_turn_stops_run_and_allows_next_turn(
 
     cancel_handles: list[app_module.CancelHandle] = []
     queues: list[queue.Queue[str]] = []
-    subscribers: list[Iterator[object]] = []
+    seen: list[object] = []
+
+    def count(event_type: type[object]) -> int:
+        return sum(isinstance(event, event_type) for event in list(seen))
 
     def driving_run(self: PicoApp) -> None:
         input_queue = queues[0]
         cancel_handle = cancel_handles[0]
         input_queue.put("hello")
-        time.sleep(0.1)
+        wait_until(lambda: count(RunStarted) == 1, "the first turn starts")
         cancel_handle.trigger()
-        time.sleep(0.1)
         release.set()
+        wait_until(lambda: count(RunCancelled) == 1, "the first turn is cancelled")
         input_queue.put("world")
-        time.sleep(0.2)
+        wait_until(lambda: count(RunFinished) == 1, "the second turn finishes")
 
     original_init = PicoApp.__init__
 
@@ -199,7 +202,8 @@ def test_cancelling_mid_turn_stops_run_and_allows_next_turn(
     ) -> None:
         queues.append(input_queue)
         cancel_handles.append(cancel_handle)
-        subscribers.append(bus.subscribe())
+        subscriber = bus.subscribe()
+        threading.Thread(target=lambda: seen.extend(subscriber), daemon=True).start()
         original_init(self, bus, input_queue, cancel_handle, session_handle)
 
     monkeypatch.setattr(PicoApp, "__init__", tracking_init)
@@ -207,34 +211,10 @@ def test_cancelling_mid_turn_stops_run_and_allows_next_turn(
 
     run_pico(_config(tmp_path))
 
-    subscriber = subscribers[0]
-    seen: list[object] = []
-    while sum(isinstance(event, RunFinished) for event in seen) < 1:
-        seen.append(next(subscriber))
-
     assert seen[0] == RunStarted()
     cancelled_index = seen.index(RunCancelled())
     assert seen[cancelled_index + 1] == RunStarted()
     assert seen[-1] == RunFinished()
-
-
-def test_run_pico_waits_for_core_thread_briefly_on_shutdown(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    release = threading.Event()
-    release.set()
-    _patch_ollama_client(monkeypatch, release)
-
-    def noop_run(self: PicoApp) -> None:
-        return None
-
-    monkeypatch.setattr(PicoApp, "run", noop_run)
-
-    start = time.monotonic()
-    run_pico(_config(tmp_path))
-    elapsed = time.monotonic() - start
-
-    assert elapsed < 2
 
 
 def test_turn_persists_to_session_file_on_disk(
@@ -252,9 +232,7 @@ def test_turn_persists_to_session_file_on_disk(
     def driving_run(self: PicoApp) -> None:
         input_queue = queues[0]
         input_queue.put("hello")
-        deadline = time.monotonic() + 5
-        while len(client.seen_messages) < 1 and time.monotonic() < deadline:
-            time.sleep(0.01)
+        wait_until(lambda: len(client.seen_messages) >= 1, "the turn reaches the client")
 
     original_init = PicoApp.__init__
 
@@ -300,9 +278,7 @@ def test_debug_true_writes_run_log(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     def driving_run(self: PicoApp) -> None:
         input_queue = queues[0]
         input_queue.put("hello")
-        deadline = time.monotonic() + 5
-        while len(client.seen_messages) < 1 and time.monotonic() < deadline:
-            time.sleep(0.01)
+        wait_until(lambda: len(client.seen_messages) >= 1, "the turn reaches the client")
 
     original_init = PicoApp.__init__
 
@@ -345,9 +321,7 @@ def test_debug_false_creates_no_logs_dir(monkeypatch: pytest.MonkeyPatch, tmp_pa
     def driving_run(self: PicoApp) -> None:
         input_queue = queues[0]
         input_queue.put("hello")
-        deadline = time.monotonic() + 5
-        while len(client.seen_messages) < 1 and time.monotonic() < deadline:
-            time.sleep(0.01)
+        wait_until(lambda: len(client.seen_messages) >= 1, "the turn reaches the client")
 
     original_init = PicoApp.__init__
 
@@ -381,9 +355,7 @@ def _run_one_turn(monkeypatch: pytest.MonkeyPatch, config: Config, session_id: s
 
     def driving_run(self: PicoApp) -> None:
         queues[0].put("hello")
-        deadline = time.monotonic() + 5
-        while len(client.seen_messages) < 1 and time.monotonic() < deadline:
-            time.sleep(0.01)
+        wait_until(lambda: len(client.seen_messages) >= 1, "the turn reaches the client")
 
     original_init = PicoApp.__init__
 

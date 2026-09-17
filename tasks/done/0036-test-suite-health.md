@@ -12,7 +12,7 @@ A flaky suite trains everyone, humans and unattended agents alike, to rerun unti
 * **Warnings are errors.** `filterwarnings = ["error"]` in the pytest config, with narrow, commented-by-category ignores only for warnings raised inside third-party code that the project cannot fix. New deprecations then fail loudly instead of scrolling past.
 * **Proof is repetition.** A de-flaked suite is demonstrated, not asserted: five consecutive full runs must pass. This is the milestone's exit test.
 
-## [ ] T001 Delete dead weight, promote warnings
+## [X] T001 Delete dead weight, promote warnings
 
 ### Description
 
@@ -24,7 +24,7 @@ Remove `tests/test_hypothesis_example.py` and the `hypothesis` dependency. Turn 
 * The suite passes with `filterwarnings = ["error"]`; any ignore entry names a specific warning category and module, not a blanket suppression.
 * `make check` passes with no errors.
 
-## [ ] T002 De-flake the TUI tests
+## [X] T002 De-flake the TUI tests
 
 ### Description
 
@@ -37,7 +37,7 @@ Rework `tests/tui/test_app.py` per the design decisions: condition waits via the
 * `uv run pytest tests/tui` total wall time is well under half its current cost, and no single test exceeds one second in the durations report.
 * `make check` passes with no errors, including the coverage floor.
 
-## [ ] T003 De-flake the threaded app tests
+## [X] T003 De-flake the threaded app tests
 
 ### Description
 
@@ -48,7 +48,7 @@ Rework `tests/test_app.py` per the design decisions: the five polling loops and 
 * `grep -n "time.sleep" tests/test_app.py` finds nothing, and no assertion in the file compares elapsed wall time.
 * `make check` passes with no errors, including the coverage floor.
 
-## [ ] T004 Prove stability
+## [X] T004 Prove stability
 
 ### Description
 
@@ -60,4 +60,41 @@ Run the full suite five times consecutively; every run must pass. If any run fai
 
 ### Completion
 
-Commit:
+Five consecutive `uv run pytest` runs (`-n auto`, the configured default), all green:
+
+```
+503 passed in 4.50s
+503 passed in 4.41s
+503 passed in 4.49s
+503 passed in 4.45s
+503 passed in 4.48s
+```
+
+Because `-n auto` can hide ordering flakes, three serial runs were also taken, all green:
+`503 passed in 23.26s`, `503 passed in 23.07s`, `503 passed in 23.36s`. A final `make check`
+passed with 97.59% coverage.
+
+Notes:
+
+* `make evals` was not run; it needs a live model and is left to a manual run.
+* De-flaking exposed two real production bugs that the old fixed-duration pauses had masked:
+  * `Shell.run` never closed the subprocess stdout pipe, leaking a file descriptor per shell
+    call. It now runs the process under `with process:`. This was the source of the
+    `ResourceWarning: unclosed file` entries.
+  * `PicoApp._flush_pending_updates` fires on a 0.05s interval and queried `StatusLine.counter`
+    unconditionally. During the window where `StatusLine` exists but has not composed its
+    children, `query_one(TokenCounter)` raised `NoMatches` and crashed the app. It now guards on
+    the counter's presence, matching the existing `Conversation` guard.
+* Test-owned sqlite connections were never closed. Rather than rewriting 49 call sites, an
+  autouse `close_sqlite_connections` fixture in `tests/conftest.py` tracks connections opened
+  during a test and closes them at teardown; this also covers connections opened inside app code.
+* `tests/conftest.py` holds the two shared helpers: `wait_until` for threaded tests and `settle`
+  for Textual tests (which polls via `await pilot.pause()`).
+* Beyond the named files, `tests/tui/test_widgets.py` had five fixed pauses and
+  `tests/core/test_actions.py` a sixth hand-rolled polling loop; both were converted so the
+  acceptance greps hold repo-wide.
+* `ToolCallPane.spinning` was added so "the timer stopped" is assertable as state instead of by
+  observing a frame that does not change over wall-clock time.
+* Slowest TUI test fell from 2.00s to 0.50s; `tests/tui` serial wall time from 21.8s to 15.1s.
+
+Commit: d34faa6

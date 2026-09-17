@@ -147,6 +147,10 @@ class ToolCallPane(Static):
     def on_mount(self) -> None:
         self._timer = self.set_interval(0.08, self._advance)
 
+    @property
+    def spinning(self) -> bool:
+        return self._timer is not None
+
     def _advance(self) -> None:
         self.frame_index = (self.frame_index + 1) % len(WAITING_FRAMES)
 

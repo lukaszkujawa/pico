@@ -23,6 +23,7 @@ _.on_user_input_submitted
 _.padding
 _.display
 _.running
+_.spinning
 _._flush_timer
 _.row_factory
 _.finish_reason

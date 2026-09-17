@@ -145,16 +145,16 @@ class Shell:
         )
         chunks: list[str] = []
         assert process.stdout is not None
-        try:
-            for line in _read_timeout(process.stdout, timeout):
-                chunks.append(line)
-                if on_chunk is not None:
-                    on_chunk(line)
-        except TimeoutError as error:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.wait()
-            raise ToolError(f"command timed out after {timeout}s: {self.command}") from error
-        code = process.wait()
+        with process:
+            try:
+                for line in _read_timeout(process.stdout, timeout):
+                    chunks.append(line)
+                    if on_chunk is not None:
+                        on_chunk(line)
+            except TimeoutError as error:
+                os.killpg(process.pid, signal.SIGKILL)
+                raise ToolError(f"command timed out after {timeout}s: {self.command}") from error
+            code = process.wait()
         return code, "".join(chunks)
 
     def execute(self, timeout: float = 30) -> str:

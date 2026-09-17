@@ -17,6 +17,7 @@ from pico.tui.widgets import (
     WaitingIndicator,
     format_elapsed,
 )
+from tests.conftest import settle
 
 
 class AssistantPaneHarness(App[None]):
@@ -258,12 +259,11 @@ async def test_tool_call_pane_pending_icon_animates_over_ticks() -> None:
         await pilot.pause()
 
         first_frame = pane.render().plain
-        await pilot.pause(0.1)
-        second_frame = pane.render().plain
-        await pilot.pause(0.1)
-        third_frame = pane.render().plain
-
-        assert len({first_frame, second_frame, third_frame}) > 1
+        await settle(
+            pilot,
+            lambda: pane.render().plain != first_frame,
+            "the pending icon advances to another frame",
+        )
 
 
 async def test_tool_call_pane_animation_stops_once_finished() -> None:
@@ -271,12 +271,14 @@ async def test_tool_call_pane_animation_stops_once_finished() -> None:
     async with app.run_test() as pilot:
         pane = app.query_one(ToolCallPane)
         await pilot.pause()
+        assert pane.spinning is True
 
         pane.finish(result="done", is_error=False)
         await pilot.pause()
 
+        assert pane.spinning is False
         frame_after_finish = pane.render().plain
-        await pilot.pause(0.2)
+        await pilot.pause()
         assert pane.render().plain == frame_after_finish
 
 
@@ -441,14 +443,13 @@ async def test_waiting_indicator_animates_over_ticks() -> None:
         await pilot.pause()
 
         first_frame = indicator.render().plain
-        await pilot.pause(0.1)
-        second_frame = indicator.render().plain
-        await pilot.pause(0.1)
-        third_frame = indicator.render().plain
+        await settle(
+            pilot,
+            lambda: indicator.render().plain != first_frame,
+            "the waiting indicator advances to another frame",
+        )
 
         indicator.stop()
-
-        assert len({first_frame, second_frame, third_frame}) > 1
 
 
 @pytest.mark.parametrize(
@@ -470,12 +471,10 @@ async def test_elapsed_timer_climbs_while_running(monkeypatch: pytest.MonkeyPatc
 
         timer.start()
         clock.now = 7.0
-        await pilot.pause(0.05)
-        assert timer.render().plain == "7s"
+        await settle(pilot, lambda: timer.render().plain == "7s", "the timer reaches 7s")
 
         clock.now = 72.0
-        await pilot.pause(0.05)
-        assert timer.render().plain == "1m12s"
+        await settle(pilot, lambda: timer.render().plain == "1m12s", "the timer reaches 1m12s")
 
         timer.stop()
 
@@ -489,13 +488,13 @@ async def test_elapsed_timer_freezes_final_value_on_stop(monkeypatch: pytest.Mon
         timer = app.query_one(ElapsedTimer)
         timer.start()
         clock.now = 59.0
-        await pilot.pause(0.05)
-        assert timer.render().plain == "59s"
+        await settle(pilot, lambda: timer.render().plain == "59s", "the timer reaches 59s")
 
         timer.stop()
         clock.now = 300.0
-        await pilot.pause(0.05)
+        await pilot.pause()
 
+        assert timer.running is False
         assert timer.render().plain == "59s"
 
 

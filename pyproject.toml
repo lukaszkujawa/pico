@@ -22,7 +22,6 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "hypothesis>=6.168.0",
     "pyright>=1.1.414",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
@@ -66,6 +65,7 @@ reportMissingTypeStubs = false
 testpaths = ["tests"]
 addopts = "-n auto --cov=pico --cov-report=term-missing"
 asyncio_mode = "auto"
+filterwarnings = ["error"]
 
 [tool.coverage.run]
 source = ["src/pico"]

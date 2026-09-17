@@ -1,4 +1,3 @@
-import time
 import uuid
 from pathlib import Path
 
@@ -27,6 +26,7 @@ from pico.core.scratch import MAX_ROWS, Scratch, scratch_path
 from pico.core.tools import ToolRegistry
 from pico.llm.types import ToolCall
 from pico.session import PlanSet, PlanStepCompleted, Session, ToolCallRecorded, connect
+from tests.conftest import wait_until
 
 
 def _session_with_fact(content: str) -> tuple[Session, int]:
@@ -228,13 +228,11 @@ def test_shell_run_timeout_raises_tool_error_and_kills_process() -> None:
     with pytest.raises(ToolError, match="timed out"):
         Shell(command=f"sleep 5 # {marker}").run(timeout=0.1)
 
-    deadline = time.monotonic() + 5
-    while True:
+    def killed() -> bool:
         _, output = Shell(command=f"pgrep -f {marker} >/dev/null; echo $?").run()
-        if output.strip() == "1" or time.monotonic() > deadline:
-            break
-        time.sleep(0.05)
-    assert output.strip() == "1"
+        return output.strip() == "1"
+
+    wait_until(killed, "the timed-out process is gone")
 
 
 def test_delegate_from_arguments() -> None:

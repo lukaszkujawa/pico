@@ -39,6 +39,7 @@ from pico.tui.widgets import (
     Splash,
     StatusLine,
     ThinkingPane,
+    TokenCounter,
     ToolCallPane,
     UserPane,
 )
@@ -214,10 +215,11 @@ class PicoApp(App[None]):
 
     def _flush_pending_updates(self) -> None:
         conversations = self.query(Conversation)
-        if not conversations:
+        counters = self.query(TokenCounter)
+        if not conversations or not counters:
             return
         if self._pending_token_text:
-            self.query_one(StatusLine).counter.estimate(self._pending_token_text)
+            counters.first(TokenCounter).estimate(self._pending_token_text)
             self._pending_token_text = ""
         conversation = conversations.first(Conversation)
         if conversation.pinned:
