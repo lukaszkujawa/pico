@@ -45,7 +45,7 @@ from pico.session import (
 from pico.tui import PicoApp
 from pico.tui.commands import ModelSwitch, Options
 from pico.tui.messages import UserInputSubmitted
-from pico.tui.widgets import UserPane
+from pico.tui.widgets import SystemPane, UserPane
 from tests.conftest import settle, wait_until
 from tests.llm_fakes import NoModels
 
@@ -483,6 +483,33 @@ async def test_fifo_line_behaves_like_typed_input(tmp_path: Path) -> None:
             assert [pane.queued for pane in panes] == [False, True]
             assert input_queue.get(timeout=5) == "hello"
             assert input_queue.get(timeout=5) == "world"
+    finally:
+        shutdown.set()
+    reader.join(timeout=5)
+    assert not reader.is_alive()
+
+
+async def test_fifo_line_starting_with_a_slash_is_a_prompt_not_a_command(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "pico.sock"
+    os.mkfifo(path)
+    input_queue: queue.Queue[str] = queue.Queue()
+    app = PicoApp(Bus(), input_queue)
+    shutdown = threading.Event()
+
+    def submit(text: str) -> None:
+        app.post_message(UserInputSubmitted(text=text))
+
+    reader = threading.Thread(target=read_fifo, args=(str(path), submit, shutdown), daemon=True)
+    try:
+        async with app.run_test() as pilot:
+            reader.start()
+            with open(path, "w") as writer:
+                writer.write("/work/scheduler.py\n")
+            await settle(pilot, lambda: len(app.query(UserPane)) == 1, "the user pane appears")
+            assert not app.query(SystemPane)
+            assert input_queue.get(timeout=5) == "/work/scheduler.py"
     finally:
         shutdown.set()
     reader.join(timeout=5)

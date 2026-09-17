@@ -99,7 +99,7 @@ class ChatInput(TextArea):
                     return
             text = self.text
             self.clear()
-            self.post_message(UserInputSubmitted(text=text))
+            self.post_message(UserInputSubmitted(text=text, typed=True))
             return
         if event.key in NEWLINE_KEYS:
             event.key = "enter"
@@ -463,7 +463,7 @@ class PicoApp(App[None]):
         text = message.text.strip()
         if not text:
             return
-        if text.startswith("/"):
+        if message.typed and text.startswith("/"):
             await self.run_command(text)
             return
         pane = UserPane(text=message.text)

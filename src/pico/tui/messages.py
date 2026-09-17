@@ -149,8 +149,9 @@ class ErrorMessage(Message):
 
 
 class UserInputSubmitted(Message):
-    def __init__(self, text: str) -> None:
+    def __init__(self, text: str, typed: bool = False) -> None:
         self.text = text
+        self.typed = typed
         super().__init__()
 
 
