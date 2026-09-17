@@ -226,6 +226,44 @@ def _check_group_by_region(directory: Path, answer: str) -> bool:
     return _mentions(answer, EXPECTED_TOP_REGION, str(EXPECTED_TOP_SALES))
 
 
+SERVICE_TEAMS = (
+    ("billing", "invoices", "atlas"),
+    ("billing", "refunds", "atlas"),
+    ("ingest", "parser", "beacon"),
+    ("ingest", "loader", "beacon"),
+    ("search", "indexer", "cinder"),
+    ("search", "ranker", "cinder"),
+    ("search", "cache", "dynamo"),
+    ("reporting", "exporter", "ember"),
+    ("reporting", "scheduler", "ember"),
+    ("gateway", "router", "falcon"),
+)
+BROKEN_MODULE = "ranker"
+EXPECTED_BROKEN_TEAM = next(team for _, module, team in SERVICE_TEAMS if module == BROKEN_MODULE)
+
+
+def _setup_locate_owner(directory: Path) -> None:
+    for service, module, team in SERVICE_TEAMS:
+        package = directory / "services" / service / module
+        package.mkdir(parents=True)
+        (package / "OWNERS").write_text(f"team: {team}\n")
+        (package / "module.py").write_text(f"NAME = {module!r}\n")
+    incidents = directory / "incidents"
+    incidents.mkdir()
+    for index, (_, module, _) in enumerate(SERVICE_TEAMS):
+        status = "FAILING" if module == BROKEN_MODULE else "ok"
+        (incidents / f"run-{index:02d}.log").write_text(
+            f"checked module={module}\nstatus={status}\n"
+        )
+
+
+def _check_locate_owner(directory: Path, answer: str) -> bool:
+    other_teams = {team for _, _, team in SERVICE_TEAMS} - {EXPECTED_BROKEN_TEAM}
+    return _mentions(answer, EXPECTED_BROKEN_TEAM) and not any(
+        _mentions(answer, team) for team in other_teams
+    )
+
+
 SUITE: tuple[EvalTask, ...] = (
     EvalTask(
         name="read_one_file",
@@ -313,6 +351,17 @@ SUITE: tuple[EvalTask, ...] = (
         ),
         setup=_setup_dependent_chain,
         check=_check_dependent_chain,
+    ),
+    EvalTask(
+        name="locate_owner",
+        prompt=(
+            "Somewhere under this directory there are incident logs, exactly one of which "
+            "records a failing module, and a tree of modules each with an OWNERS file. "
+            "Find the failing module and tell me which team owns it. "
+            "Answer with the team name only."
+        ),
+        setup=_setup_locate_owner,
+        check=_check_locate_owner,
     ),
     EvalTask(
         name="many_small_steps",

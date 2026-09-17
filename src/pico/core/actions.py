@@ -1,3 +1,4 @@
+import json
 import os
 import selectors
 import signal
@@ -5,7 +6,7 @@ import subprocess
 import time
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
-from typing import IO, Self, cast
+from typing import IO, Literal, Self, cast
 
 from pico.core.errors import ToolError
 from pico.core.ledger import facts, plan, render_plan
@@ -13,6 +14,8 @@ from pico.core.scratch import Scratch, load_table, query
 from pico.core.tools import Tool, ToolRegistry
 from pico.llm.types import ToolSpec
 from pico.session import PlanSet, PlanStepCompleted, Session
+
+MAX_DELEGATE_DEPTH = 3
 
 
 class InvalidActionError(ValueError):
@@ -197,14 +200,82 @@ class CompleteStep:
         return cls(index=index)
 
 
+FieldType = Literal["string", "number", "boolean"]
+
+FIELD_TYPES: tuple[FieldType, ...] = ("string", "number", "boolean")
+
+
+def _matches(value: object, type_name: FieldType) -> bool:
+    match type_name:
+        case "string":
+            return isinstance(value, str)
+        case "number":
+            return isinstance(value, int | float) and not isinstance(value, bool)
+        case "boolean":
+            return isinstance(value, bool)
+
+
+def _require_fields(arguments: Mapping[str, object]) -> Mapping[str, FieldType] | None:
+    value = arguments.get("fields")
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise InvalidActionError(f"field 'fields' must be an object, got {type(value).__name__}")
+    raw = cast(dict[object, object], value)
+    fields: dict[str, FieldType] = {}
+    for name, type_name in raw.items():
+        if not isinstance(name, str):
+            raise InvalidActionError("field 'fields' must have string keys")
+        if type_name not in FIELD_TYPES:
+            raise InvalidActionError(
+                f"field 'fields' has unknown type {type_name!r} for {name!r}; "
+                f"expected one of {list(FIELD_TYPES)}"
+            )
+        fields[name] = type_name
+    if not fields:
+        raise InvalidActionError("field 'fields' must not be empty")
+    return fields
+
+
 @dataclass(frozen=True)
 class Delegate:
     question: str
+    fields: Mapping[str, FieldType] | None = None
 
     @classmethod
     def from_arguments(cls, arguments: Mapping[str, object]) -> Self:
         question = _require(arguments, "question", str)
-        return cls(question=question)
+        return cls(question=question, fields=_require_fields(arguments))
+
+    def shape(self) -> str:
+        if self.fields is None:
+            return ""
+        shape = ", ".join(f'"{name}": <{type_name}>' for name, type_name in self.fields.items())
+        return (
+            "\n\nAnswer with content that is exactly one JSON object of this shape, "
+            f"and nothing else: {{{shape}}}"
+        )
+
+    def check(self, content: str) -> str | None:
+        if self.fields is None:
+            return None
+        try:
+            parsed: object = json.loads(content)
+        except ValueError:
+            return "answer content must be a JSON object, but it did not parse as JSON"
+        if not isinstance(parsed, dict):
+            return f"answer content must be a JSON object, got {type(parsed).__name__}"
+        record = cast(dict[str, object], parsed)
+        missing = sorted(set(self.fields) - set(record))
+        if missing:
+            return f"answer is missing required field(s): {missing}"
+        extra = sorted(set(record) - set(self.fields))
+        if extra:
+            return f"answer has unexpected field(s): {extra}"
+        for name, type_name in self.fields.items():
+            if not _matches(record[name], type_name):
+                return f"field {name!r} must be a {type_name}, got {type(record[name]).__name__}"
+        return None
 
 
 Action = ReadFile | WriteFile | Shell | Answer | Delegate | SetPlan | CompleteStep
@@ -327,12 +398,26 @@ _TOOL_SPECS = {
     "delegate": ToolSpec(
         name="delegate",
         description=(
-            "Spawn a read-only sub-agent to answer a single scoped question and "
-            "return its evidence-checked answer."
+            "Spawn a sub-agent with its own fresh context to answer a single scoped question "
+            "and return its answer. It has the same tools as you: it can explore with shell, "
+            "work to its own plan, and delegate further. Use it to keep large exploration out "
+            "of your own context. Pass fields to require a typed result: a mapping of field "
+            "name to 'string', 'number', or 'boolean'. The runtime then rejects any answer "
+            "that is not a JSON object with exactly those fields, so what comes back is "
+            "machine-readable."
         ),
         parameters={
             "type": "object",
-            "properties": {"question": {"type": "string"}},
+            "properties": {
+                "question": {"type": "string"},
+                "fields": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "enum": ["string", "number", "boolean"],
+                    },
+                },
+            },
             "required": ["question"],
         },
     ),
@@ -428,6 +513,10 @@ def sql_tool(scratch: Scratch) -> Tool:
     return Tool(spec=_TOOL_SPECS["sql"], execute=execute)
 
 
+def delegate_depth(session: Session) -> int:
+    return session.session_id.count("/")
+
+
 def register_actions(registry: ToolRegistry, session: Session) -> None:
     registry.register(_action_tool(ReadFile, "read_file"))
     registry.register(_action_tool(WriteFile, "write_file"))
@@ -439,10 +528,5 @@ def register_actions(registry: ToolRegistry, session: Session) -> None:
     registry.register(set_plan_tool(session))
     registry.register(complete_step_tool(session))
     registry.register(_answer_tool())
-    registry.register(Tool(spec=_TOOL_SPECS["delegate"], execute=lambda _: ""))
-
-
-def register_delegate_actions(registry: ToolRegistry, session: Session) -> None:
-    registry.register(_action_tool(ReadFile, "read_file"))
-    registry.register(fact_recall_tool(session))
-    registry.register(_answer_tool())
+    if delegate_depth(session) < MAX_DELEGATE_DEPTH:
+        registry.register(Tool(spec=_TOOL_SPECS["delegate"], execute=lambda _: ""))

@@ -7,6 +7,8 @@ from pico.core.context import (
     prompt_budget,
 )
 from pico.evals.tasks import (
+    BROKEN_MODULE,
+    EXPECTED_BROKEN_TEAM,
     EXPECTED_INVENTORY_VALUE,
     EXPECTED_LARGEST_REGION,
     EXPECTED_SALES_TOTALS,
@@ -269,3 +271,23 @@ def test_group_by_region_seeds_more_than_the_reference_prompt_budget(tmp_path: P
 
     content = (tmp_path / "sales.csv").read_text()
     assert estimate_tokens(content) > prompt_budget(REFERENCE_CONTEXT_SIZE)
+
+
+def test_locate_owner_hides_the_answer_behind_exploration(tmp_path: Path) -> None:
+    task = _seeded("locate_owner", tmp_path)
+
+    assert BROKEN_MODULE not in task.prompt
+    assert EXPECTED_BROKEN_TEAM not in task.prompt
+    failing = [path for path in (tmp_path / "incidents").iterdir() if "FAILING" in path.read_text()]
+    assert len(failing) == 1
+    assert f"module={BROKEN_MODULE}" in failing[0].read_text()
+    owners = tmp_path / "services" / "search" / BROKEN_MODULE / "OWNERS"
+    assert owners.read_text().strip() == f"team: {EXPECTED_BROKEN_TEAM}"
+
+
+def test_locate_owner_accepts_the_owning_team_and_rejects_others(tmp_path: Path) -> None:
+    task = _seeded("locate_owner", tmp_path)
+
+    assert task.check(tmp_path, EXPECTED_BROKEN_TEAM)
+    assert not task.check(tmp_path, "atlas")
+    assert not task.check(tmp_path, f"{EXPECTED_BROKEN_TEAM} or maybe dynamo")

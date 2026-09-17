@@ -10,7 +10,7 @@ from pico.core.actions import (
     Delegate,
     InvalidActionError,
     Shell,
-    register_delegate_actions,
+    register_actions,
 )
 from pico.core.bus import Bus
 from pico.core.context import (
@@ -91,7 +91,7 @@ class LoopRunner:
         config: LoopConfig,
         cancel: threading.Event | None = None,
         id_source: Iterator[int] | None = None,
-        can_verify: bool = True,
+        result_shape: Delegate | None = None,
     ) -> None:
         self.llm = llm
         self.tools = tools
@@ -100,7 +100,7 @@ class LoopRunner:
         self.context_size = context_size
         self.config = config
         self.cancel = cancel if cancel is not None else threading.Event()
-        self.can_verify = can_verify
+        self.result_shape = result_shape
         self.pending_tool_calls: list[ToolCall] = []
         self.tool_call_pane_ids: dict[str, str] = {}
         self.pending_nudge: str | None = None
@@ -252,17 +252,18 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
 def _run_delegate(runner: LoopRunner, delegate: Delegate) -> tuple[str, bool]:
     runner.delegate_calls += 1
     child_session = runner.session.child(f"delegate/{runner.delegate_calls}")
-    child_session.append(UserMessageRecorded(content=delegate.question))
+    child_session.append(UserMessageRecorded(content=delegate.question + delegate.shape()))
     child_tools = ToolRegistry()
-    register_delegate_actions(child_tools, child_session)
+    register_actions(child_tools, child_session)
     child_runner = LoopRunner(
         runner.llm,
         child_tools,
         Bus(),
         child_session,
         runner.context_size,
-        LoopConfig(steps=(stream_step, tool_call_step), max_steps=MAX_DELEGATE_STEPS),
-        can_verify=False,
+        LoopConfig(steps=DEFAULT_LOOP_STEPS, max_steps=MAX_DELEGATE_STEPS),
+        cancel=runner.cancel,
+        result_shape=delegate,
     )
     child_runner.execute()
     if child_runner.final_answer is not None:
@@ -284,7 +285,21 @@ class AnswerOutcome:
     verify: str | None
 
 
+def _rejected_answer(answer: Answer, reason: str) -> AnswerOutcome:
+    return AnswerOutcome(
+        content=answer.content,
+        result=f"answer rejected — {reason}",
+        is_error=True,
+        accepted=False,
+        reason=reason,
+        verify=answer.verify,
+    )
+
+
 def _verified_answer(runner: LoopRunner, answer: Answer) -> AnswerOutcome:
+    problem = None if runner.result_shape is None else runner.result_shape.check(answer.content)
+    if problem is not None:
+        return _rejected_answer(answer, problem)
     if answer.verify is None:
         runner.final_answer = answer.content
         return AnswerOutcome(
@@ -297,15 +312,7 @@ def _verified_answer(runner: LoopRunner, answer: Answer) -> AnswerOutcome:
         )
     code, output = Shell(command=answer.verify).run()
     if code != 0:
-        reason = f"verification failed (exit {code}):\n{output}"
-        return AnswerOutcome(
-            content=answer.content,
-            result=f"answer rejected — {reason}",
-            is_error=True,
-            accepted=False,
-            reason=reason,
-            verify=answer.verify,
-        )
+        return _rejected_answer(answer, f"verification failed (exit {code}):\n{output}")
     runner.final_answer = answer.content
     return AnswerOutcome(
         content=answer.content,
@@ -347,10 +354,6 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
                 unknown = [citation for citation in answer.citations if citation not in known]
                 if unknown:
                     raise InvalidActionError(f"unknown fact citation(s): {unknown}")
-                if answer.verify is not None and not runner.can_verify:
-                    raise InvalidActionError(
-                        "a delegate may not use 'verify'; answer from what you have read"
-                    )
                 answer_outcome = _verified_answer(runner, answer)
                 output, is_error = answer_outcome.result, answer_outcome.is_error
             except InvalidActionError as error:
@@ -380,6 +383,8 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
             try:
                 delegate = Delegate.from_arguments(call.arguments)
                 output, is_error = _run_delegate(runner, delegate)
+                if runner.cancel.is_set():
+                    return "cancelled"
             except InvalidActionError as error:
                 output = str(error)
                 is_error = True
@@ -439,4 +444,5 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
     return outcome
 
 
-DEFAULT_LOOP_CONFIG = LoopConfig(steps=(stuckness_step, stream_step, tool_call_step))
+DEFAULT_LOOP_STEPS: tuple[Step, ...] = (stuckness_step, stream_step, tool_call_step)
+DEFAULT_LOOP_CONFIG = LoopConfig(steps=DEFAULT_LOOP_STEPS)

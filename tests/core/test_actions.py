@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from pico.core.actions import (
+    MAX_DELEGATE_DEPTH,
     Answer,
     CompleteStep,
     Delegate,
@@ -14,10 +15,10 @@ from pico.core.actions import (
     Shell,
     WriteFile,
     complete_step_tool,
+    delegate_depth,
     fact_recall_tool,
     load_table_tool,
     register_actions,
-    register_delegate_actions,
     set_plan_tool,
     sql_tool,
 )
@@ -246,6 +247,64 @@ def test_delegate_from_arguments_missing_question() -> None:
         Delegate.from_arguments({})
 
 
+def test_delegate_from_arguments_with_fields() -> None:
+    action = Delegate.from_arguments(
+        {"question": "how many?", "fields": {"count": "number", "name": "string"}}
+    )
+
+    assert action == Delegate(question="how many?", fields={"count": "number", "name": "string"})
+
+
+def test_delegate_from_arguments_with_null_fields_is_untyped() -> None:
+    assert Delegate.from_arguments({"question": "q", "fields": None}).fields is None
+
+
+def test_delegate_from_arguments_rejects_unknown_field_type() -> None:
+    with pytest.raises(InvalidActionError, match="unknown type 'date'"):
+        Delegate.from_arguments({"question": "q", "fields": {"when": "date"}})
+
+
+def test_delegate_from_arguments_rejects_non_object_fields() -> None:
+    with pytest.raises(InvalidActionError, match="must be an object"):
+        Delegate.from_arguments({"question": "q", "fields": ["count"]})
+
+
+def test_delegate_from_arguments_rejects_empty_fields() -> None:
+    with pytest.raises(InvalidActionError, match="must not be empty"):
+        Delegate.from_arguments({"question": "q", "fields": {}})
+
+
+def test_delegate_shape_names_every_field() -> None:
+    action = Delegate(question="q", fields={"count": "number", "ok": "boolean"})
+
+    assert '"count": <number>' in action.shape()
+    assert '"ok": <boolean>' in action.shape()
+
+
+def test_delegate_check_accepts_conforming_record() -> None:
+    action = Delegate(question="q", fields={"count": "number", "ok": "boolean", "n": "string"})
+
+    assert action.check('{"count": 3, "ok": true, "n": "a"}') is None
+
+
+def test_delegate_check_rejects_boolean_where_number_expected() -> None:
+    action = Delegate(question="q", fields={"count": "number"})
+
+    problem = action.check('{"count": true}')
+
+    assert problem is not None
+    assert "must be a number" in problem
+
+
+def test_delegate_check_rejects_non_object_json() -> None:
+    action = Delegate(question="q", fields={"count": "number"})
+
+    problem = action.check("[1, 2]")
+
+    assert problem is not None
+    assert "must be a JSON object" in problem
+
+
 def test_read_fact_returns_original_content() -> None:
     session, fact_id = _session_with_fact("x" * 5000)
 
@@ -305,13 +364,33 @@ def test_register_actions_populates_all_tool_names() -> None:
     }
 
 
-def test_register_delegate_actions_populates_read_only_names() -> None:
+def test_register_actions_on_delegate_session_still_has_full_names() -> None:
     registry = ToolRegistry()
-    register_delegate_actions(registry, Session(connect(":memory:"), "s1"))
+    register_actions(registry, Session(connect(":memory:"), "s1/delegate/1"))
 
     names = {spec.name for spec in registry.specs()}
 
-    assert names == {"read_file", "read_fact", "answer"}
+    assert "shell" in names
+    assert "set_plan" in names
+    assert "delegate" in names
+
+
+def test_register_actions_withholds_delegate_at_max_depth() -> None:
+    registry = ToolRegistry()
+    deep = "s1" + "/" * MAX_DELEGATE_DEPTH
+    register_actions(registry, Session(connect(":memory:"), deep))
+
+    names = {spec.name for spec in registry.specs()}
+
+    assert "delegate" not in names
+    assert "shell" in names
+
+
+def test_delegate_depth_counts_session_id_separators() -> None:
+    conn = connect(":memory:")
+
+    assert delegate_depth(Session(conn, "s1")) == 0
+    assert delegate_depth(Session(conn, "s1/delegate/1")) == 2
 
 
 def test_register_actions_read_file_round_trips(tmp_path: Path) -> None:
@@ -453,16 +532,6 @@ def test_complete_step_non_integer_index_returns_invalid_field_error() -> None:
     result = complete_step_tool(session).execute({"index": "0"})
 
     assert "must be a int" in result
-
-
-def test_delegate_registry_has_no_plan_tools() -> None:
-    registry = ToolRegistry()
-    register_delegate_actions(registry, _planless_session())
-
-    names = {spec.name for spec in registry.specs()}
-
-    assert "set_plan" not in names
-    assert "complete_step" not in names
 
 
 def _scratch(tmp_path: Path) -> Scratch:
