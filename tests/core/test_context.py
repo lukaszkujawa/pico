@@ -1,3 +1,4 @@
+import random
 from itertools import pairwise
 
 from pico.core.context import (
@@ -8,6 +9,7 @@ from pico.core.context import (
     estimate_tokens,
     fact_index,
     message_text,
+    message_tokens,
     prompt_budget,
     recency_window,
     render_tool_result,
@@ -214,7 +216,7 @@ def test_recency_window_cuts_to_recent_units_even_with_a_generous_budget() -> No
 
     window = recency_window(messages, budget=1_000_000)
 
-    assert window == [messages[0], *messages[-RECENT_UNITS:]]
+    assert window == [messages[0], *messages[-(RECENT_UNITS + 1) :]]
 
 
 def test_recency_window_keeps_a_pair_straddling_the_cut_atomic() -> None:
@@ -247,22 +249,66 @@ def test_recency_window_demotes_tool_results_before_dropping_units() -> None:
     assert "fact 0 truncated" in first_result.tool_result.content
 
 
-def test_recency_window_keeps_the_protected_tail_beyond_cap_and_budget() -> None:
+def test_recency_window_collapses_to_the_pinned_messages_when_nothing_else_fits() -> None:
     messages: list[Message] = []
     for index in range(3):
         messages.append(Message(role=Role.USER, content=f"old question {index}"))
         messages.append(Message(role=Role.ASSISTANT, content=f"old answer {index}"))
-    tail: list[Message] = [Message(role=Role.USER, content="latest question")]
+    messages.append(Message(role=Role.USER, content="latest question"))
     for fact_id in range(12):
-        tail.extend(_tool_pair(fact_id, "y" * 1_000))
-    messages.extend(tail)
+        messages.extend(_tool_pair(fact_id, "y" * 1_000))
 
     window = recency_window(messages, budget=10)
 
-    assert len(window) == len(tail) + 1
-    assert window[0].content == "old question 0"
-    assert window[1].content == "latest question"
-    assert all(before.role == after.role for before, after in zip(tail, window[1:], strict=True))
+    assert window == [messages[0], messages[6]]
+    assert _tokens(window) <= 10
+
+
+def test_recency_window_evicts_the_current_turn_to_fit_a_resumed_session() -> None:
+    messages = [
+        Message(role=Role.USER, content="the task"),
+        Message(role=Role.ASSISTANT, content="earlier answer"),
+        Message(role=Role.USER, content="latest question"),
+    ]
+    for index in range(12):
+        messages.append(Message(role=Role.ASSISTANT, content=f"chunk {index} " + "a" * 2_000))
+    budget = 2_000
+
+    window = recency_window(messages, budget=budget)
+
+    assert _tokens(window) <= budget
+    assert window[0].content == "the task"
+    assert any(message.content == "latest question" for message in window)
+    assert not any(message.content.startswith("chunk 0 ") for message in window)
+    kept = [message.content.split()[1] for message in window if message.content.startswith("chunk")]
+    assert kept == ["9", "10", "11"]
+
+
+def _pinned_messages(messages: list[Message]) -> list[Message]:
+    users = [position for position, message in enumerate(messages) if message.role is Role.USER]
+    return [messages[position] for position in sorted({users[0], users[-1]})] if users else []
+
+
+def test_recency_window_estimate_fits_or_collapses_to_the_pinned_messages() -> None:
+    rng = random.Random(7)
+    for _ in range(200):
+        messages: list[Message] = []
+        for _ in range(rng.randint(0, 30)):
+            size = rng.choice([5, 200, 3_000])
+            roll = rng.random()
+            if roll < 0.35:
+                messages.append(Message(role=Role.USER, content="u" * size))
+            elif roll < 0.7:
+                messages.append(Message(role=Role.ASSISTANT, content="a" * size))
+            else:
+                messages.extend(_tool_pair(len(messages), "r" * size))
+        budget = rng.choice([50, 500, 5_000])
+
+        window = recency_window(messages, budget=budget)
+
+        estimate = sum(message_tokens(message) for message in window)
+        if estimate > budget:
+            assert window == _pinned_messages(messages)
 
 
 def test_recency_window_demoted_handle_names_the_correct_fact_id() -> None:

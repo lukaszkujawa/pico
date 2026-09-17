@@ -21,6 +21,7 @@ from pico.core.context import (
     compile_context,
     estimate_tokens,
     message_text,
+    message_tokens,
     prompt_budget,
 )
 from pico.core.errors import ToolError, UnknownToolError
@@ -176,12 +177,9 @@ def specs_text(specs: list[ToolSpec]) -> str:
     )
 
 
-def _reconcile(runner: LoopRunner, estimated: int, sent_chars: int, prompt_tokens: int) -> None:
+def _reconcile(runner: LoopRunner, sent_chars: int, prompt_tokens: int) -> None:
     observed = sent_chars / prompt_tokens
     runner.chars_per_token = min(MAX_CHARS_PER_TOKEN, max(MIN_CHARS_PER_TOKEN, observed))
-    budget = prompt_budget(runner.context_size)
-    if prompt_tokens > budget:
-        runner.bus.publish(BudgetExceeded(estimated=estimated, budget=budget))
 
 
 def stream_step(runner: LoopRunner) -> StepOutcome:
@@ -210,9 +208,12 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
     )
     messages = [*preamble, *conversation, *postamble]
     estimated = overhead_tokens + sum(
-        estimate_tokens(message_text(message), runner.chars_per_token) for message in conversation
+        message_tokens(message, runner.chars_per_token) for message in conversation
     )
     sent_chars = len(overhead_text) + sum(len(message_text(message)) for message in conversation)
+    budget = prompt_budget(runner.context_size)
+    if estimated > budget:
+        runner.bus.publish(BudgetExceeded(estimated=estimated, budget=budget))
 
     for event in runner.llm.stream(messages, specs):
         if runner.cancel.is_set():
@@ -250,7 +251,7 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
                     )
                 )
                 if prompt_tokens:
-                    _reconcile(runner, estimated, sent_chars, prompt_tokens)
+                    _reconcile(runner, sent_chars, prompt_tokens)
 
     if thinking_id is not None:
         runner.bus.publish(AssistantThinkingFinished(id=thinking_id))

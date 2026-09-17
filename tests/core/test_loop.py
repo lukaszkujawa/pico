@@ -1841,7 +1841,7 @@ def test_stream_step_sends_briefing_and_window_not_the_full_transcript() -> None
     assert "Facts gathered so far:" in briefing.content
     window = sent[2:]
     assert len(window) < len(transcript)
-    assert window == [transcript[0], *transcript[-RECENT_UNITS:]]
+    assert window == [transcript[0], *transcript[-(RECENT_UNITS + 1) :]]
     assert sum("Your current plan:" in message.content for message in sent) == 1
 
 
@@ -2069,7 +2069,31 @@ def test_second_call_estimates_with_the_updated_ratio() -> None:
     assert "fact 2" in second[0].tool_result.content
 
 
-def test_overflowing_prompt_publishes_budget_exceeded() -> None:
+def test_pinned_overflow_publishes_budget_exceeded_before_the_request() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+    session = _session()
+    session.append(UserMessageRecorded(content="h" * 40_000))
+    client = ScriptedClient(
+        [[TextDelta(text="done"), GenerationComplete(finish_reason="stop", prompt_tokens=9_000)]]
+    )
+
+    LoopRunner(client, _echo_registry(), bus, session, 8_192, DEFAULT_LOOP_CONFIG).execute()
+
+    events: list[BusEvent] = []
+    for event in subscriber:
+        events.append(event)
+        if isinstance(event, RunFinished):
+            break
+    exceeded = [event for event in events if isinstance(event, BudgetExceeded)]
+    assert len(exceeded) == 1
+    assert exceeded[0].budget == prompt_budget(8_192)
+    assert exceeded[0].estimated > exceeded[0].budget
+    generation = next(i for i, event in enumerate(events) if isinstance(event, GenerationCompleted))
+    assert events.index(exceeded[0]) < generation
+
+
+def test_reported_overflow_alone_publishes_no_budget_exceeded() -> None:
     bus = Bus()
     subscriber = bus.subscribe()
     session = _session()
@@ -2078,13 +2102,12 @@ def test_overflowing_prompt_publishes_budget_exceeded() -> None:
         [[TextDelta(text="done"), GenerationComplete(finish_reason="stop", prompt_tokens=9_000)]]
     )
 
-    LoopRunner(client, _echo_registry(), bus, session, 8_192, DEFAULT_LOOP_CONFIG).execute()
+    runner = LoopRunner(client, _echo_registry(), bus, session, 8_192, DEFAULT_LOOP_CONFIG)
+    runner.execute()
 
-    events = [next(subscriber) for _ in range(6)]
-    exceeded = [event for event in events if isinstance(event, BudgetExceeded)]
-    assert len(exceeded) == 1
-    assert exceeded[0].budget == prompt_budget(8_192)
-    assert exceeded[0].estimated < 9_000
+    events = [next(subscriber) for _ in range(5)]
+    assert not any(isinstance(event, BudgetExceeded) for event in events)
+    assert runner.chars_per_token == MIN_CHARS_PER_TOKEN
 
 
 def test_fitting_prompt_publishes_no_budget_exceeded() -> None:

@@ -10,7 +10,7 @@
 * **`BudgetExceeded` becomes truthful.** It is published from compilation when even the pinned minimum exceeds the budget — before the request is sent — instead of only from post-hoc reconciliation. Reconciliation keeps updating `chars_per_token`.
 * **No behaviour change for sessions that already fit.** Under-budget compilations return the same messages as today.
 
-## [ ] T001 Unify the window and enforce the budget invariant
+## [X] T001 Unify the window and enforce the budget invariant
 
 ### Description
 

@@ -75,7 +75,7 @@ def message_text(message: Message) -> str:
     return message.content + "".join(tool_call_text(call) for call in message.tool_calls)
 
 
-def _message_tokens(message: Message, chars_per_token: float) -> int:
+def message_tokens(message: Message, chars_per_token: float = 4.0) -> int:
     if message.role is Role.TOOL:
         assert message.tool_result is not None
         return estimate_tokens(message.tool_result.content, chars_per_token)
@@ -83,13 +83,6 @@ def _message_tokens(message: Message, chars_per_token: float) -> int:
     return total + sum(
         estimate_tokens(tool_call_text(call), chars_per_token) for call in message.tool_calls
     )
-
-
-def _protected_start(messages: list[Message]) -> int:
-    for position in reversed(range(len(messages))):
-        if messages[position].role is Role.USER:
-            return position
-    return 0
 
 
 def _unit_end(messages: list[Message], start: int) -> int:
@@ -126,39 +119,26 @@ def _demote_to_handle(message: Message) -> Message:
     )
 
 
-def _task_index(messages: list[Message]) -> int | None:
-    for position, message in enumerate(messages):
-        if message.role is Role.USER:
-            return position
-    return None
+def _pinned_positions(messages: list[Message]) -> list[int]:
+    users = [position for position, message in enumerate(messages) if message.role is Role.USER]
+    return sorted({users[0], users[-1]}) if users else []
 
 
 def recency_window(
     messages: list[Message], budget: int, chars_per_token: float = 4.0
 ) -> list[Message]:
-    if not messages:
-        return []
-    protected = _protected_start(messages)
-    task = _task_index(messages)
+    pinned = _pinned_positions(messages)
+    positions = [position for position in range(len(messages)) if position not in pinned]
+    body = [messages[position] for position in positions]
+    starts = _unit_starts(body)
+    if len(starts) > RECENT_UNITS:
+        keep = starts[-RECENT_UNITS]
+        positions, body = positions[keep:], body[keep:]
 
-    if task is None or task != protected:
-        starts = _unit_starts(messages)
-        cap_start = starts[-RECENT_UNITS] if len(starts) > RECENT_UNITS else 0
-        start = min(cap_start, protected)
-        head = [messages[task]] if task is not None and task < start else []
-        body = list(messages[start:])
-        evictable = protected - start
-    else:
-        head = [messages[task]]
-        rest = messages[_unit_end(messages, task) :]
-        starts = _unit_starts(rest)
-        cap_start = starts[-RECENT_UNITS] if len(starts) > RECENT_UNITS else 0
-        body = list(rest[cap_start:])
-        evictable = len(body)
+    total = sum(message_tokens(messages[position], chars_per_token) for position in pinned)
+    total += sum(message_tokens(message, chars_per_token) for message in body)
 
-    total = sum(_message_tokens(message, chars_per_token) for message in [*head, *body])
-
-    for position, message in enumerate(body):
+    for index, message in enumerate(body):
         if total <= budget:
             break
         if message.role is not Role.TOOL:
@@ -167,17 +147,19 @@ def recency_window(
         if message.tool_result.is_error:
             continue
         demoted = _demote_to_handle(message)
-        total += _message_tokens(demoted, chars_per_token) - _message_tokens(
-            message, chars_per_token
-        )
-        body[position] = demoted
+        total += message_tokens(demoted, chars_per_token) - message_tokens(message, chars_per_token)
+        body[index] = demoted
 
     cut = 0
-    while cut < evictable and total > budget:
+    while cut < len(body) and total > budget:
         next_cut = _unit_end(body, cut)
-        total -= sum(_message_tokens(message, chars_per_token) for message in body[cut:next_cut])
+        total -= sum(message_tokens(message, chars_per_token) for message in body[cut:next_cut])
         cut = next_cut
-    return [*head, *body[cut:]]
+
+    window = [(position, messages[position]) for position in pinned]
+    window += list(zip(positions[cut:], body[cut:], strict=True))
+    window.sort(key=lambda entry: entry[0])
+    return [message for _, message in window]
 
 
 def _briefing(session: Session) -> Message | None:
@@ -206,5 +188,5 @@ def compile_context(
     briefing = _briefing(session)
     if briefing is None:
         return recency_window(session.messages(), budget, chars_per_token)
-    budget -= _message_tokens(briefing, chars_per_token)
+    budget -= message_tokens(briefing, chars_per_token)
     return [briefing, *recency_window(session.messages(), budget, chars_per_token)]
