@@ -10,7 +10,7 @@ Live run 2026-09-17_15-32-14: the agent re-read the same source files seven time
 * **The content preview shrinks to make room.** Index lines stay one line within the current length bound; signature first, preview fills the remainder.
 * **No behavioural machinery.** No dedup, no caching, no new tools: once facts are addressable, `read_fact` becomes the cheapest path to old results and the existing tools suffice.
 
-## [ ] T001 Carry and render the producing call
+## [X] T001 Carry and render the producing call
 
 ### Description
 

@@ -146,16 +146,43 @@ def _tokens(messages: list[Message]) -> int:
     return sum(estimate_tokens(message_text(message)) for message in messages)
 
 
-def _fact(fact_id: int, content: str, source: str = "shell") -> Fact:
-    return Fact(id=fact_id, content=content, source=source)
+def _fact(
+    fact_id: int, content: str, source: str = "shell", arguments: dict[str, object] | None = None
+) -> Fact:
+    return Fact(id=fact_id, content=content, source=source, arguments=arguments or {})
 
 
-def test_fact_index_lists_every_fact_with_id_and_source() -> None:
-    index = fact_index([_fact(1, "alpha", "shell"), _fact(4, "beta", "read_file")])
+def test_fact_index_lists_every_fact_with_id_and_signature() -> None:
+    index = fact_index(
+        [
+            _fact(1, "alpha", "shell", {"command": "ls"}),
+            _fact(4, "beta", "read_file", {"path": "a.py"}),
+        ]
+    )
     lines = index.splitlines()
 
-    assert lines[0] == "[1] shell: alpha"
-    assert lines[1] == "[4] read_file: beta"
+    assert lines[0] == "[1] shell(ls): alpha"
+    assert lines[1] == "[4] read_file(a.py): beta"
+
+
+def test_fact_index_distinguishes_facts_by_signature_within_the_line_head() -> None:
+    index = fact_index(
+        [
+            _fact(1, "same preview", "read_file", {"path": "src/pico/core/loop.py"}),
+            _fact(2, "same preview", "read_file", {"path": "src/pico/core/context.py"}),
+        ]
+    )
+    first, second = index.splitlines()[:2]
+
+    assert first[:40] != second[:40]
+
+
+def test_fact_index_shell_signature_shows_the_leading_part_of_the_command() -> None:
+    index = fact_index(
+        [_fact(1, "output", "shell", {"command": "grep -rn TODO src/pico/core/loop.py"})]
+    )
+
+    assert "grep -rn TODO" in index.splitlines()[0]
 
 
 def test_fact_index_collapses_multiline_content_to_a_bounded_preview() -> None:
@@ -165,7 +192,7 @@ def test_fact_index_collapses_multiline_content_to_a_bounded_preview() -> None:
 
     assert "\n" not in line
     assert "first line second line" in line
-    assert len(line) < 100
+    assert len(line) < 95
 
 
 def test_fact_index_caps_at_the_most_recent_facts_with_overflow_line() -> None:
@@ -359,8 +386,28 @@ def test_recency_window_demoted_shell_result_keeps_its_fact_handle() -> None:
 
     demoted = window[-1]
     assert demoted.tool_result is not None
-    assert "fact 9 truncated" in demoted.tool_result.content
+    assert "fact 9 shell() truncated" in demoted.tool_result.content
     assert "read_fact(9)" in demoted.tool_result.content
+
+
+def test_recency_window_demoted_handle_names_the_producing_call_signature() -> None:
+    messages = [
+        Message(role=Role.USER, content="question"),
+        Message(
+            role=Role.ASSISTANT,
+            tool_calls=(ToolCall(id="9", name="read_file", arguments={"path": "core/loop.py"}),),
+        ),
+        Message(
+            role=Role.TOOL,
+            tool_result=ToolResult(tool_call_id="9", content="z" * 5_000, name="read_file"),
+        ),
+    ]
+
+    window = recency_window(messages, budget=100)
+
+    demoted = window[-1]
+    assert demoted.tool_result is not None
+    assert "read_file(core/loop.py)" in demoted.tool_result.content
 
 
 def _error_pair() -> list[Message]:

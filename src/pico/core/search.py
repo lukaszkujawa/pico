@@ -3,7 +3,7 @@ import threading
 from collections.abc import Callable, Iterator
 
 from pico.core.context import fact_index, prompt_budget
-from pico.core.ledger import Fact, facts
+from pico.core.ledger import Fact, facts, render_call
 from pico.llm.client import LLMClient
 from pico.llm.types import Message, Role, TextDelta
 from pico.session import Session
@@ -38,11 +38,13 @@ class SearchCancelled(Exception):
 
 def _scan_line(fact: Fact) -> str:
     flat = " ".join(fact.content.split())
-    return f"[{fact.id}] {fact.source}: {flat[:SCAN_PREVIEW_CHARS]}"
+    signature = render_call(fact.source, fact.arguments)
+    return f"[{fact.id}] {signature}: {flat[:SCAN_PREVIEW_CHARS]}"
 
 
 def _refine_line(fact: Fact) -> str:
-    return f"[{fact.id}] {fact.source}: {fact.content[:REFINE_CONTENT_CHARS]}"
+    signature = render_call(fact.source, fact.arguments)
+    return f"[{fact.id}] {signature}: {fact.content[:REFINE_CONTENT_CHARS]}"
 
 
 def _pages(lines: list[str], page_chars: int) -> Iterator[str]:

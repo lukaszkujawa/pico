@@ -85,8 +85,8 @@ def test_query_with_no_relevant_facts_returns_the_fact_index_tail() -> None:
     result = _search(client, session)
 
     assert result.startswith("no relevant facts found for 'review findings architecture core loop'")
-    assert "[1] note: unrelated one" in result
-    assert "[2] note: unrelated two" in result
+    assert "[1] note(): unrelated one" in result
+    assert "[2] note(): unrelated two" in result
 
 
 def test_empty_ledger_returns_the_no_results_message_without_calling_the_model() -> None:

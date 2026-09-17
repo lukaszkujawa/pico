@@ -1,4 +1,4 @@
-from pico.core.ledger import Fact, Plan, PlanStep, facts, plan
+from pico.core.ledger import Fact, Plan, PlanStep, facts, plan, render_call
 from pico.session import (
     AssistantMessageRecorded,
     PlanSet,
@@ -45,8 +45,8 @@ def test_facts_ids_are_source_event_seqs() -> None:
     )
 
     assert facts(session) == [
-        Fact(id=3, content="a-content", source="read_file"),
-        Fact(id=5, content="ok", source="shell"),
+        Fact(id=3, content="a-content", source="read_file", arguments={"path": "a"}),
+        Fact(id=5, content="ok", source="shell", arguments={"command": "x"}),
     ]
 
 
@@ -77,8 +77,8 @@ def test_facts_excludes_bookkeeping_tool_calls() -> None:
     session.append(ToolCallRecorded(name="shell", arguments={}, result="ok", is_error=False))
 
     assert facts(session) == [
-        Fact(id=1, content="finding", source="note"),
-        Fact(id=6, content="ok", source="shell"),
+        Fact(id=1, content="finding", source="note", arguments={}),
+        Fact(id=6, content="ok", source="shell", arguments={}),
     ]
 
 
@@ -91,6 +91,23 @@ def test_recovering_a_fact_does_not_mint_a_new_fact() -> None:
     )
 
     assert facts(session) == before
+
+
+def test_render_call_joins_argument_values_without_keys() -> None:
+    assert render_call("read_file", {"path": "a.py"}) == "read_file(a.py)"
+
+
+def test_render_call_with_no_arguments_shows_empty_parens() -> None:
+    assert render_call("shell", {}) == "shell()"
+
+
+def test_render_call_elides_the_middle_of_a_long_call_keeping_head_and_tail() -> None:
+    rendered = render_call("read_file", {"path": "src/pico/core/very/deeply/nested/loop.py"})
+
+    assert len(rendered) <= 40
+    assert rendered.startswith("read_file(")
+    assert rendered.endswith("loop.py)")
+    assert "…" in rendered
 
 
 def test_plan_returns_none_without_plan_events() -> None:

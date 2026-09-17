@@ -1,7 +1,8 @@
 import json
+from collections.abc import Mapping
 from typing import Literal
 
-from pico.core.ledger import BOOKKEEPING_TOOLS, Fact, facts, plan, render_plan
+from pico.core.ledger import BOOKKEEPING_TOOLS, Fact, facts, plan, render_call, render_plan
 from pico.llm.types import Message, Role, ToolCall, ToolResult
 from pico.session import Session
 
@@ -19,11 +20,18 @@ SYSTEM_PROMPT = (
 
 _HANDLE_PREVIEW_CHARS = 200
 _INDEX_FACTS = 20
-_INDEX_PREVIEW_CHARS = 72
+_INDEX_LINE_CHARS = 90
 
 
-def _fact_preview(content: str) -> str:
-    return " ".join(content.split())[:_INDEX_PREVIEW_CHARS]
+def _fact_preview(content: str, limit: int) -> str:
+    return " ".join(content.split())[:limit]
+
+
+def _index_line(fact: Fact) -> str:
+    signature = render_call(fact.source, fact.arguments)
+    prefix = f"[{fact.id}] {signature}: "
+    preview = _fact_preview(fact.content, max(0, _INDEX_LINE_CHARS - len(prefix)))
+    return f"{prefix}{preview}"
 
 
 def fact_index(all_facts: list[Fact]) -> str:
@@ -31,7 +39,7 @@ def fact_index(all_facts: list[Fact]) -> str:
         return ""
     shown = all_facts[-_INDEX_FACTS:]
     overflow = len(all_facts) - len(shown)
-    lines = [f"[{fact.id}] {fact.source}: {_fact_preview(fact.content)}" for fact in shown]
+    lines = [_index_line(fact) for fact in shown]
     if overflow:
         lines.append(f"+{overflow} earlier facts")
     lines.append("Call read_fact(id) to recover any fact in full.")
@@ -44,15 +52,18 @@ def estimate_tokens(text: str, chars_per_token: float = 4.0) -> int:
     return max(1, int(len(text) / chars_per_token))
 
 
-def render_tool_result(content: str, fact_id: int | None, level: RenderLevel) -> str:
+def render_tool_result(
+    content: str, fact_id: int | None, level: RenderLevel, signature: str = ""
+) -> str:
     if level == "full":
         return content
     tokens = estimate_tokens(content)
+    lead = f"{signature} " if signature else ""
     if fact_id is None:
-        summary = f"[result truncated — {len(content)} chars, {tokens} tokens]"
+        summary = f"[{lead}result truncated — {len(content)} chars, {tokens} tokens]"
     else:
         summary = (
-            f"[fact {fact_id} truncated — {len(content)} chars, {tokens} tokens "
+            f"[fact {fact_id} {lead}truncated — {len(content)} chars, {tokens} tokens "
             f"— call read_fact({fact_id}) for the full content]"
         )
     preview = content[:_HANDLE_PREVIEW_CHARS]
@@ -104,15 +115,27 @@ def _unit_starts(messages: list[Message]) -> list[int]:
     return starts
 
 
-def _demote_to_handle(message: Message) -> Message:
+def _call_arguments(body: list[Message], index: int, tool_call_id: str) -> Mapping[str, object]:
+    for call in body[index - 1].tool_calls:
+        if call.id == tool_call_id:
+            return call.arguments
+    return {}
+
+
+def _demote_to_handle(body: list[Message], index: int) -> Message:
+    message = body[index]
     assert message.tool_result is not None
     result = message.tool_result
-    fact_id = None if result.name in BOOKKEEPING_TOOLS else int(result.tool_call_id)
+    is_bookkeeping = result.name in BOOKKEEPING_TOOLS
+    fact_id = None if is_bookkeeping else int(result.tool_call_id)
+    signature = ""
+    if result.name and not is_bookkeeping:
+        signature = render_call(result.name, _call_arguments(body, index, result.tool_call_id))
     return Message(
         role=Role.TOOL,
         tool_result=ToolResult(
             tool_call_id=result.tool_call_id,
-            content=render_tool_result(result.content, fact_id, "handle"),
+            content=render_tool_result(result.content, fact_id, "handle", signature),
             is_error=False,
             name=result.name,
         ),
@@ -146,7 +169,7 @@ def recency_window(
         assert message.tool_result is not None
         if message.tool_result.is_error:
             continue
-        demoted = _demote_to_handle(message)
+        demoted = _demote_to_handle(body, index)
         total += message_tokens(demoted, chars_per_token) - message_tokens(message, chars_per_token)
         body[index] = demoted
 

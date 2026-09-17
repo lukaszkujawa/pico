@@ -1643,7 +1643,7 @@ def test_model_recovers_a_truncated_fact_via_read_fact_and_cites_it() -> None:
 
     handle = client.seen_messages[0][-1]
     assert handle.tool_result is not None
-    assert "fact 2 truncated" in handle.tool_result.content
+    assert "fact 2 shell() truncated" in handle.tool_result.content
     assert "call read_fact(2) for the full content" in handle.tool_result.content
 
     recalled = [
@@ -2940,7 +2940,7 @@ def test_search_facts_without_relevant_facts_offers_the_fact_index() -> None:
     )
     assert recorded.is_error is False
     assert "no relevant facts found for" in recorded.result
-    assert "[2] note: the run loop compiles context" in recorded.result
+    assert "[2] note(): the run loop compiles context" in recorded.result
 
 
 def test_search_facts_with_empty_query_is_an_invalid_action() -> None:
