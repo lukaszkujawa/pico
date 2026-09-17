@@ -333,6 +333,7 @@ class PicoApp(App[None]):
 
     def action_cancel_run(self) -> None:
         if self._run_in_flight and self._cancel_handle is not None:
+            self._stop_status()
             self._cancel_handle.trigger()
 
     def action_new_session(self) -> None:
