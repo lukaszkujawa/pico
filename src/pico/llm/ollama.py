@@ -68,6 +68,22 @@ class OllamaClient:
         self._context_size = context_size
         self._fallback_call_ids = itertools.count()
 
+    def models(self) -> list[str]:
+        try:
+            with httpx.Client(transport=self._transport) as client:
+                response = client.get(
+                    f"{self._base_url}/api/tags", headers=self._headers(), timeout=10.0
+                )
+                response.raise_for_status()
+                listing: dict[str, Any] = response.json()
+        except httpx.HTTPError as error:
+            raise LLMError(str(error)) from error
+        entries: list[dict[str, Any]] = listing.get("models") or []
+        return [name for entry in entries if (name := entry.get("model"))]
+
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
+
     def stream(self, messages: list[Message], tools: list[ToolSpec]) -> Iterator[StreamEvent]:
         payload: dict[str, Any] = {
             "model": self._model,
@@ -79,8 +95,6 @@ class OllamaClient:
         if tools:
             payload["tools"] = [_tool_spec_to_payload(tool) for tool in tools]
 
-        headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
-
         try:
             with (
                 httpx.Client(transport=self._transport) as client,
@@ -88,7 +102,7 @@ class OllamaClient:
                     "POST",
                     f"{self._base_url}/api/chat",
                     json=payload,
-                    headers=headers,
+                    headers=self._headers(),
                     timeout=httpx.Timeout(connect=10.0, read=None, write=None, pool=None),
                 ) as response,
             ):

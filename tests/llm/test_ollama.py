@@ -278,3 +278,47 @@ def test_without_context_size_no_options_are_sent() -> None:
     list(client.stream([Message(role=Role.USER, content="hi")], []))
 
     assert "options" not in json.loads(captured[0].content)
+
+
+def test_models_returns_the_served_model_names() -> None:
+    captured: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "models": [
+                    {"name": "qwen3:8b", "model": "qwen3:8b"},
+                    {"name": "gemma3:27b", "model": "gemma3:27b"},
+                ]
+            },
+        )
+
+    client = OllamaClient(model="qwen3", transport=httpx.MockTransport(handle))
+
+    assert client.models() == ["qwen3:8b", "gemma3:27b"]
+    assert captured[0].url.path == "/api/tags"
+
+
+def test_models_sends_the_api_key_when_configured() -> None:
+    captured: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"models": []})
+
+    client = OllamaClient(model="qwen3", api_key="secret", transport=httpx.MockTransport(handle))
+
+    assert client.models() == []
+    assert captured[0].headers["authorization"] == "Bearer secret"
+
+
+def test_models_connection_failure_raises_llm_error() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    client = OllamaClient(model="qwen3", transport=httpx.MockTransport(handle))
+
+    with pytest.raises(LLMError, match="refused"):
+        client.models()

@@ -13,11 +13,15 @@ from textual.timer import Timer
 from textual.widgets import Rule, Static, TextArea
 
 from pico.core.bus import Bus
+from pico.tui import commands
+from pico.tui.commands import ModelSwitch
 from pico.tui.messages import (
     AnswerPaneCreate,
     AnswerPaneSettle,
     AssistantPaneCreate,
     AssistantPaneDelta,
+    CommandAccepted,
+    CommandMenuKey,
     ErrorMessage,
     GenerationCompletedMessage,
     RunCancelledMessage,
@@ -36,9 +40,11 @@ from pico.tui.theme import PICO_THEME, Theme
 from pico.tui.widgets import (
     AnswerPane,
     AssistantPane,
+    CommandMenu,
     ErrorPane,
     Splash,
     StatsStrip,
+    SystemPane,
     ThinkingPane,
     ToolCallPane,
     UserPane,
@@ -72,11 +78,25 @@ def extract_answer_content(arguments_text: str) -> str | None:
     return content if isinstance(content, str) else None
 
 
+MENU_KEYS = {"up", "down", "escape"}
+
+
 class ChatInput(TextArea):
     async def _on_key(self, event: events.Key) -> None:
+        menu = self.screen.query_one(CommandMenu)
+        if menu.display and event.key in MENU_KEYS:
+            event.stop()
+            event.prevent_default()
+            self.post_message(CommandMenuKey(key=event.key))
+            return
         if event.key == "enter":
             event.stop()
             event.prevent_default()
+            if menu.display:
+                accepted = menu.accept()
+                if accepted is not None:
+                    self.post_message(CommandAccepted(text=accepted))
+                    return
             text = self.text
             self.clear()
             self.post_message(UserInputSubmitted(text=text))
@@ -141,6 +161,7 @@ class PicoApp(App[None]):
         session_handle: SessionHandle | None = None,
         initial_prompt: str | None = None,
         context_size: int = DEFAULT_CONTEXT_SIZE,
+        model_switch: ModelSwitch | None = None,
     ) -> None:
         super().__init__()
         self._bus = bus
@@ -148,6 +169,7 @@ class PicoApp(App[None]):
         self._input_queue = input_queue
         self._cancel_handle = cancel_handle
         self._session_handle = session_handle
+        self._model_switch = model_switch
         self._initial_prompt = initial_prompt
         self._run_in_flight = False
         self._error_shown_this_run = False
@@ -176,6 +198,7 @@ class PicoApp(App[None]):
             yield Splash(self._session_id(), self._local_directory())
         yield Rule()
         with Vertical(id="footer"):
+            yield CommandMenu()
             yield InputBar()
             yield Rule()
             yield StatsStrip(self._context_size)
@@ -383,9 +406,65 @@ class PicoApp(App[None]):
         self._stop_status()
         await self._mount_at_bottom(ErrorPane(message.message))
 
+    def _menu(self) -> CommandMenu:
+        return self.query_one(CommandMenu)
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        completion = commands.complete(event.text_area.text, self._model_switch)
+        menu = self._menu()
+        if completion is None:
+            menu.hide()
+        else:
+            menu.show(completion)
+
+    def on_command_menu_key(self, message: CommandMenuKey) -> None:
+        menu = self._menu()
+        match message.key:
+            case "up":
+                menu.move(-1)
+            case "down":
+                menu.move(1)
+            case _:
+                menu.hide()
+
+    async def on_command_accepted(self, message: CommandAccepted) -> None:
+        text_input = self.query_one("#user-input", ChatInput)
+        if commands.awaits_argument(message.text):
+            text_input.text = f"{message.text} "
+            text_input.move_cursor(text_input.document.end)
+            return
+        self._menu().hide()
+        text_input.clear()
+        await self.run_command(message.text)
+
+    async def _say(self, message: str) -> None:
+        await self._mount_at_bottom(SystemPane(message))
+
+    async def run_command(self, text: str) -> None:
+        name, _, argument = text.removeprefix("/").partition(" ")
+        match name:
+            case "quit":
+                self.exit()
+            case "model":
+                await self._switch_model(argument.strip())
+            case _:
+                await self._say(f"unknown command /{name} — known: {commands.KNOWN_COMMANDS}")
+
+    async def _switch_model(self, model: str) -> None:
+        if self._model_switch is None:
+            return
+        if not model:
+            await self._say(f"model → {self._model_switch.current}")
+            return
+        self._model_switch.switch_to(model)
+        await self._say(f"model → {model}")
+
     async def on_user_input_submitted(self, message: UserInputSubmitted) -> None:
         text = message.text.strip()
         if not text:
+            return
+        if text.startswith("/"):
+            await self.run_command(text)
             return
         pane = UserPane(text=message.text)
         if self._queued_user_panes:

@@ -14,9 +14,10 @@ from pico.llm.types import (
     ToolSpec,
 )
 from pico.session import Session, ToolCallRecorded, connect
+from tests.llm_fakes import NoModels
 
 
-class ScriptedClient:
+class ScriptedClient(NoModels):
     def __init__(self, turns: list[list[StreamEvent]]) -> None:
         self._turns = turns
 
@@ -24,13 +25,13 @@ class ScriptedClient:
         yield from self._turns.pop(0)
 
 
-class FailingClient:
+class FailingClient(NoModels):
     def stream(self, messages: list[Message], tools: list[ToolSpec]) -> Iterator[StreamEvent]:
         raise LLMError("connection lost")
         yield
 
 
-class LoopingClient:
+class LoopingClient(NoModels):
     def stream(self, messages: list[Message], tools: list[ToolSpec]) -> Iterator[StreamEvent]:
         yield ToolCallReady(
             tool_call=ToolCall(id="c", name="read_file", arguments={"path": "/nope"})

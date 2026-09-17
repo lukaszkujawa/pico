@@ -12,9 +12,11 @@ from pico.core.loop import DEFAULT_LOOP_CONFIG, LoopRunner
 from pico.core.tools import ToolRegistry
 from pico.debug.log import LoggingLLMClient, RunLog
 from pico.llm.client import LLMClient
+from pico.llm.errors import LLMError
 from pico.llm.ollama import OllamaClient
 from pico.session import Session, UserMessageRecorded, connect, new_session_id
 from pico.tui import PicoApp
+from pico.tui.commands import Options
 from pico.tui.messages import UserInputSubmitted
 
 
@@ -42,6 +44,49 @@ class SessionHandle:
             self._session = session
 
 
+class LLMHandle:
+    def __init__(self, client: LLMClient, run_log: RunLog | None = None) -> None:
+        self._lock = threading.Lock()
+        self._run_log = run_log
+        self._client = self._wrap(client)
+
+    def _wrap(self, client: LLMClient) -> LLMClient:
+        if self._run_log is None:
+            return client
+        return LoggingLLMClient(client, self._run_log)
+
+    @property
+    def client(self) -> LLMClient:
+        with self._lock:
+            return self._client
+
+    def switch(self, client: LLMClient) -> None:
+        wrapped = self._wrap(client)
+        with self._lock:
+            self._client = wrapped
+
+
+class ModelSwitch:
+    def __init__(self, config: Config, llm_handle: LLMHandle) -> None:
+        self._config = config
+        self._llm_handle = llm_handle
+        self._current = config.model
+
+    @property
+    def current(self) -> str:
+        return self._current
+
+    def available(self) -> Options:
+        try:
+            return Options(names=tuple(self._llm_handle.client.models()))
+        except LLMError as error:
+            return Options(error=str(error))
+
+    def switch_to(self, model: str) -> None:
+        self._llm_handle.switch(build_llm_client(self._config, model))
+        self._current = model
+
+
 class CancelHandle:
     def __init__(self) -> None:
         self._event: threading.Event | None = None
@@ -57,11 +102,11 @@ class CancelHandle:
             self._event.set()
 
 
-def build_llm_client(config: Config) -> LLMClient:
+def build_llm_client(config: Config, model: str | None = None) -> LLMClient:
     if config.vendor != "ollama":
         raise UnsupportedVendorError(f"unsupported LLM vendor: {config.vendor}")
     return OllamaClient(
-        model=config.model,
+        model=model or config.model,
         base_url=config.base_url,
         api_key=config.api_key,
         context_size=config.context_size,
@@ -69,7 +114,7 @@ def build_llm_client(config: Config) -> LLMClient:
 
 
 def _turn_loop(
-    llm: LLMClient,
+    llm_handle: LLMHandle,
     bus: Bus,
     session_handle: SessionHandle,
     context_size: int,
@@ -85,6 +130,7 @@ def _turn_loop(
             if shutdown.is_set():
                 return
             continue
+        llm = llm_handle.client
         session = session_handle.session
         session.append(UserMessageRecorded(content=text))
         tools = ToolRegistry()
@@ -134,7 +180,7 @@ def run_pico(
     initial_prompt: str | None = None,
     sock: str | None = None,
 ) -> None:
-    llm = build_llm_client(config)
+    client = build_llm_client(config)
     if sock is not None:
         _create_fifo(sock)
     bus = Bus()
@@ -143,19 +189,21 @@ def run_pico(
     input_queue: queue.Queue[str] = queue.Queue()
     shutdown = threading.Event()
     cancel_handle = CancelHandle()
+    run_log: RunLog | None = None
 
     if debug:
         run_log = RunLog.create()
         run_log.log(
             f"vendor={config.vendor} model={config.model} context_size={config.context_size}"
         )
-        llm = LoggingLLMClient(llm, run_log)
         threading.Thread(target=_consume_bus_to_log, args=(bus, run_log), daemon=True).start()
+
+    llm_handle = LLMHandle(client, run_log)
 
     core_thread = threading.Thread(
         target=_turn_loop,
         args=(
-            llm,
+            llm_handle,
             bus,
             session_handle,
             config.context_size,
@@ -174,6 +222,7 @@ def run_pico(
         session_handle,
         initial_prompt,
         config.context_size,
+        ModelSwitch(config, llm_handle),
     )
 
     reader_thread: threading.Thread | None = None

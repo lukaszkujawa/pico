@@ -20,6 +20,9 @@ _.on_run_finished_message
 _.on_run_cancelled_message
 _.on_error_message
 _.on_user_input_submitted
+_.on_text_area_changed
+_.on_command_menu_key
+_.on_command_accepted
 _.on_unmount
 _.padding
 _.display
@@ -29,3 +32,4 @@ _.finish_reason
 CSS_PATH
 BINDINGS
 REFERENCE_CONTEXT_SIZE
+_.names

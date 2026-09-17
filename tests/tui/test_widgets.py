@@ -11,6 +11,7 @@ from pico.tui.widgets import (
     WAITING_FRAMES,
     AnswerPane,
     AssistantPane,
+    CommandMenu,
     ContextMeter,
     ElapsedTimer,
     ErrorPane,
@@ -733,3 +734,15 @@ async def test_stats_strip_readouts_are_monochrome_until_over_budget() -> None:
         meter.used = 950
         await pilot.pause()
         assert _hues(meter.render()) == {PICO_THEME.error}
+
+
+def test_command_menu_with_no_completion_renders_nothing_and_accepts_nothing() -> None:
+    menu = CommandMenu()
+
+    assert menu.render().plain == ""
+    assert menu.accept() is None
+    assert menu.selection is None
+
+    menu.move(1)
+
+    assert menu.selected == 0

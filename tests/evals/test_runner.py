@@ -16,9 +16,10 @@ from pico.llm.types import (
     ToolCallReady,
     ToolSpec,
 )
+from tests.llm_fakes import NoModels
 
 
-class AnsweringClient:
+class AnsweringClient(NoModels):
     def __init__(self, answer: str = "done") -> None:
         self._answer = answer
         self.cwds: list[Path] = []
@@ -137,7 +138,7 @@ def test_cwd_is_restored_even_when_a_task_blows_up() -> None:
     assert Path.cwd() == origin
 
 
-class ExplodingClient:
+class ExplodingClient(NoModels):
     def stream(self, messages: list[Message], tools: list[ToolSpec]) -> Iterator[StreamEvent]:
         raise RuntimeError("client exploded")
         yield

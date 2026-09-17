@@ -12,9 +12,10 @@ from pico.core.search import (
 from pico.llm.errors import LLMError
 from pico.llm.types import GenerationComplete, Message, StreamEvent, TextDelta, ToolSpec
 from pico.session import Session, ToolCallRecorded, connect
+from tests.llm_fakes import NoModels
 
 
-class ReplyClient:
+class ReplyClient(NoModels):
     def __init__(self, replies: list[str]) -> None:
         self.replies = replies
         self.prompts: list[str] = []
@@ -27,7 +28,7 @@ class ReplyClient:
         yield GenerationComplete(finish_reason="stop")
 
 
-class ExplodingClient:
+class ExplodingClient(NoModels):
     def __init__(self, ok_calls: int) -> None:
         self.calls = 0
         self.ok_calls = ok_calls
@@ -139,7 +140,7 @@ def test_reduce_reply_naming_no_known_id_falls_back_to_no_results() -> None:
     assert "no relevant facts found" in _search(client, session)
 
 
-class PagingClient:
+class PagingClient(NoModels):
     def __init__(self) -> None:
         self.prompts: list[str] = []
 

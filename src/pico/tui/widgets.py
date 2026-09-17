@@ -9,6 +9,7 @@ from textual.timer import Timer
 from textual.widgets import Static
 
 from pico.core.context import estimate_tokens
+from pico.tui.commands import Completion, Row
 from pico.tui.theme import PICO_THEME, Theme
 
 SUCCESS_GLYPH = "✓"
@@ -477,6 +478,85 @@ class Splash(Static):
             for art_line, right_line in zip(art_lines, right_column, strict=True)
         ]
         return Text("\n").join(lines)
+
+
+SELECTED_GLYPH = "▸"
+CURRENT_GLYPH = "•"
+
+
+class CommandMenu(Static):
+    completion: reactive[Completion | None] = reactive(None, layout=True)
+    selected: reactive[int] = reactive(0, repaint=True)
+
+    def __init__(self, theme: Theme = PICO_THEME) -> None:
+        super().__init__(id="command-menu")
+        self._theme = theme
+        self.styles.padding = (0, 1)
+        self.display = False
+
+    @property
+    def rows(self) -> tuple[Row, ...]:
+        return () if self.completion is None else self.completion.rows
+
+    def show(self, completion: Completion) -> None:
+        previous = self.selection
+        self.completion = completion
+        self.selected = next(
+            (index for index, row in enumerate(completion.rows) if row.label == previous), 0
+        )
+        self.display = bool(completion.rows) or completion.error is not None
+
+    def hide(self) -> None:
+        self.completion = None
+        self.selected = 0
+        self.display = False
+
+    @property
+    def selection(self) -> str | None:
+        rows = self.rows
+        return rows[self.selected].label if rows else None
+
+    def move(self, offset: int) -> None:
+        if self.rows:
+            self.selected = (self.selected + offset) % len(self.rows)
+
+    def accept(self) -> str | None:
+        if self.completion is None or not self.rows:
+            return None
+        return self.completion.accepted(self.rows[self.selected])
+
+    def render(self) -> Text:
+        if self.completion is None:
+            return Text("")
+        if self.completion.error is not None:
+            return Text(f"{ERROR_GLYPH} {self.completion.error}", style=f"bold {self._theme.error}")
+        lines: list[Text] = []
+        for index, row in enumerate(self.rows):
+            chosen = index == self.selected
+            line = Text(
+                f"{SELECTED_GLYPH} " if chosen else "  ",
+                style=f"bold {self._theme.accent}",
+            )
+            line.append(
+                row.label, style=f"bold {self._theme.text if chosen else self._theme.tool_call}"
+            )
+            if row.marked:
+                line.append(f" {CURRENT_GLYPH}", style=self._theme.success)
+            if row.hint:
+                line.append(f"  {row.hint}", style=self._theme.muted_text)
+            lines.append(line)
+        return Text("\n").join(lines)
+
+
+class SystemPane(Static):
+    def __init__(self, message: str, theme: Theme = PICO_THEME) -> None:
+        super().__init__(id=None)
+        self._theme = theme
+        self._message = message
+        self.styles.padding = (0, 1)
+
+    def render(self) -> Text:
+        return Text(self._message, style=f"italic {self._theme.muted_text}")
 
 
 class ErrorPane(Static):

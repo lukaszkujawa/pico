@@ -39,6 +39,7 @@ from tests.core.loop_fixtures import (
     answer_turn,
     make_session,
 )
+from tests.llm_fakes import NoModels
 
 
 def _session_with_fact(content: str) -> tuple[Session, int]:
@@ -170,7 +171,7 @@ def _search_call(query: str = "review findings architecture core loop") -> ToolC
     return ToolCall(id="1", name="search_facts", arguments={"query": query})
 
 
-class SearchScriptedClient:
+class SearchScriptedClient(NoModels):
     def __init__(self, turns: list[list[StreamEvent]], replies: list[str]) -> None:
         self._turns = turns
         self._replies = replies
@@ -330,7 +331,7 @@ def test_llm_error_mid_search_records_a_failed_call_and_the_run_continues() -> N
     tools = ToolRegistry()
     register_actions(tools, session)
 
-    class ExplodingSearch:
+    class ExplodingSearch(NoModels):
         def __init__(self) -> None:
             self.turns = [
                 [
@@ -365,7 +366,7 @@ def test_cancelling_mid_search_cancels_the_run_without_recording_a_result() -> N
     register_actions(tools, session)
     cancel = threading.Event()
 
-    class CancelDuringSearch:
+    class CancelDuringSearch(NoModels):
         def __init__(self) -> None:
             self.turns = [
                 [

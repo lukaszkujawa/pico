@@ -65,6 +65,9 @@ class LoggingLLMClient:
         self._client = client
         self._run_log = run_log
 
+    def models(self) -> list[str]:
+        return self._client.models()
+
     def stream(self, messages: list[Message], tools: list[ToolSpec]) -> Iterator[StreamEvent]:
         self._run_log.write_prompt(messages)
         text = ""

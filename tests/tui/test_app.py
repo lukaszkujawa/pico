@@ -25,14 +25,18 @@ from pico.core.events import (
 )
 from pico.llm.types import ToolCall
 from pico.tui.app import ChatInput, InputBar, PicoApp
+from pico.tui.commands import COMMANDS, Options
 from pico.tui.messages import UserInputSubmitted
 from pico.tui.widgets import (
+    CURRENT_GLYPH,
     AnswerPane,
     AssistantPane,
+    CommandMenu,
     ElapsedTimer,
     ErrorPane,
     Splash,
     StatsStrip,
+    SystemPane,
     ThinkingPane,
     TokenCounter,
     ToolCallPane,
@@ -1442,3 +1446,266 @@ async def test_stats_strip_uses_the_configured_context_size() -> None:
         await pilot.pause()
 
         assert "0/32k" in app.query_one(StatsStrip).meter.render().plain
+
+
+class FakeSwitch:
+    def __init__(
+        self, names: tuple[str, ...] = ("qwen3:8b", "gemma3:27b"), error: str | None = None
+    ) -> None:
+        self._options = Options(names=names, error=error)
+        self.current = "qwen3:8b"
+        self.switched: list[str] = []
+
+    def available(self) -> Options:
+        return self._options
+
+    def switch_to(self, model: str) -> None:
+        self.switched.append(model)
+        self.current = model
+
+
+async def test_quit_command_exits_without_enqueuing_anything() -> None:
+    input_queue: queue.Queue[str] = queue.Queue()
+    app = PicoApp(Bus(), input_queue)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#user-input", ChatInput).focus()
+        await pilot.press(*"/quit", "enter")
+        await settle(pilot, lambda: not app.is_running, "the app exits")
+
+    assert input_queue.empty()
+    assert len(app.query(UserPane)) == 0
+
+
+async def test_unknown_command_names_the_known_commands_and_starts_no_run() -> None:
+    input_queue: queue.Queue[str] = queue.Queue()
+    app = PicoApp(Bus(), input_queue)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#user-input", ChatInput).focus()
+        await pilot.press(*"/foo", "enter")
+        await settle(pilot, lambda: len(app.query(SystemPane)) == 1, "the feedback line mounts")
+
+        line = app.query_one(SystemPane).render().plain
+        assert "/foo" in line
+        assert "/model" in line
+        assert "/quit" in line
+        assert input_queue.empty()
+        assert len(app.query(UserPane)) == 0
+
+
+async def test_model_command_typed_in_full_switches_and_confirms() -> None:
+    switch = FakeSwitch()
+    input_queue: queue.Queue[str] = queue.Queue()
+    app = PicoApp(Bus(), input_queue, model_switch=switch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#user-input", ChatInput).focus()
+        await pilot.press(*"/model gemma3:27b", "enter")
+        await settle(pilot, lambda: len(app.query(SystemPane)) == 1, "the confirmation mounts")
+
+        assert switch.switched == ["gemma3:27b"]
+        assert app.query_one(SystemPane).render().plain == "model → gemma3:27b"
+        assert input_queue.empty()
+
+
+async def test_model_command_without_an_argument_reports_the_current_model() -> None:
+    switch = FakeSwitch()
+    app = PicoApp(Bus(), queue.Queue(), model_switch=switch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#user-input", ChatInput).focus()
+        await pilot.press(*"/model", "escape", "enter")
+        await settle(pilot, lambda: len(app.query(SystemPane)) == 1, "the line mounts")
+
+        assert switch.switched == []
+        assert app.query_one(SystemPane).render().plain == "model → qwen3:8b"
+
+
+async def test_message_with_a_slash_beyond_the_first_character_reaches_the_core() -> None:
+    input_queue: queue.Queue[str] = queue.Queue()
+    app = PicoApp(Bus(), input_queue)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _submit(app, pilot, "read a/b.txt")
+        await settle(pilot, lambda: len(app.query(UserPane)) == 1, "the user pane mounts")
+
+        assert input_queue.get_nowait() == "read a/b.txt"
+        assert len(app.query(SystemPane)) == 0
+
+
+def _menu(app: PicoApp) -> CommandMenu:
+    return app.query_one(CommandMenu)
+
+
+def _labels(app: PicoApp) -> list[str]:
+    return [row.label for row in _menu(app).rows]
+
+
+async def test_typing_slash_shows_both_commands_with_descriptions() -> None:
+    app = PicoApp(Bus(), queue.Queue(), model_switch=FakeSwitch())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#user-input", ChatInput).focus()
+        await pilot.press("/")
+        await settle(pilot, lambda: _menu(app).display, "the menu appears")
+
+        assert _labels(app) == ["model", "quit"]
+        rendered = _menu(app).render().plain
+        assert "switch the model for the next run" in rendered
+        assert "exit pico" in rendered
+        assert _menu(app).selection == "model"
+
+
+async def test_narrowing_to_one_command_preselects_it_and_enter_runs_it() -> None:
+    app = PicoApp(Bus(), queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#user-input", ChatInput).focus()
+        await pilot.press(*"/q")
+        await settle(pilot, lambda: _labels(app) == ["quit"], "the menu narrows to quit")
+
+        assert _menu(app).selection == "quit"
+        await pilot.press("enter")
+        await settle(pilot, lambda: not app.is_running, "the app exits")
+
+
+async def test_accepting_model_enters_the_argument_stage_with_the_live_model_list() -> None:
+    switch = FakeSwitch()
+    app = PicoApp(Bus(), queue.Queue(), model_switch=switch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        text_input = app.query_one("#user-input", ChatInput)
+        text_input.focus()
+        await pilot.press(*"/mo", "enter")
+        await settle(pilot, lambda: text_input.text == "/model ", "the argument stage opens")
+
+        assert _labels(app) == ["qwen3:8b", "gemma3:27b"]
+        assert switch.switched == []
+
+
+async def test_argument_stage_narrows_and_marks_the_current_model() -> None:
+    switch = FakeSwitch()
+    app = PicoApp(Bus(), queue.Queue(), model_switch=switch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        text_input = app.query_one("#user-input", ChatInput)
+        text_input.focus()
+        await pilot.press(*"/model ")
+        await settle(pilot, lambda: _labels(app) == ["qwen3:8b", "gemma3:27b"], "models listed")
+
+        assert f"qwen3:8b {CURRENT_GLYPH}" in _menu(app).render().plain
+
+        await pilot.press(*"gem")
+        await settle(pilot, lambda: _labels(app) == ["gemma3:27b"], "the list narrows")
+        assert _menu(app).selection == "gemma3:27b"
+
+        await pilot.press("enter")
+        await settle(pilot, lambda: switch.switched == ["gemma3:27b"], "the switch happens")
+        assert text_input.text == ""
+        assert not _menu(app).display
+
+
+async def test_up_and_down_move_the_selection_without_moving_the_cursor() -> None:
+    app = PicoApp(Bus(), queue.Queue(), model_switch=FakeSwitch())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        text_input = app.query_one("#user-input", ChatInput)
+        text_input.focus()
+        await pilot.press("/")
+        await settle(pilot, lambda: _menu(app).display, "the menu appears")
+        cursor = text_input.cursor_location
+
+        await pilot.press("down")
+        await settle(pilot, lambda: _menu(app).selection == "quit", "the selection moves down")
+        assert text_input.cursor_location == cursor
+
+        await pilot.press("up")
+        await settle(pilot, lambda: _menu(app).selection == "model", "the selection wraps back")
+        assert text_input.cursor_location == cursor
+
+
+async def test_arrow_keys_move_the_cursor_when_the_menu_is_closed() -> None:
+    app = PicoApp(Bus(), queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        text_input = app.query_one("#user-input", ChatInput)
+        text_input.focus()
+        await pilot.press(*"ab", "ctrl+j", *"cd")
+        await pilot.pause()
+        assert text_input.cursor_location == (1, 2)
+
+        await pilot.press("up")
+        await pilot.pause()
+
+        assert not _menu(app).display
+        assert text_input.cursor_location == (0, 2)
+
+
+async def test_escape_dismisses_the_menu_and_leaves_the_typed_text() -> None:
+    app = PicoApp(Bus(), queue.Queue(), model_switch=FakeSwitch())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        text_input = app.query_one("#user-input", ChatInput)
+        text_input.focus()
+        await pilot.press(*"/mo")
+        await settle(pilot, lambda: _menu(app).display, "the menu appears")
+
+        await pilot.press("escape")
+        await settle(pilot, lambda: not _menu(app).display, "the menu dismisses")
+        assert text_input.text == "/mo"
+
+
+async def test_deleting_back_past_the_slash_hides_the_menu() -> None:
+    app = PicoApp(Bus(), queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#user-input", ChatInput).focus()
+        await pilot.press("/")
+        await settle(pilot, lambda: _menu(app).display, "the menu appears")
+
+        await pilot.press("backspace")
+        await settle(pilot, lambda: not _menu(app).display, "the menu hides")
+
+
+async def test_a_non_slash_first_character_never_shows_the_menu() -> None:
+    app = PicoApp(Bus(), queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#user-input", ChatInput).focus()
+        await pilot.press(*"read a/b.txt")
+        await pilot.pause()
+
+        assert not _menu(app).display
+
+
+async def test_model_list_failure_renders_an_error_row_and_the_input_keeps_working() -> None:
+    switch = FakeSwitch(names=(), error="connection refused")
+    app = PicoApp(Bus(), queue.Queue(), model_switch=switch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        text_input = app.query_one("#user-input", ChatInput)
+        text_input.focus()
+        await pilot.press(*"/model ")
+        await settle(pilot, lambda: _menu(app).display, "the error row appears")
+
+        assert "connection refused" in _menu(app).render().plain
+
+        await pilot.press(*"qwen3:8b", "enter")
+        await settle(pilot, lambda: switch.switched == ["qwen3:8b"], "the typed name still works")
+        assert text_input.text == ""
+
+
+async def test_every_registered_command_is_dispatched() -> None:
+    switch = FakeSwitch()
+    for command in COMMANDS:
+        app = PicoApp(Bus(), queue.Queue(), model_switch=switch)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app.run_command(f"/{command.name}")
+            await pilot.pause()
+
+            unknown = [
+                pane for pane in app.query(SystemPane) if "unknown command" in pane.render().plain
+            ]
+            assert unknown == [], f"/{command.name} is registered but not dispatched"

@@ -25,9 +25,10 @@ from pico.session import (
     UserMessageRecorded,
     connect,
 )
+from tests.llm_fakes import NoModels
 
 
-class ScriptedClient:
+class ScriptedClient(NoModels):
     def __init__(self, turns: list[list[StreamEvent]]) -> None:
         self._turns = turns
         self.seen_messages: list[list[Message]] = []
@@ -39,13 +40,13 @@ class ScriptedClient:
         yield from self._turns.pop(0)
 
 
-class FailingClient:
+class FailingClient(NoModels):
     def stream(self, messages: list[Message], tools: list[ToolSpec]) -> Iterator[StreamEvent]:
         raise LLMError("connection lost")
         yield
 
 
-class CancellingClient:
+class CancellingClient(NoModels):
     def __init__(
         self, events: list[StreamEvent], cancel: threading.Event, cancel_after: int
     ) -> None:
@@ -90,7 +91,7 @@ def make_session(session_id: str = "s1") -> Session:
     return Session(conn, session_id)
 
 
-class RecordingClient:
+class RecordingClient(NoModels):
     def __init__(self, turns: list[list[StreamEvent]]) -> None:
         self._turns = turns
         self.seen_messages: list[list[Message]] = []

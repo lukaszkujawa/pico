@@ -15,7 +15,7 @@ Slash commands are a TUI concern. A message starting with `/` is intercepted in 
 * **Feedback goes to the conversation, not a toast.** A successful switch mounts a small system-style line in the conversation ("model → qwen3.6:35b"); `/quit` needs none. Unknown commands (`/foo` + enter) show the same style line naming the known commands and leave the input intact.
 * **The session is untouched by commands.** No command appends session events; `/model` changes which client future runs use, nothing about the transcript. Restarting the app returns to the `.env` model — persisting the choice is deliberately out of scope.
 
-## [ ] T001 Command registry and interception
+## [X] T001 Command registry and interception
 
 ### Description
 
@@ -30,7 +30,7 @@ Add the `SlashCommand` registry to the TUI and intercept slash input: when submi
 * Plain messages, including ones containing `/` beyond position zero, reach the core exactly as before.
 * `make check` passes.
 
-## [ ] T002 Autocomplete menu
+## [X] T002 Autocomplete menu
 
 ### Description
 
@@ -45,7 +45,7 @@ Add the `CommandMenu` widget below the input bar with the narrowing-and-preselec
 * A model-list fetch failure renders an error row in the menu and the input keeps working.
 * `make check` passes.
 
-## [ ] T003 Final soundness sweep
+## [X] T003 Final soundness sweep
 
 ### Description
 

@@ -49,6 +49,7 @@ from tests.core.loop_fixtures import (
     make_session,
     text_turn,
 )
+from tests.llm_fakes import NoModels
 
 
 def test_delegate_call_that_answers_records_fact_on_parent() -> None:
@@ -266,7 +267,7 @@ def test_cancelling_parent_mid_delegate_cancels_the_child_run() -> None:
         GenerationComplete(finish_reason="stop"),
     ]
 
-    class CancelDuringChild:
+    class CancelDuringChild(NoModels):
         def __init__(self) -> None:
             self.calls = 0
 

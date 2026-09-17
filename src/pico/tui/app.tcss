@@ -37,3 +37,7 @@
 Rule {
     margin: 0;
 }
+#command-menu {
+    height: auto;
+    background: $background;
+}

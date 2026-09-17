@@ -43,6 +43,7 @@ from tests.core.loop_fixtures import (
     set_plan_turn,
     text_turn,
 )
+from tests.llm_fakes import NoModels
 
 
 def _step_children(session: Session) -> list[Session]:
@@ -188,7 +189,7 @@ def test_revising_the_plan_changes_which_step_runs_next() -> None:
 def test_failed_step_is_retried_once_then_fails_the_node() -> None:
     session, registry = _step_session()
 
-    class PlanThenFailingChildren:
+    class PlanThenFailingChildren(NoModels):
         def __init__(self) -> None:
             self.turns = [set_plan_turn(["count the files"])]
 

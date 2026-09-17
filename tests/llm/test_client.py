@@ -2,9 +2,10 @@ from collections.abc import Iterator
 
 from pico.llm.client import LLMClient
 from pico.llm.types import GenerationComplete, Message, StreamEvent, ToolSpec
+from tests.llm_fakes import NoModels
 
 
-class FakeClient:
+class FakeClient(NoModels):
     def stream(self, messages: list[Message], tools: list[ToolSpec]) -> Iterator[StreamEvent]:
         yield GenerationComplete(finish_reason="stop")
 
