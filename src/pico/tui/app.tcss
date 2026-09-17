@@ -1,0 +1,33 @@
+#conversation {
+    height: 1fr;
+    scrollbar-size-vertical: 0;
+}
+#footer {
+    dock: bottom;
+    height: auto;
+}
+#input-bar {
+    height: auto;
+}
+#status-line {
+    height: auto;
+    padding: 0 1;
+}
+#status-line Static {
+    width: auto;
+    height: 1;
+}
+#user-input {
+    height: auto;
+    max-height: 10;
+    background: $background;
+    border: none;
+    padding: 0;
+}
+#user-input:focus {
+    background: $background;
+    border: none;
+}
+Rule {
+    margin: 0;
+}

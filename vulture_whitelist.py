@@ -25,5 +25,13 @@ _.display
 _.running
 _._flush_timer
 _.row_factory
-CSS
+_.actual
+_.source
+_.finish_reason
+_.idle
+_.input_bar_bg
+_.input_bar_border
+CSS_PATH
 BINDINGS
+REFERENCE_CONTEXT_SIZE
+LOGO_WIDTH

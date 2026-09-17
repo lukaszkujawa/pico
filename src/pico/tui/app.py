@@ -125,41 +125,7 @@ class InputBar(Horizontal):
 
 
 class PicoApp(App[None]):
-    CSS = """
-    #conversation {
-        height: 1fr;
-        scrollbar-size-vertical: 0;
-    }
-    #footer {
-        dock: bottom;
-        height: auto;
-    }
-    #input-bar {
-        height: auto;
-    }
-    #status-line {
-        height: auto;
-        padding: 0 1;
-    }
-    #status-line Static {
-        width: auto;
-        height: 1;
-    }
-    #user-input {
-        height: auto;
-        max-height: 10;
-        background: $background;
-        border: none;
-        padding: 0;
-    }
-    #user-input:focus {
-        background: $background;
-        border: none;
-    }
-    Rule {
-        margin: 0;
-    }
-    """
+    CSS_PATH = Path(__file__).parent / "app.tcss"
     BINDINGS: ClassVar[list[BindingType]] = [
         ("escape", "cancel_run", "Cancel"),
         ("ctrl+n", "new_session", "New conversation"),
