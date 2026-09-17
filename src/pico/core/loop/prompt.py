@@ -1,7 +1,7 @@
 import json
 from dataclasses import dataclass
 
-from pico.core.actions import MAX_DELEGATE_DEPTH
+from pico.core.actions import MAX_DELEGATE_DEPTH, vocabulary
 from pico.core.context import (
     SYSTEM_PROMPT,
     compile_context,
@@ -11,7 +11,6 @@ from pico.core.context import (
     prompt_budget,
 )
 from pico.core.events import BudgetExceeded
-from pico.core.loop.builtins import vocabulary
 from pico.core.loop.policy import restriction
 from pico.core.loop.runner import LoopRunner
 from pico.core.loop.signals import Nudge, Signal

@@ -1,6 +1,6 @@
 import threading
 
-from pico.core.actions import MAX_DELEGATE_DEPTH, register_actions
+from pico.core.actions import MAX_DELEGATE_DEPTH, register_actions, vocabulary
 from pico.core.bus import Bus
 from pico.core.context import (
     RECENT_UNITS,
@@ -29,7 +29,6 @@ from pico.core.events import (
     ToolCallStarted,
 )
 from pico.core.loop import DEFAULT_LOOP_CONFIG
-from pico.core.loop.builtins import vocabulary
 from pico.core.loop.generate import MAX_ACTIONLESS_GENERATIONS
 from pico.core.loop.prompt import MAX_CHARS_PER_TOKEN, MIN_CHARS_PER_TOKEN, specs_text
 from pico.core.loop.runner import LoopRunner

@@ -15,7 +15,7 @@ The target: one `core/actions/` package where each action is a self-contained co
 * **The public surface is preserved.** `actions/__init__.py` re-exports what outside consumers use today (`register_actions`, `MAX_DELEGATE_DEPTH`, `InvalidActionError`, `ResultShape`, `Answer`, `Delegate`, `Shell`, `require`, …) so `app.py`, `headless.py`, and the loop package keep working during the split; exports are trimmed to real consumers at the end.
 * **No behaviour changes anywhere.** Specs, descriptions, error texts, and execution semantics move verbatim; the existing tests are the proof.
 
-## [ ] T001 Package skeleton and shared toolkit
+## [X] T001 Package skeleton and shared toolkit
 
 ### Description
 
@@ -27,7 +27,7 @@ Convert `core/actions.py` into the `core/actions/` package. Extract `arguments.p
 * `arguments.py` and `shape.py` each read as one small, complete toolkit.
 * `make check` passes.
 
-## [ ] T002 One component per action
+## [X] T002 One component per action
 
 ### Description
 
@@ -40,7 +40,7 @@ Split the remaining interim module into the domain modules: `files.py`, `shell.p
 * Existing tests pass unchanged apart from import paths kept working by `__init__.py`.
 * `make check` passes.
 
-## [ ] T003 Absorb the runner-bound actions
+## [X] T003 Absorb the runner-bound actions
 
 ### Description
 
@@ -53,7 +53,7 @@ Move `core/loop/builtins.py` into the package and delete it: `ActionContext`, `A
 * No module under `core/actions/` imports `pico.core.loop`.
 * `make check` passes.
 
-## [ ] T004 One catalog
+## [X] T004 One catalog
 
 ### Description
 
@@ -66,7 +66,7 @@ Create `catalog.py` as the single roster: `register_actions`, `RUNNER_ACTIONS`, 
 * Test count is unchanged or higher; no test file exceeds ~400 lines.
 * `make check` passes.
 
-## [ ] T005 Final soundness sweep
+## [X] T005 Final soundness sweep
 
 ### Description
 
