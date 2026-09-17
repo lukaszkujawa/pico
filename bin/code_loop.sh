@@ -114,6 +114,15 @@ branch_exists() {
   git -C "$ROOT_DIR" show-ref --verify --quiet "refs/heads/$1"
 }
 
+ensure_task_committed() {
+  local task_file="$1" task_name="$2"
+  if [[ -n "$(git -C "$ROOT_DIR" status --porcelain -- "$task_file")" ]]; then
+    echo -e "${DIM}Committing $task_name to master so the merge can retire it.${RESET}"
+    git -C "$ROOT_DIR" add -- "$task_file" &&
+      git -C "$ROOT_DIR" commit --quiet -m "Add milestone ${task_name%.md}" -- "$task_file"
+  fi
+}
+
 prepare_worktree() {
   local branch_name="$1"
 
@@ -179,6 +188,13 @@ for ((step = 1; step <= MAX_STEPS; step++)); do
 
   log_event "step $step  task=$task_name  branch=$branch_name  log=${step_dir#$LOG_DIR/}"
 
+  if ! ensure_task_committed "$before_task" "$task_name"; then
+    echo
+    echo -e "\033[31mFailed to commit $task_name to master.${RESET}"
+    log_event "step $step  FAILED committing $task_name"
+    exit 1
+  fi
+
   if ! prepare_worktree "$branch_name"; then
     echo
     echo -e "\033[31mFailed to create worktree for $branch_name.${RESET}"
@@ -188,9 +204,11 @@ for ((step = 1; step <= MAX_STEPS; step++)); do
 
   ln -sf "$ROOT_DIR/.env" "$WORKTREE_DIR/.env"
 
-  mkdir -p "$WORKTREE_DIR/tasks/todo"
   if [[ ! -f "$WORKTREE_DIR/tasks/todo/$task_name" ]]; then
-    cp "$before_task" "$WORKTREE_DIR/tasks/todo/$task_name"
+    echo
+    echo -e "\033[31m$task_name is missing from the worktree despite being committed.${RESET}"
+    log_event "step $step  FAILED task missing from worktree"
+    exit 1
   fi
 
   started_at=$SECONDS
@@ -225,6 +243,14 @@ for ((step = 1; step <= MAX_STEPS; step++)); do
     fi
 
     remove_worktree
+
+    if [[ -f "$before_task" ]]; then
+      echo
+      echo -e "\033[31m$task_name still exists in tasks/todo after the merge; it would loop forever.${RESET}"
+      echo "The merge must remove it — check that the agent committed a git mv to done."
+      log_event "step $step  FAILED $task_name survived merge"
+      exit 1
+    fi
 
     after_count=$(todo_count)
     log_event "step $step  DONE $task_name  merged  $after_count task(s) remaining"
