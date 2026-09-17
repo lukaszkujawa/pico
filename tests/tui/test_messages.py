@@ -31,6 +31,7 @@ from pico.tui.messages import (
     ToolCallPaneClose,
     ToolCallPaneCreate,
     ToolCallPaneResultDelta,
+    format_arguments,
     translate,
 )
 
@@ -89,7 +90,25 @@ def test_translate_tool_call_started() -> None:
     assert isinstance(message, ToolCallPaneCreate)
     assert message.pane_id == "1"
     assert message.name == "search"
-    assert message.arguments == '{"q": "pico"}'
+    assert message.arguments == "pico"
+
+
+def test_format_arguments_single_string_shows_bare_value() -> None:
+    assert format_arguments({"command": "ls -la | head"}) == "ls -la | head"
+
+
+def test_format_arguments_multiple_show_one_named_line_each() -> None:
+    formatted = format_arguments({"path": "notes.txt", "content": "hello"})
+    assert formatted == "path: notes.txt\ncontent: hello"
+
+
+def test_format_arguments_non_string_values_render_as_json() -> None:
+    formatted = format_arguments({"question": "who?", "fields": {"team": "string"}})
+    assert formatted == 'question: who?\nfields: {"team": "string"}'
+
+
+def test_format_arguments_empty_renders_empty() -> None:
+    assert format_arguments({}) == ""
 
 
 def test_translate_tool_call_arguments_delta() -> None:

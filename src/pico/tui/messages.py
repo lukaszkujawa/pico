@@ -176,8 +176,14 @@ TuiMessage = (
 )
 
 
+def _format_value(value: object) -> str:
+    return value if isinstance(value, str) else json.dumps(value)
+
+
 def format_arguments(arguments: Mapping[str, object]) -> str:
-    return json.dumps(arguments, separators=(", ", ": "))
+    if len(arguments) == 1:
+        return _format_value(next(iter(arguments.values())))
+    return "\n".join(f"{name}: {_format_value(value)}" for name, value in arguments.items())
 
 
 def translate(event: BusEvent) -> TuiMessage | None:

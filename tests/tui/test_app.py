@@ -84,7 +84,7 @@ async def test_app_renders_tool_call_pane_from_bus_events() -> None:
         assert len(panes) == 1
         pane = panes.first()
         assert pane.name_label == "search"
-        assert '"q": "pico"' in pane.render().plain
+        assert "pico" in pane.render().plain
         assert "found it" in pane.render().plain
         assert pane.finished is True
         assert pane.is_error is False
@@ -114,7 +114,7 @@ async def test_tool_call_pane_created_lazily_when_delta_arrives_before_started()
         assert len(panes) == 1
         pane = panes.first()
         assert pane.name_label == "search"
-        assert '"q": "pico"' in pane.render().plain
+        assert "pico" in pane.render().plain
         assert "found it" in pane.render().plain
         assert pane.finished is True
 
