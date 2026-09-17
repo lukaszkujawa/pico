@@ -1,13 +1,16 @@
+import os
 import queue
+import stat
 import threading
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from textual.message import Message as TextualMessage
 
 import pico.app as app_module
-from pico.app import SessionHandle, UnsupportedVendorError, run_pico
-from pico.config import Config
+from pico.app import SessionHandle, UnsupportedVendorError, read_fifo, run_pico
+from pico.config import Config, ConfigError
 from pico.core.bus import Bus
 from pico.core.context import SYSTEM_PROMPT
 from pico.core.events import RunCancelled, RunFinished, RunStarted
@@ -20,7 +23,9 @@ from pico.session import (
     latest_session_id,
 )
 from pico.tui import PicoApp
-from tests.conftest import wait_until
+from pico.tui.messages import UserInputSubmitted
+from pico.tui.widgets import UserPane
+from tests.conftest import settle, wait_until
 
 
 class SlowClient:
@@ -458,6 +463,134 @@ def test_session_handle_start_new_switches_to_an_empty_session(tmp_path: Path) -
     assert handle.session_id != "original"
     assert handle.session.messages() == []
     assert len(original.messages()) == 1
+
+
+def test_read_fifo_delivers_lines_in_order_across_writers_and_skips_blanks(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "pico.sock"
+    os.mkfifo(path)
+    shutdown = threading.Event()
+    lines: list[str] = []
+    reader = threading.Thread(target=read_fifo, args=(str(path), lines.append, shutdown))
+    reader.start()
+
+    with open(path, "w") as writer:
+        writer.write("first\nsecond\n")
+    wait_until(lambda: lines == ["first", "second"], "both lines are delivered")
+
+    with open(path, "w") as writer:
+        writer.write("   \n\nthird\n")
+    wait_until(lambda: lines == ["first", "second", "third"], "the post-EOF line is delivered")
+
+    shutdown.set()
+    reader.join(timeout=5)
+    assert not reader.is_alive()
+
+
+async def test_fifo_line_behaves_like_typed_input(tmp_path: Path) -> None:
+    path = tmp_path / "pico.sock"
+    os.mkfifo(path)
+    input_queue: queue.Queue[str] = queue.Queue()
+    app = PicoApp(Bus(), input_queue)
+    shutdown = threading.Event()
+
+    def submit(text: str) -> None:
+        app.post_message(UserInputSubmitted(text=text))
+
+    reader = threading.Thread(target=read_fifo, args=(str(path), submit, shutdown), daemon=True)
+    try:
+        async with app.run_test() as pilot:
+            reader.start()
+            with open(path, "w") as writer:
+                writer.write("hello\nworld\n")
+            await settle(pilot, lambda: len(app.query(UserPane)) == 2, "both user panes appear")
+            panes = list(app.query(UserPane))
+            assert [pane.render().plain for pane in panes] == ["hello", "world  queued"]
+            assert [pane.queued for pane in panes] == [False, True]
+            assert input_queue.get(timeout=5) == "hello"
+            assert input_queue.get(timeout=5) == "world"
+    finally:
+        shutdown.set()
+    reader.join(timeout=5)
+    assert not reader.is_alive()
+
+
+def test_run_pico_wires_the_fifo_to_the_app_and_cleans_up(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    release = threading.Event()
+    release.set()
+    _patch_ollama_client(monkeypatch, release)
+
+    sock = str(tmp_path / "pico.sock")
+    submitted: list[str] = []
+
+    def capturing_post_message(self: PicoApp, message: TextualMessage) -> bool:
+        if isinstance(message, UserInputSubmitted):
+            submitted.append(message.text)
+        return True
+
+    threads: list[threading.Thread] = []
+    original_thread_init = threading.Thread.__init__
+
+    def tracking_init(self: threading.Thread, *args: object, **kwargs: object) -> None:
+        original_thread_init(self, *args, **kwargs)  # type: ignore[arg-type]
+        threads.append(self)
+
+    def driving_run(self: PicoApp) -> None:
+        assert stat.S_ISFIFO(os.stat(sock).st_mode)
+        with open(sock, "w") as writer:
+            writer.write("hello from fifo\n")
+        wait_until(lambda: submitted == ["hello from fifo"], "the line reaches the app")
+
+    monkeypatch.setattr(PicoApp, "post_message", capturing_post_message)
+    monkeypatch.setattr(threading.Thread, "__init__", tracking_init)
+    monkeypatch.setattr(PicoApp, "run", driving_run)
+
+    run_pico(_config(tmp_path), sock=sock)
+
+    assert submitted == ["hello from fifo"]
+    assert not Path(sock).exists()
+    for thread in threads:
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+
+def test_run_pico_fails_before_starting_threads_when_sock_path_exists(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    sock = tmp_path / "pico.sock"
+    sock.write_text("not a fifo")
+    started: list[bool] = []
+
+    def tracking_start(self: threading.Thread) -> None:
+        started.append(True)
+
+    monkeypatch.setattr(threading.Thread, "start", tracking_start)
+
+    with pytest.raises(ConfigError, match="cannot create FIFO"):
+        run_pico(_config(tmp_path), sock=str(sock))
+
+    assert started == []
+    assert sock.read_text() == "not a fifo"
+
+
+def test_run_pico_without_sock_creates_no_fifo(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    release = threading.Event()
+    release.set()
+    _patch_ollama_client(monkeypatch, release)
+
+    def noop_run(self: PicoApp) -> None:
+        return None
+
+    monkeypatch.setattr(PicoApp, "run", noop_run)
+
+    run_pico(_config(tmp_path))
+
+    assert not any(stat.S_ISFIFO(entry.stat().st_mode) for entry in tmp_path.iterdir())
 
 
 def test_run_pico_hands_the_configured_context_size_to_the_tui(

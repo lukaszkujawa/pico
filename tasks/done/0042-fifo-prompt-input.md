@@ -11,7 +11,7 @@ Pico can only be driven by typing into the TUI, so scripted testing and real-tim
 * **Lifecycle is explicit.** If `PATH` exists and is not a FIFO created for this run, startup fails with a clear error on stderr and exit code 1, like a `ConfigError`. The FIFO is unlinked on clean shutdown.
 * **Flag plumbing matches `--prompt`.** `--sock` is parsed in `pico/__init__.py` and passed through `run_pico`; it composes with `--prompt`, `--resume`, and `--debug`.
 
-## [ ] T001 Read the FIFO and submit lines as user input
+## [X] T001 Read the FIFO and submit lines as user input
 
 ### Description
 

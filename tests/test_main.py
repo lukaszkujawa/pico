@@ -29,6 +29,7 @@ def test_main_calls_run_pico_with_loaded_config(monkeypatch: pytest.MonkeyPatch)
         debug: bool = False,
         session_id: str | None = None,
         initial_prompt: str | None = None,
+        sock: str | None = None,
     ) -> None:
         received.append((cfg, debug))
 
@@ -50,6 +51,7 @@ def test_main_passes_debug_flag_when_present(monkeypatch: pytest.MonkeyPatch) ->
         debug: bool = False,
         session_id: str | None = None,
         initial_prompt: str | None = None,
+        sock: str | None = None,
     ) -> None:
         received.append((cfg, debug))
 
@@ -71,6 +73,7 @@ def test_main_passes_prompt_to_run_pico(monkeypatch: pytest.MonkeyPatch) -> None
         debug: bool = False,
         session_id: str | None = None,
         initial_prompt: str | None = None,
+        sock: str | None = None,
     ) -> None:
         received.append(initial_prompt)
 
@@ -92,6 +95,7 @@ def test_main_defaults_prompt_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
         debug: bool = False,
         session_id: str | None = None,
         initial_prompt: str | None = None,
+        sock: str | None = None,
     ) -> None:
         received.append(initial_prompt)
 
@@ -102,6 +106,53 @@ def test_main_defaults_prompt_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
     pico.main()
 
     assert received == [None]
+
+
+def test_main_passes_sock_to_run_pico(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = _config()
+    received: list[str | None] = []
+
+    def fake_run_pico(
+        cfg: Config,
+        debug: bool = False,
+        session_id: str | None = None,
+        initial_prompt: str | None = None,
+        sock: str | None = None,
+    ) -> None:
+        received.append(sock)
+
+    monkeypatch.setattr(pico, "load_config", lambda: config)
+    monkeypatch.setattr(pico, "run_pico", fake_run_pico)
+    monkeypatch.setattr(sys, "argv", ["pico", "--sock", "/tmp/pico.sock"])
+
+    pico.main()
+
+    assert received == ["/tmp/pico.sock"]
+
+
+def test_main_reports_config_error_from_run_pico_on_stderr(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = _config()
+
+    def failing_run_pico(
+        cfg: Config,
+        debug: bool = False,
+        session_id: str | None = None,
+        initial_prompt: str | None = None,
+        sock: str | None = None,
+    ) -> None:
+        raise ConfigError("cannot create FIFO at /tmp/pico.sock: File exists")
+
+    monkeypatch.setattr(pico, "load_config", lambda: config)
+    monkeypatch.setattr(pico, "run_pico", failing_run_pico)
+    monkeypatch.setattr(sys, "argv", ["pico", "--sock", "/tmp/pico.sock"])
+
+    with pytest.raises(SystemExit) as excinfo:
+        pico.main()
+
+    assert excinfo.value.code == 1
+    assert "cannot create FIFO" in capsys.readouterr().err
 
 
 def test_main_exits_cleanly_on_config_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -135,6 +186,7 @@ def _record_session_ids(monkeypatch: pytest.MonkeyPatch, config: Config) -> list
         debug: bool = False,
         session_id: str | None = None,
         initial_prompt: str | None = None,
+        sock: str | None = None,
     ) -> None:
         received.append(session_id)
 

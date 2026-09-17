@@ -1,8 +1,11 @@
 import itertools
+import os
 import queue
+import select
 import threading
+from collections.abc import Callable
 
-from pico.config import Config
+from pico.config import Config, ConfigError
 from pico.core.actions import register_actions
 from pico.core.bus import Bus
 from pico.core.loop import DEFAULT_LOOP_CONFIG, LoopRunner
@@ -12,6 +15,7 @@ from pico.llm.client import LLMClient
 from pico.llm.ollama import OllamaClient
 from pico.session import Session, UserMessageRecorded, connect, new_session_id
 from pico.tui import PicoApp
+from pico.tui.messages import UserInputSubmitted
 
 
 class UnsupportedVendorError(Exception):
@@ -94,6 +98,30 @@ def _turn_loop(
         cancel_handle.disarm()
 
 
+def _create_fifo(path: str) -> None:
+    try:
+        os.mkfifo(path)
+    except OSError as error:
+        raise ConfigError(f"cannot create FIFO at {path}: {error}") from error
+
+
+def read_fifo(path: str, submit: Callable[[str], None], shutdown: threading.Event) -> None:
+    fd = os.open(path, os.O_RDWR)
+    buffer = b""
+    try:
+        while not shutdown.is_set():
+            if not select.select([fd], [], [], 0.1)[0]:
+                continue
+            buffer += os.read(fd, 4096)
+            while b"\n" in buffer:
+                line, _, buffer = buffer.partition(b"\n")
+                text = line.decode()
+                if text.strip():
+                    submit(text)
+    finally:
+        os.close(fd)
+
+
 def _consume_bus_to_log(bus: Bus, run_log: RunLog) -> None:
     for event in bus.subscribe():
         run_log.log(repr(event))
@@ -104,8 +132,11 @@ def run_pico(
     debug: bool = False,
     session_id: str | None = None,
     initial_prompt: str | None = None,
+    sock: str | None = None,
 ) -> None:
     llm = build_llm_client(config)
+    if sock is not None:
+        _create_fifo(sock)
     bus = Bus()
     conn = connect(config.session_path)
     session_handle = SessionHandle(Session(conn, session_id or new_session_id()))
@@ -136,15 +167,32 @@ def run_pico(
     )
     core_thread.start()
 
+    app = PicoApp(
+        bus,
+        input_queue,
+        cancel_handle,
+        session_handle,
+        initial_prompt,
+        config.context_size,
+    )
+
+    reader_thread: threading.Thread | None = None
+    if sock is not None:
+
+        def submit(text: str) -> None:
+            app.post_message(UserInputSubmitted(text=text))
+
+        reader_thread = threading.Thread(
+            target=read_fifo, args=(sock, submit, shutdown), daemon=True
+        )
+        reader_thread.start()
+
     try:
-        PicoApp(
-            bus,
-            input_queue,
-            cancel_handle,
-            session_handle,
-            initial_prompt,
-            config.context_size,
-        ).run()
+        app.run()
     finally:
         shutdown.set()
         core_thread.join(timeout=1)
+        if reader_thread is not None:
+            reader_thread.join(timeout=1)
+        if sock is not None:
+            os.unlink(sock)
