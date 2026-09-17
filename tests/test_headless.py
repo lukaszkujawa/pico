@@ -1,6 +1,5 @@
 from collections.abc import Iterator
 
-from pico.core.loop.policy import UNVERIFIED_PREFIX
 from pico.core.stuckness import STUCK_THRESHOLD
 from pico.headless import TurnResult, run_turn
 from pico.llm.errors import LLMError
@@ -82,7 +81,7 @@ def test_turn_that_only_narrates_yields_its_last_narration_marked_unverified() -
     result = run_turn(client, _session(), 128_000, "do it")
 
     assert result == TurnResult(
-        answer=f"{UNVERIFIED_PREFIX}\n\nthinking 5",
+        answer="thinking 5",
         iterations=7,
         tool_calls=1,
         prompt_tokens=0,

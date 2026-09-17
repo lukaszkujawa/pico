@@ -16,7 +16,6 @@ from pico.core.loop.policy import (
     CONTEXT_PRESSURE_CAUSE,
     CROSSROADS_ACTIONS,
     DECISION_GRACE,
-    UNVERIFIED_PREFIX,
     budget_step,
     decision_step,
     stuckness_step,
@@ -589,8 +588,7 @@ def test_two_ignored_crossroads_end_the_run_with_the_last_narration_unverified()
 
     assert runner.error is None
     assert runner.final_answer is not None
-    assert runner.final_answer.startswith(UNVERIFIED_PREFIX)
-    assert runner.final_answer.endswith("musing 5")
+    assert runner.final_answer == "musing 5"
     settled = next(
         event for event in drain_until_run_finished(subscriber) if isinstance(event, AnswerSettled)
     )

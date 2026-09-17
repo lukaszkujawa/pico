@@ -82,6 +82,7 @@ class AnswerSettled:
     accepted: bool
     reason: str | None = None
     verify: str | None = None
+    complete: bool = True
 
 
 @dataclass(frozen=True)

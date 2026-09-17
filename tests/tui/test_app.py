@@ -29,6 +29,7 @@ from pico.tui.commands import COMMANDS, Options
 from pico.tui.messages import UserInputSubmitted
 from pico.tui.widgets import (
     CURRENT_GLYPH,
+    SUCCESS_GLYPH,
     AnswerPane,
     AssistantPane,
     CommandMenu,
@@ -271,6 +272,29 @@ async def test_answer_pane_created_lazily_when_settle_arrives_without_started() 
         )
 
         assert "degraded ending" in app.query_one(AnswerPane).render().plain
+
+
+async def test_incomplete_answer_settles_without_the_success_glyph() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        bus.publish(RunStarted())
+        bus.publish(ToolCallStarted(id="1", name="answer", arguments={}))
+        bus.publish(AnswerSettled(id="1", content="last narration", accepted=True, complete=False))
+        bus.publish(RunFinished())
+
+        await settle(
+            pilot,
+            lambda: len(app.query(AnswerPane)) == 1 and app.query_one(AnswerPane).settled,
+            "the incomplete answer settles",
+        )
+
+        rendered = app.query_one(AnswerPane).render().plain
+        assert "last narration" in rendered
+        assert "unverified" not in rendered
+        assert SUCCESS_GLYPH not in rendered
 
 
 async def test_rejected_answer_leaves_pane_mounted_showing_reason() -> None:

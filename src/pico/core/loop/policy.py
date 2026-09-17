@@ -27,10 +27,6 @@ CONTEXT_PRESSURE_CAUSE = (
 
 CROSSROADS_ACTIONS = ("set_plan", "answer", "note")
 LAST_WORDS_ACTIONS = ("answer",)
-UNVERIFIED_PREFIX = (
-    "[unverified — the run ended without a final answer; this is its last narration, "
-    "with no citations and no verification]"
-)
 
 
 def stuckness_step(runner: LoopRunner) -> StepOutcome:
@@ -163,12 +159,17 @@ def _degraded_ending(runner: LoopRunner) -> StepOutcome:
             f"{MAX_CROSSROADS} decision points passed with neither a plan nor an answer"
         )
         return "continue"
-    runner.final_answer = f"{UNVERIFIED_PREFIX}\n\n{narration}"
+    runner.final_answer = narration
     pane_id = runner.new_id()
     runner.bus.publish(ToolCallStarted(id=pane_id, name="answer", arguments={}))
     runner.bus.publish(
         AnswerSettled(
-            id=pane_id, content=runner.final_answer, accepted=True, reason=None, verify=None
+            id=pane_id,
+            content=runner.final_answer,
+            accepted=True,
+            reason=None,
+            verify=None,
+            complete=False,
         )
     )
     return "done"

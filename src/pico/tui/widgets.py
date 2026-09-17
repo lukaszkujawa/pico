@@ -17,6 +17,7 @@ ERROR_GLYPH = "✗"
 SEPARATOR_GLYPH = "·"
 PENDING_GLYPH = "●"
 RETRY_GLYPH = "↺"
+INCOMPLETE_GLYPH = "…"
 WAITING_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 
@@ -42,6 +43,7 @@ class AnswerPane(Static):
     accepted: reactive[bool] = reactive(False, repaint=True)
     reason: reactive[str | None] = reactive(None, repaint=True)
     verify: reactive[str | None] = reactive(None, repaint=True)
+    complete: reactive[bool] = reactive(True, repaint=True)
 
     def __init__(self, pane_id: str, content: str = "", theme: Theme = PICO_THEME) -> None:
         super().__init__(id=f"answer-{pane_id}")
@@ -52,11 +54,19 @@ class AnswerPane(Static):
     def append_delta(self, text: str) -> None:
         self.content_text += text
 
-    def settle(self, content: str, accepted: bool, reason: str | None, verify: str | None) -> None:
+    def settle(
+        self,
+        content: str,
+        accepted: bool,
+        reason: str | None,
+        verify: str | None,
+        complete: bool = True,
+    ) -> None:
         self.content_text = content
         self.accepted = accepted
         self.reason = reason
         self.verify = verify
+        self.complete = complete
         self.settled = True
 
     def render(self) -> Text:
@@ -65,7 +75,9 @@ class AnswerPane(Static):
             marker = Text(f"{PENDING_GLYPH} ", style=f"bold {self._theme.accent}")
             return marker + Text(self.content_text, style=body_style)
         if self.accepted:
-            marker = Text(f"{SUCCESS_GLYPH} ", style=f"bold {self._theme.success}")
+            glyph = SUCCESS_GLYPH if self.complete else INCOMPLETE_GLYPH
+            tone = self._theme.success if self.complete else self._theme.muted_text
+            marker = Text(f"{glyph} ", style=f"bold {tone}")
             result = marker + Text(self.content_text, style=body_style)
             if self.verify is not None:
                 result.append(

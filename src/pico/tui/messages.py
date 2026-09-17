@@ -126,12 +126,14 @@ class AnswerPaneSettle(Message):
         accepted: bool,
         reason: str | None,
         verify: str | None,
+        complete: bool = True,
     ) -> None:
         self.pane_id = pane_id
         self.content = content
         self.accepted = accepted
         self.reason = reason
         self.verify = verify
+        self.complete = complete
         super().__init__()
 
 
@@ -230,10 +232,20 @@ def translate(event: BusEvent) -> TuiMessage | None:
         case ToolCallResultDelta(id=pane_id, text=text):
             return ToolCallPaneResultDelta(pane_id=pane_id, text=text)
         case AnswerSettled(
-            id=pane_id, content=content, accepted=accepted, reason=reason, verify=verify
+            id=pane_id,
+            content=content,
+            accepted=accepted,
+            reason=reason,
+            verify=verify,
+            complete=complete,
         ):
             return AnswerPaneSettle(
-                pane_id=pane_id, content=content, accepted=accepted, reason=reason, verify=verify
+                pane_id=pane_id,
+                content=content,
+                accepted=accepted,
+                reason=reason,
+                verify=verify,
+                complete=complete,
             )
         case ToolCallFinished(
             id=pane_id, tool_call=tool_call, result=result, is_error=is_error, fact_id=fact_id

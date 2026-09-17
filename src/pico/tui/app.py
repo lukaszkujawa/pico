@@ -341,6 +341,7 @@ class PicoApp(App[None]):
             accepted=message.accepted,
             reason=message.reason,
             verify=message.verify,
+            complete=message.complete,
         )
 
     def on_run_started_message(self, message: RunStartedMessage) -> None:

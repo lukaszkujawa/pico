@@ -16,9 +16,6 @@ from pico.core.events import (
 from pico.core.ledger import facts
 from pico.core.loop import DEFAULT_LOOP_CONFIG
 from pico.core.loop.dispatch import MAX_INVALID_ACTION_ATTEMPTS
-from pico.core.loop.policy import (
-    UNVERIFIED_PREFIX,
-)
 from pico.core.loop.runner import LoopRunner
 from pico.core.loop.subruns import (
     MAX_DELEGATE_STEPS,
@@ -734,8 +731,7 @@ def test_delegate_that_only_narrates_returns_its_last_narration_marked_unverifie
 
     delegated = _parent_delegate_result(session)
     assert delegated.is_error is False
-    assert delegated.result.startswith(UNVERIFIED_PREFIX)
-    assert delegated.result.endswith("thinking 5")
+    assert delegated.result == "thinking 5"
     assert runner.final_answer == "done"
 
 
