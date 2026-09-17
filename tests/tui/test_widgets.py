@@ -547,7 +547,7 @@ def test_splash_local_directory_renders_with_home_shorthand() -> None:
 def test_splash_right_column_centers_against_four_line_art_with_session() -> None:
     lines = Splash("abc123", "~/projects/pico").render().split("\n")
     assert len(lines) == widgets.LOGO_HEIGHT
-    right_texts = [line.plain[widgets.LOGO_WIDTH + len(widgets.COLUMN_GAP) :] for line in lines]
+    right_texts = [line.plain[len(widgets.LOGO_TOP) + len(widgets.COLUMN_GAP) :] for line in lines]
     assert right_texts == [
         "PICO",
         widgets.TAGLINE,
@@ -559,7 +559,7 @@ def test_splash_right_column_centers_against_four_line_art_with_session() -> Non
 def test_splash_right_column_centers_against_four_line_art_without_session() -> None:
     lines = Splash("", "~/projects/pico").render().split("\n")
     assert len(lines) == widgets.LOGO_HEIGHT
-    right_texts = [line.plain[widgets.LOGO_WIDTH + len(widgets.COLUMN_GAP) :] for line in lines]
+    right_texts = [line.plain[len(widgets.LOGO_TOP) + len(widgets.COLUMN_GAP) :] for line in lines]
     assert right_texts == [
         "PICO",
         widgets.TAGLINE,

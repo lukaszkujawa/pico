@@ -93,7 +93,6 @@ class GenerationCompleted:
 @dataclass(frozen=True)
 class BudgetExceeded:
     estimated: int
-    actual: int
     budget: int
 
 

@@ -19,10 +19,6 @@ class Theme:
     user: str
     tool_call: str
     tool_call_border: str
-    idle: str
-    running: str
-    input_bar_bg: str
-    input_bar_border: str
     input_prompt: str
     thinking_bg: str
     thinking: str
@@ -57,10 +53,6 @@ PICO_THEME = Theme(
     user="#7aa2f7",
     tool_call="#9aa5ce",
     tool_call_border="#3b3f51",
-    idle="#6b7280",
-    running="#7aa2f7",
-    input_bar_bg="#1a1d29",
-    input_bar_border="#3b3f51",
     input_prompt="#7aa2f7",
     thinking_bg="#232838",
     thinking="#9aa5ce",

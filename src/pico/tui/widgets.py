@@ -346,7 +346,6 @@ LOGO_MID = "│        │"
 LOGO_BOTTOM = "╰────────╯"
 LOGO_LABEL = "PICO"
 TAGLINE = "Small model. Real agency."
-LOGO_WIDTH = len(LOGO_TOP)
 LOGO_HEIGHT = 4
 COLUMN_GAP = " " * 2
 

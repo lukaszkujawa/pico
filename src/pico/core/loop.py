@@ -15,10 +15,10 @@ from pico.core.actions import (
 from pico.core.bus import Bus
 from pico.core.context import (
     SYSTEM_PROMPT,
+    compile_context,
     estimate_tokens,
     message_text,
     prompt_budget,
-    render_messages,
 )
 from pico.core.errors import ToolError, UnknownToolError
 from pico.core.events import (
@@ -40,7 +40,7 @@ from pico.core.events import (
     ToolCallResultDelta,
     ToolCallStarted,
 )
-from pico.core.ledger import Plan, facts, plan, render_plan
+from pico.core.ledger import facts
 from pico.core.stuckness import assess
 from pico.core.tools import ToolRegistry
 from pico.llm.client import LLMClient
@@ -147,16 +147,6 @@ def stuckness_step(runner: LoopRunner) -> StepOutcome:
     return "continue"
 
 
-def _plan_message(current: Plan) -> Message:
-    return Message(
-        role=Role.USER,
-        content=(
-            f"Your current plan:\n{render_plan(current)}\n"
-            "Keep it current with set_plan and complete_step."
-        ),
-    )
-
-
 def specs_text(specs: list[ToolSpec]) -> str:
     return json.dumps(
         [
@@ -172,7 +162,7 @@ def _reconcile(runner: LoopRunner, estimated: int, sent_chars: int, prompt_token
     runner.chars_per_token = min(MAX_CHARS_PER_TOKEN, max(MIN_CHARS_PER_TOKEN, observed))
     budget = prompt_budget(runner.context_size)
     if prompt_tokens > budget:
-        runner.bus.publish(BudgetExceeded(estimated=estimated, actual=prompt_tokens, budget=budget))
+        runner.bus.publish(BudgetExceeded(estimated=estimated, budget=budget))
 
 
 def stream_step(runner: LoopRunner) -> StepOutcome:
@@ -184,12 +174,8 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
     cancelled = False
     runner.tool_call_pane_ids = {}
 
-    current_plan = plan(runner.session)
     specs = runner.tools.specs()
-    preamble = [
-        Message(role=Role.SYSTEM, content=SYSTEM_PROMPT),
-        *([] if current_plan is None else [_plan_message(current_plan)]),
-    ]
+    preamble = [Message(role=Role.SYSTEM, content=SYSTEM_PROMPT)]
     postamble = (
         []
         if runner.pending_nudge is None
@@ -199,7 +185,7 @@ def stream_step(runner: LoopRunner) -> StepOutcome:
         message_text(message) for message in [*preamble, *postamble]
     )
     overhead_tokens = estimate_tokens(overhead_text, runner.chars_per_token)
-    conversation = render_messages(
+    conversation = compile_context(
         runner.session, runner.context_size, overhead_tokens, runner.chars_per_token
     )
     messages = [*preamble, *conversation, *postamble]

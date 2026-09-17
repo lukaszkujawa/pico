@@ -3,18 +3,20 @@ from itertools import pairwise
 from pico.core.context import (
     COMPLETION_RESERVE_CAP,
     COMPLETION_RESERVE_FRACTION,
-    elide,
-    elision_marker,
+    RECENT_UNITS,
+    compile_context,
     estimate_tokens,
+    fact_index,
     message_text,
     prompt_budget,
-    render_messages,
+    recency_window,
     render_tool_result,
 )
-from pico.core.ledger import facts
+from pico.core.ledger import Fact, facts
 from pico.llm.types import Message, Role, ToolCall, ToolResult
 from pico.session import (
     AssistantMessageRecorded,
+    PlanSet,
     Session,
     ToolCallRecorded,
     UserMessageRecorded,
@@ -75,175 +77,11 @@ def test_prompt_budget_reserves_completion_fraction() -> None:
     assert prompt_budget(1000) == int(1000 * (1 - COMPLETION_RESERVE_FRACTION))
 
 
-def test_render_messages_fits_budget_unchanged() -> None:
-    session = _session()
-    session.append(UserMessageRecorded(content="hello"))
-    session.append(ToolCallRecorded(name="read_file", arguments={}, result="small", is_error=False))
-
-    rendered = render_messages(session, context_size=100_000)
-
-    assert rendered == session.messages()
-
-
-def test_render_messages_evicts_large_tool_result() -> None:
-    session = _session()
-    session.append(UserMessageRecorded(content="hello"))
-    session.append(
-        ToolCallRecorded(name="read_file", arguments={}, result="z" * 10_000, is_error=False)
-    )
-
-    rendered = render_messages(session, context_size=100)
-
-    user_messages = [m for m in rendered if m.role is Role.USER]
-    tool_messages = [m for m in rendered if m.role is Role.TOOL]
-    assert user_messages == [Message(role=Role.USER, content="hello")]
-    assert tool_messages[0].tool_result is not None
-    assert tool_messages[0].tool_result.content != "z" * 10_000
-    assert "fact 2" in tool_messages[0].tool_result.content
-
-
-def test_render_messages_evicts_oldest_first_and_stops_when_fitting() -> None:
-    session = _session()
-    session.append(UserMessageRecorded(content="hello"))
-    session.append(
-        ToolCallRecorded(name="read_file", arguments={}, result="a" * 5_000, is_error=False)
-    )
-    session.append(
-        ToolCallRecorded(name="read_file", arguments={}, result="b" * 100, is_error=False)
-    )
-
-    rendered = render_messages(session, context_size=1_500)
-
-    tool_messages = [m for m in rendered if m.role is Role.TOOL]
-    assert tool_messages[0].tool_result is not None
-    assert tool_messages[1].tool_result is not None
-    assert "fact 2" in tool_messages[0].tool_result.content
-    assert tool_messages[1].tool_result.content == "b" * 100
-
-
-def test_render_messages_best_effort_when_full_eviction_still_over_budget() -> None:
-    session = _session()
-    session.append(UserMessageRecorded(content="hello"))
-    session.append(
-        ToolCallRecorded(name="read_file", arguments={}, result="a" * 5_000, is_error=False)
-    )
-    session.append(
-        ToolCallRecorded(name="read_file", arguments={}, result="b" * 5_000, is_error=False)
-    )
-
-    rendered = render_messages(session, context_size=1)
-
-    tool_messages = [m for m in rendered if m.role is Role.TOOL]
-    for message in tool_messages:
-        assert message.tool_result is not None
-        assert "fact" in message.tool_result.content
-
-
-def test_render_messages_never_evicts_error_tool_result() -> None:
-    session = _session()
-    session.append(UserMessageRecorded(content="hello"))
-    session.append(ToolCallRecorded(name="shell", arguments={}, result="e" * 10_000, is_error=True))
-
-    rendered = render_messages(session, context_size=100)
-
-    tool_messages = [m for m in rendered if m.role is Role.TOOL]
-    assert tool_messages[0].tool_result is not None
-    assert tool_messages[0].tool_result.content == "e" * 10_000
-
-
-def test_render_messages_handles_name_the_fact_id_reported_by_ledger() -> None:
-    session = _session()
-    session.append(UserMessageRecorded(content="hello"))
-    session.append(ToolCallRecorded(name="shell", arguments={}, result="e" * 400, is_error=True))
-    session.append(
-        ToolCallRecorded(name="read_file", arguments={}, result="a" * 5_000, is_error=False)
-    )
-    session.append(AssistantMessageRecorded(content="thinking", thinking=""))
-    session.append(ToolCallRecorded(name="shell", arguments={}, result="f" * 400, is_error=True))
-    session.append(
-        ToolCallRecorded(name="read_file", arguments={}, result="b" * 5_000, is_error=False)
-    )
-
-    rendered = render_messages(session, context_size=1)
-
-    truncated = [
-        m.tool_result.content
-        for m in rendered
-        if m.role is Role.TOOL and m.tool_result is not None and not m.tool_result.is_error
-    ]
-    assert [fact.id for fact in facts(session)] == [3, 6]
-    assert "fact 3" in truncated[0]
-    assert "fact 6" in truncated[1]
-
-
-def test_render_messages_leaves_error_results_intact_among_truncated_facts() -> None:
-    session = _session()
-    session.append(UserMessageRecorded(content="hello"))
-    session.append(ToolCallRecorded(name="shell", arguments={}, result="e" * 4_000, is_error=True))
-    session.append(
-        ToolCallRecorded(name="read_file", arguments={}, result="a" * 5_000, is_error=False)
-    )
-
-    rendered = render_messages(session, context_size=1)
-
-    errors = [
-        m.tool_result.content
-        for m in rendered
-        if m.role is Role.TOOL and m.tool_result is not None and m.tool_result.is_error
-    ]
-    assert errors == ["e" * 4_000]
-
-
 def test_tool_call_arguments_no_longer_cost_zero() -> None:
     call = ToolCall(id="1", name="write_file", arguments={"content": "z" * 10_000})
     message = Message(role=Role.ASSISTANT, tool_calls=(call,))
 
     assert estimate_tokens(message_text(message)) > 2_000
-
-
-def test_render_messages_truncates_when_tool_call_argument_blows_budget() -> None:
-    session = _session()
-    session.append(UserMessageRecorded(content="hello"))
-    session.append(
-        ToolCallRecorded(
-            name="write_file", arguments={"content": "z" * 40_000}, result="ok", is_error=False
-        )
-    )
-
-    rendered = render_messages(session, context_size=2_000)
-
-    tool_messages = [m for m in rendered if m.role is Role.TOOL]
-    assert tool_messages[0].tool_result is not None
-    assert "fact 2" in tool_messages[0].tool_result.content
-
-
-def test_render_messages_overhead_shrinks_budget_by_exactly_its_value() -> None:
-    session = _session()
-    session.append(UserMessageRecorded(content="hello"))
-    session.append(
-        ToolCallRecorded(name="read_file", arguments={}, result="a" * 4_000, is_error=False)
-    )
-    messages = session.messages()
-    total = sum(estimate_tokens(message_text(message)) for message in messages)
-    context_size = 8_000
-    slack = prompt_budget(context_size) - total
-
-    assert render_messages(session, context_size, overhead_tokens=slack) == messages
-
-    tight = render_messages(session, context_size, overhead_tokens=slack + 1)
-    tool_messages = [m for m in tight if m.role is Role.TOOL]
-    assert tool_messages[0].tool_result is not None
-    assert "fact 2" in tool_messages[0].tool_result.content
-
-
-def test_render_messages_zero_overhead_reproduces_prior_behaviour() -> None:
-    session = _session()
-    session.append(UserMessageRecorded(content="hello"))
-    session.append(
-        ToolCallRecorded(name="read_file", arguments={}, result="a" * 5_000, is_error=False)
-    )
-
-    assert render_messages(session, 1_500, overhead_tokens=0) == render_messages(session, 1_500)
 
 
 def test_prompt_budget_small_context_uses_fraction() -> None:
@@ -306,145 +144,209 @@ def _tokens(messages: list[Message]) -> int:
     return sum(estimate_tokens(message_text(message)) for message in messages)
 
 
-def _turn(index: int, size: int) -> list[Message]:
-    call = ToolCall(id=str(index), name="read_file", arguments={"path": f"f{index}"})
+def _fact(fact_id: int, content: str, source: str = "shell") -> Fact:
+    return Fact(id=fact_id, content=content, source=source)
+
+
+def test_fact_index_lists_every_fact_with_id_and_source() -> None:
+    index = fact_index([_fact(1, "alpha", "shell"), _fact(4, "beta", "read_file")])
+    lines = index.splitlines()
+
+    assert lines[0] == "[1] shell: alpha"
+    assert lines[1] == "[4] read_file: beta"
+
+
+def test_fact_index_collapses_multiline_content_to_a_bounded_preview() -> None:
+    content = "first line\nsecond line\n" + "x" * 500
+    index = fact_index([_fact(2, content)])
+    line = index.splitlines()[0]
+
+    assert "\n" not in line
+    assert "first line second line" in line
+    assert len(line) < 100
+
+
+def test_fact_index_caps_at_the_most_recent_facts_with_overflow_line() -> None:
+    all_facts = [_fact(fact_id, f"content {fact_id}") for fact_id in range(30)]
+    lines = fact_index(all_facts).splitlines()
+
+    listed_ids = [int(line[1 : line.index("]")]) for line in lines if line.startswith("[")]
+    assert listed_ids == list(range(10, 30))
+    assert "+10 earlier facts" in lines
+
+
+def test_fact_index_of_no_facts_is_empty() -> None:
+    assert fact_index([]) == ""
+
+
+def test_fact_index_includes_the_recovery_hint_whenever_facts_are_listed() -> None:
+    assert "read_fact(" in fact_index([_fact(7, "something")])
+
+
+def _tool_pair(fact_id: int, result: str) -> list[Message]:
     return [
-        Message(role=Role.USER, content=f"question {index}"),
-        Message(role=Role.ASSISTANT, tool_calls=(call,)),
+        Message(
+            role=Role.ASSISTANT,
+            tool_calls=(ToolCall(id=str(fact_id), name="read_file", arguments={}),),
+        ),
         Message(
             role=Role.TOOL,
-            tool_result=ToolResult(tool_call_id=str(index), content=f"{index}" * size),
+            tool_result=ToolResult(tool_call_id=str(fact_id), content=result, is_error=False),
         ),
-        Message(role=Role.ASSISTANT, content=f"answer {index}"),
     ]
 
 
-def _conversation(turns: int, size: int = 400) -> list[Message]:
-    return [message for index in range(turns) for message in _turn(index, size)]
+def test_recency_window_returns_a_short_conversation_unchanged() -> None:
+    messages = [
+        Message(role=Role.USER, content="question"),
+        *_tool_pair(1, "evidence"),
+        Message(role=Role.ASSISTANT, content="answer"),
+    ]
+
+    assert recency_window(messages, budget=10_000) == messages
 
 
-def test_elide_returns_conversation_that_already_fits_unchanged() -> None:
-    messages = _conversation(3)
+def test_recency_window_cuts_to_recent_units_even_with_a_generous_budget() -> None:
+    messages: list[Message] = []
+    for index in range(20):
+        messages.append(Message(role=Role.USER, content=f"question {index}"))
+        messages.append(Message(role=Role.ASSISTANT, content=f"answer {index}"))
 
-    assert elide(messages, budget=_tokens(messages)) == messages
+    window = recency_window(messages, budget=1_000_000)
 
-
-def test_elide_drops_oldest_messages_until_it_fits() -> None:
-    messages = _conversation(6)
-    budget = _tokens(messages) // 2
-
-    rendered = elide(messages, budget)
-
-    assert _tokens(rendered) <= budget
-    assert rendered[0].role is Role.USER
-    assert "elided" in rendered[0].content
-    assert rendered[1:] == messages[len(messages) - len(rendered) + 1 :]
+    assert window == messages[-RECENT_UNITS:]
 
 
-def test_elide_keeps_tool_call_and_its_result_together() -> None:
-    messages = _conversation(4)
+def test_recency_window_keeps_a_pair_straddling_the_cut_atomic() -> None:
+    messages: list[Message] = []
+    for fact_id in range(10):
+        messages.extend(_tool_pair(fact_id, f"result {fact_id}"))
+    messages.append(Message(role=Role.USER, content="latest question"))
 
-    for budget in range(1, _tokens(messages)):
-        rendered = elide(messages, budget)
-        calls = [m for m in rendered if m.role is Role.ASSISTANT and m.tool_calls]
-        results = [m for m in rendered if m.role is Role.TOOL]
-        assert len(calls) == len(results)
-        assert [call.tool_calls[0].id for call in calls] == [
-            result.tool_result.tool_call_id for result in results if result.tool_result
-        ]
+    window = recency_window(messages, budget=1_000_000)
+
+    assert window[0].role is Role.ASSISTANT
+    assert window[0].tool_calls
+    for previous, current in pairwise(window):
+        if current.role is Role.TOOL:
+            assert previous.tool_calls or previous.role is Role.TOOL
 
 
-def test_elide_protects_the_latest_user_message_and_everything_after_it() -> None:
-    messages = _conversation(3, size=4_000)
+def test_recency_window_demotes_tool_results_before_dropping_units() -> None:
+    messages = [Message(role=Role.USER, content="old question")]
+    for fact_id in range(3):
+        messages.extend(_tool_pair(fact_id, "x" * 2_000))
+    messages.append(Message(role=Role.USER, content="latest question"))
+    budget = _tokens(messages) - 300
 
-    rendered = elide(messages, budget=1)
+    window = recency_window(messages, budget=budget)
 
-    protected = next(
-        index for index in reversed(range(len(messages))) if messages[index].role is Role.USER
+    assert len(window) == len(messages)
+    first_result = window[2]
+    assert first_result.tool_result is not None
+    assert "fact 0 truncated" in first_result.tool_result.content
+
+
+def test_recency_window_keeps_the_protected_tail_beyond_cap_and_budget() -> None:
+    messages: list[Message] = []
+    for index in range(3):
+        messages.append(Message(role=Role.USER, content=f"old question {index}"))
+        messages.append(Message(role=Role.ASSISTANT, content=f"old answer {index}"))
+    tail: list[Message] = [Message(role=Role.USER, content="latest question")]
+    for fact_id in range(12):
+        tail.extend(_tool_pair(fact_id, "y" * 1_000))
+    messages.extend(tail)
+
+    window = recency_window(messages, budget=10)
+
+    assert len(window) == len(tail)
+    assert window[0].content == "latest question"
+    assert all(before.role == after.role for before, after in zip(tail, window, strict=True))
+
+
+def test_recency_window_demoted_handle_names_the_correct_fact_id() -> None:
+    messages = [Message(role=Role.USER, content="question"), *_tool_pair(41, "z" * 5_000)]
+
+    window = recency_window(messages, budget=100)
+
+    demoted = window[-1]
+    assert demoted.tool_result is not None
+    assert "read_fact(41)" in demoted.tool_result.content
+
+
+def test_recency_window_never_demotes_error_results() -> None:
+    messages = [
+        Message(role=Role.USER, content="question"),
+        Message(role=Role.ASSISTANT, tool_calls=(ToolCall(id="2", name="shell", arguments={}),)),
+        Message(
+            role=Role.TOOL,
+            tool_result=ToolResult(tool_call_id="2", content="e" * 2_000, is_error=True),
+        ),
+    ]
+
+    window = recency_window(messages, budget=10)
+
+    assert window[-1].tool_result is not None
+    assert window[-1].tool_result.content == "e" * 2_000
+
+
+def test_compile_context_briefs_then_windows_with_plan_and_facts() -> None:
+    session = _session()
+    session.append(PlanSet(steps=("find the port",)))
+    session.append(UserMessageRecorded(content="what port?"))
+    session.append(
+        ToolCallRecorded(name="read_file", arguments={}, result="port = 8421", is_error=False)
     )
-    assert rendered[1:] == messages[protected:]
-    assert _tokens(rendered) > 1
+
+    compiled = compile_context(session, context_size=100_000)
+
+    briefing = compiled[0]
+    assert briefing.role is Role.USER
+    assert "Your current plan:" in briefing.content
+    assert "[ ] 0. find the port" in briefing.content
+    assert "Facts gathered so far:" in briefing.content
+    assert "read_fact(" in briefing.content
+    assert compiled[1:] == session.messages()
 
 
-def test_elide_passes_an_empty_conversation_through() -> None:
-    assert elide([], budget=0) == []
-
-
-def test_elide_passes_a_single_turn_through_untouched() -> None:
-    messages = _turn(0, size=10_000)
-
-    assert elide(messages, budget=1) == messages
-
-
-def test_elide_leaves_a_conversation_without_a_user_message_alone() -> None:
-    messages = [Message(role=Role.ASSISTANT, content="x" * 8_000)]
-
-    assert elide(messages, budget=1) == messages
-
-
-def test_elision_marker_names_the_count_and_the_non_error_fact_ids() -> None:
+def test_compile_context_without_plan_or_facts_is_the_bare_window() -> None:
     session = _session()
     session.append(UserMessageRecorded(content="hello"))
-    session.append(ToolCallRecorded(name="shell", arguments={}, result="boom", is_error=True))
-    session.append(ToolCallRecorded(name="read_file", arguments={}, result="ok", is_error=False))
-    messages = session.messages()
+    session.append(AssistantMessageRecorded(content="hi", thinking=""))
 
-    marker = elision_marker(messages)
-
-    assert marker.role is Role.USER
-    assert f"[{len(messages)} earlier messages elided" in marker.content
-    assert "read_fact(3)" in marker.content
-    assert "read_fact(2)" not in marker.content
+    assert compile_context(session, context_size=100_000) == session.messages()
 
 
-def test_elision_marker_caps_the_id_list_with_an_overflow_suffix() -> None:
+def test_compile_context_fits_the_budget_after_overhead() -> None:
     session = _session()
-    session.append(UserMessageRecorded(content="hello"))
-    for _ in range(20):
+    session.append(PlanSet(steps=("tally",)))
+    session.append(UserMessageRecorded(content="tally the parts"))
+    for index in range(10):
         session.append(
-            ToolCallRecorded(name="read_file", arguments={}, result="ok", is_error=False)
+            ToolCallRecorded(
+                name="read_file", arguments={"path": str(index)}, result="v" * 3_000, is_error=False
+            )
         )
+    overhead = 500
 
-    marker = elision_marker(session.messages())
+    compiled = compile_context(session, 8_192, overhead_tokens=overhead)
 
-    assert marker.content.count("read_fact(") == 12
-    assert "+8 more" in marker.content
-    assert "read_fact(21)" in marker.content
-    assert "read_fact(9)" not in marker.content
+    assert _tokens(compiled) <= prompt_budget(8_192) - overhead
 
 
-def test_elision_marker_omits_the_evidence_clause_when_no_facts_were_elided() -> None:
-    marker = elision_marker([Message(role=Role.USER, content="hi")])
-
-    assert marker.content == "[1 earlier messages elided to fit the context budget]"
-
-
-def test_elide_adds_no_marker_when_nothing_was_elided() -> None:
-    messages = _conversation(2)
-
-    assert all("elided" not in message.content for message in elide(messages, _tokens(messages)))
-
-
-def test_elide_counts_the_marker_against_the_budget() -> None:
-    messages = _conversation(8)
-    budget = _tokens(messages) // 3
-
-    rendered = elide(messages, budget)
-
-    assert "elided" in rendered[0].content
-    assert _tokens(rendered) <= budget
-
-
-def test_render_messages_elides_when_handles_alone_cannot_fit() -> None:
+def test_compile_context_keeps_dropped_facts_addressable_in_the_index() -> None:
     session = _session()
-    for index in range(40):
-        session.append(UserMessageRecorded(content=f"step {index} " * 40))
+    session.append(UserMessageRecorded(content="start"))
+    for index in range(RECENT_UNITS + 4):
         session.append(
-            ToolCallRecorded(name="read_file", arguments={}, result="r" * 400, is_error=False)
+            ToolCallRecorded(name="shell", arguments={}, result=f"result {index}", is_error=False)
         )
+        session.append(UserMessageRecorded(content=f"next {index}"))
 
-    rendered = render_messages(session, context_size=2_000)
+    compiled = compile_context(session, context_size=100_000)
 
-    assert len(rendered) < len(session.messages())
-    assert "elided" in rendered[0].content
-    assert "read_fact(" in rendered[0].content
+    briefing = compiled[0]
+    window = compiled[1:]
+    dropped_fact = facts(session)[0]
+    assert f"[{dropped_fact.id}]" in briefing.content
+    assert all(dropped_fact.content not in message_text(message) for message in window)

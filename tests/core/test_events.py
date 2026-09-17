@@ -135,10 +135,10 @@ def test_run_cancelled() -> None:
     assert RunCancelled() == RunCancelled()
 
 
-def test_budget_exceeded_carries_estimate_actual_and_budget() -> None:
-    event = BudgetExceeded(estimated=900, actual=1500, budget=1200)
+def test_budget_exceeded_carries_estimate_and_budget() -> None:
+    event = BudgetExceeded(estimated=900, budget=1200)
 
-    assert (event.estimated, event.actual, event.budget) == (900, 1500, 1200)
+    assert (event.estimated, event.budget) == (900, 1200)
 
 
 def test_bus_event_exhaustive_match() -> None:
@@ -199,4 +199,4 @@ def test_bus_event_exhaustive_match() -> None:
     assert describe(GenerationCompleted()) == "generation_completed"
     assert describe(ErrorOccurred(message="boom")) == "error_occurred"
     assert describe(RunCancelled()) == "run_cancelled"
-    assert describe(BudgetExceeded(estimated=1, actual=2, budget=1)) == "budget_exceeded"
+    assert describe(BudgetExceeded(estimated=1, budget=1)) == "budget_exceeded"

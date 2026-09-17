@@ -7,11 +7,12 @@ from unittest.mock import patch
 from pico.core.actions import register_actions
 from pico.core.bus import Bus
 from pico.core.context import (
+    RECENT_UNITS,
     SYSTEM_PROMPT,
+    compile_context,
     estimate_tokens,
     message_text,
     prompt_budget,
-    render_messages,
 )
 from pico.core.errors import ToolError
 from pico.core.events import (
@@ -1549,14 +1550,16 @@ def test_plan_message_tracks_completion_and_appears_exactly_once() -> None:
     LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
 
     assert _plan_messages(client.seen_messages[0]) == []
-    assert [message.content for message in _plan_messages(client.seen_messages[1])] == [
+    [after_set] = _plan_messages(client.seen_messages[1])
+    assert after_set.content.startswith(
         "Your current plan:\n[ ] 0. one\n[ ] 1. two\n"
         "Keep it current with set_plan and complete_step."
-    ]
-    assert [message.content for message in _plan_messages(client.seen_messages[2])] == [
+    )
+    [after_complete] = _plan_messages(client.seen_messages[2])
+    assert after_complete.content.startswith(
         "Your current plan:\n[x] 0. one\n[ ] 1. two\n"
         "Keep it current with set_plan and complete_step."
-    ]
+    )
 
 
 def test_plan_message_is_never_persisted_to_the_session() -> None:
@@ -1585,6 +1588,30 @@ def test_plan_message_is_never_persisted_to_the_session() -> None:
         for event in events
     )
     assert not any(isinstance(event, PlanStepCompleted) for event in events)
+
+
+def test_stream_step_sends_briefing_and_window_not_the_full_transcript() -> None:
+    session = _session()
+    session.append(PlanSet(steps=("keep going",)))
+    session.append(UserMessageRecorded(content="start"))
+    session.append(ToolCallRecorded(name="echo", arguments={}, result="noted", is_error=False))
+    for index in range(RECENT_UNITS + 4):
+        session.append(UserMessageRecorded(content=f"step {index}"))
+        session.append(AssistantMessageRecorded(content=f"done {index}", thinking=""))
+    client = ScriptedClient([[TextDelta(text="ok"), GenerationComplete(finish_reason="stop")]])
+    transcript = session.messages()
+
+    LoopRunner(client, _echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
+
+    sent = client.seen_messages[0]
+    assert sent[0].role is Role.SYSTEM
+    briefing = sent[1]
+    assert briefing.content.startswith("Your current plan:")
+    assert "Facts gathered so far:" in briefing.content
+    window = sent[2:]
+    assert len(window) < len(transcript)
+    assert window == transcript[-RECENT_UNITS:]
+    assert sum("Your current plan:" in message.content for message in sent) == 1
 
 
 class RecordingClient:
@@ -1694,13 +1721,16 @@ def test_overhead_shrinks_the_conversation_budget() -> None:
         estimate_tokens(message_text(message), DEFAULT_CHARS_PER_TOKEN)
         for message in session.messages()
     )
-    context_size = _context_size_for_budget(conversation + overhead - 1)
+    briefing = estimate_tokens(
+        message_text(compile_context(session, 128_000)[0]), DEFAULT_CHARS_PER_TOKEN
+    )
+    context_size = _context_size_for_budget(conversation + briefing + overhead - 1)
     client = ScriptedClient([_stop_turn()])
 
     LoopRunner(client, registry, Bus(), session, context_size, DEFAULT_LOOP_CONFIG).execute()
 
     sent = next(m for m in client.seen_messages[0] if m.role is Role.TOOL)
-    unaware = next(m for m in render_messages(session, context_size) if m.role is Role.TOOL)
+    unaware = next(m for m in compile_context(session, context_size) if m.role is Role.TOOL)
     assert sent.tool_result is not None
     assert unaware.tool_result is not None
     assert "fact 2" in sent.tool_result.content
@@ -1811,9 +1841,8 @@ def test_overflowing_prompt_publishes_budget_exceeded() -> None:
     events = [next(subscriber) for _ in range(6)]
     exceeded = [event for event in events if isinstance(event, BudgetExceeded)]
     assert len(exceeded) == 1
-    assert exceeded[0].actual == 9_000
     assert exceeded[0].budget == prompt_budget(8_192)
-    assert exceeded[0].estimated < exceeded[0].actual
+    assert exceeded[0].estimated < 9_000
 
 
 def test_fitting_prompt_publishes_no_budget_exceeded() -> None:

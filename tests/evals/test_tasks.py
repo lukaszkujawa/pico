@@ -1,10 +1,10 @@
 from pathlib import Path
 
 from pico.core.context import (
+    compile_context,
     estimate_tokens,
     message_text,
     prompt_budget,
-    render_messages,
 )
 from pico.evals.tasks import (
     EXPECTED_INVENTORY_VALUE,
@@ -226,7 +226,7 @@ def test_many_small_steps_conversation_outgrows_the_budget_without_any_huge_resu
     assert all(estimate_tokens(part) < budget // 2 for part in parts)
 
 
-def test_many_small_steps_renders_within_budget_after_compaction(tmp_path: Path) -> None:
+def test_many_small_steps_compiles_within_budget(tmp_path: Path) -> None:
     _seeded("many_small_steps", tmp_path)
     session = Session(connect(":memory:"), "evals")
     session.append(UserMessageRecorded(content="tally the parts"))
@@ -240,7 +240,7 @@ def test_many_small_steps_renders_within_budget_after_compaction(tmp_path: Path)
             )
         )
 
-    rendered = render_messages(session, REFERENCE_CONTEXT_SIZE)
-    total = sum(estimate_tokens(message_text(message)) for message in rendered)
+    compiled = compile_context(session, REFERENCE_CONTEXT_SIZE)
+    total = sum(estimate_tokens(message_text(message)) for message in compiled)
 
     assert total <= prompt_budget(REFERENCE_CONTEXT_SIZE)

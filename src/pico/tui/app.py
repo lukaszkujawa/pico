@@ -213,12 +213,15 @@ class PicoApp(App[None]):
         self._pending_token_text += text
 
     def _flush_pending_updates(self) -> None:
+        conversations = self.query(Conversation)
+        if not conversations:
+            return
         if self._pending_token_text:
             self.query_one(StatusLine).counter.estimate(self._pending_token_text)
             self._pending_token_text = ""
-        conversation = self._conversation()
+        conversation = conversations.first(Conversation)
         if conversation.pinned:
-            conversation.scroll_end(animate=False)
+            conversation.scroll_end(animate=False, immediate=True)
 
     async def on_assistant_pane_create(self, message: AssistantPaneCreate) -> None:
         pane = AssistantPane(pane_id=message.pane_id)
