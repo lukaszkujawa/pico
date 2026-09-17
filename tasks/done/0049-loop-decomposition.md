@@ -15,7 +15,7 @@ This milestone breaks the loop into a `core/loop/` package where each module own
 * **The public surface is preserved through `loop/__init__.py`.** `app.py`, `headless.py`, and the existing tests import `DEFAULT_LOOP_CONFIG`, `LoopRunner`, and a long list of constants; re-exports keep every consumer working until T006 moves the tests to the new module paths.
 * **`actions.py` stays put.** Unifying it with `builtins.py` into a single action package is real but separate work; this milestone only gives the runner-bound actions a consistent shape so that a later merge is mechanical.
 
-## [ ] T001 Mechanical package split
+## [X] T001 Mechanical package split
 
 ### Description
 
@@ -28,7 +28,7 @@ Convert `core/loop.py` into the `core/loop/` package with the modules named in t
 * No function body changed beyond import adjustments.
 * `make check` passes.
 
-## [ ] T002 Per-concern state ownership
+## [X] T002 Per-concern state ownership
 
 ### Description
 
@@ -41,7 +41,7 @@ Slim `LoopRunner` down to the engine plus the four channels. Move each remaining
 * Behaviour is unchanged; existing tests pass with at most renamed attribute access.
 * `make check` passes.
 
-## [ ] T003 Signals as the policy interface
+## [X] T003 Signals as the policy interface
 
 ### Description
 
@@ -56,7 +56,7 @@ Introduce `signals.py` defining `Nudge`, `Restrict`, and `Die` as a closed union
 * All existing loop behaviours — wind-down, crossroads, degraded ending, last words — are preserved by the existing tests.
 * `make check` passes.
 
-## [ ] T004 Split the generation step
+## [X] T004 Split the generation step
 
 ### Description
 
@@ -69,7 +69,7 @@ Break `stream_step` along its natural seams into three functions with explicit d
 * Cancellation mid-stream, token accounting, and the budget-exceeded event behave exactly as before under the existing tests.
 * `make check` passes.
 
-## [ ] T005 Consistent builtin action shape
+## [X] T005 Consistent builtin action shape
 
 ### Description
 
@@ -82,7 +82,7 @@ Give the four runner-bound actions one uniform shape in `builtins.py`: each is a
 * No action reaches into runner state beyond the narrow context it is handed.
 * `make check` passes.
 
-## [ ] T006 Tests follow the modules
+## [X] T006 Tests follow the modules
 
 ### Description
 
@@ -95,7 +95,7 @@ Split the 4,100-line `tests/core/test_loop.py` along the new module lines — `t
 * `loop/__init__.py` exports only what `app.py`, `headless.py`, or tests still import.
 * `make check` passes.
 
-## [ ] T007 Final soundness sweep
+## [X] T007 Final soundness sweep
 
 ### Description
 

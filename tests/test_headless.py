@@ -1,6 +1,6 @@
 from collections.abc import Iterator
 
-from pico.core.loop import UNVERIFIED_PREFIX
+from pico.core.loop.policy import UNVERIFIED_PREFIX
 from pico.core.stuckness import STUCK_THRESHOLD
 from pico.headless import TurnResult, run_turn
 from pico.llm.errors import LLMError

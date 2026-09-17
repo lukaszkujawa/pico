@@ -1,0 +1,30 @@
+from dataclasses import dataclass, field
+
+DEFAULT_CHARS_PER_TOKEN = 4.0
+
+
+@dataclass
+class DecisionState:
+    demanded: set[str] = field(default_factory=set[str])
+    demanded_at: int | None = None
+    crossroads: bool = False
+    crossroads_generations: int = 0
+    last_narration: str | None = None
+
+
+@dataclass
+class GenerationState:
+    actionless_generations: int = 0
+    chars_per_token: float = DEFAULT_CHARS_PER_TOKEN
+
+
+@dataclass
+class DispatchState:
+    invalid_action_attempts: int = 0
+
+
+@dataclass
+class StepState:
+    attempts: dict[tuple[tuple[str, ...], int], int] = field(
+        default_factory=dict[tuple[tuple[str, ...], int], int]
+    )
