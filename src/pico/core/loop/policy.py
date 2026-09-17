@@ -1,7 +1,7 @@
 from dataclasses import dataclass, replace
 
 from pico.core.context import RECENT_UNITS, transcript_units
-from pico.core.events import AnswerSettled
+from pico.core.events import AnswerSettled, ToolCallStarted
 from pico.core.ledger import plan
 from pico.core.loop.runner import LoopRunner, StepOutcome
 from pico.core.loop.signals import Nudge, Restrict, Signal
@@ -164,9 +164,11 @@ def _degraded_ending(runner: LoopRunner) -> StepOutcome:
         )
         return "continue"
     runner.final_answer = f"{UNVERIFIED_PREFIX}\n\n{narration}"
+    pane_id = runner.new_id()
+    runner.bus.publish(ToolCallStarted(id=pane_id, name="answer", arguments={}))
     runner.bus.publish(
         AnswerSettled(
-            id=runner.new_id(), content=runner.final_answer, accepted=True, reason=None, verify=None
+            id=pane_id, content=runner.final_answer, accepted=True, reason=None, verify=None
         )
     )
     return "done"

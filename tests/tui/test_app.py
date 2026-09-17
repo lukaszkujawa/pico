@@ -254,6 +254,25 @@ async def test_answer_call_mounts_answer_pane_from_the_moment_it_starts() -> Non
         assert "42" in app.query_one(AnswerPane).render().plain
 
 
+async def test_answer_pane_created_lazily_when_settle_arrives_without_started() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        bus.publish(RunStarted())
+        bus.publish(AnswerSettled(id="24", content="degraded ending", accepted=True, reason=None))
+        bus.publish(RunFinished())
+
+        await settle(
+            pilot,
+            lambda: len(app.query(AnswerPane)) == 1 and app.query_one(AnswerPane).settled,
+            "the lazily created answer pane settles",
+        )
+
+        assert "degraded ending" in app.query_one(AnswerPane).render().plain
+
+
 async def test_rejected_answer_leaves_pane_mounted_showing_reason() -> None:
     bus = Bus()
     app = PicoApp(bus, queue.Queue())

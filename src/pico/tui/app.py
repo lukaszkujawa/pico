@@ -307,10 +307,15 @@ class PicoApp(App[None]):
         pane.append_arguments_delta(message.text)
 
     def on_tool_call_pane_result_delta(self, message: ToolCallPaneResultDelta) -> None:
-        self._tool_call_panes[message.pane_id].append_result_delta(message.text)
+        pane = self._tool_call_panes.get(message.pane_id)
+        if pane is not None:
+            pane.append_result_delta(message.text)
 
     def on_tool_call_pane_close(self, message: ToolCallPaneClose) -> None:
-        self._tool_call_panes[message.pane_id].finish(
+        pane = self._tool_call_panes.get(message.pane_id)
+        if pane is None:
+            return
+        pane.finish(
             result=message.result,
             is_error=message.is_error,
             fact_index=message.fact_id,
@@ -324,9 +329,14 @@ class PicoApp(App[None]):
         self._answer_panes[message.pane_id] = pane
         await self._mount_at_bottom(pane)
 
-    def on_answer_pane_settle(self, message: AnswerPaneSettle) -> None:
+    async def on_answer_pane_settle(self, message: AnswerPaneSettle) -> None:
         self._answer_arguments.pop(message.pane_id, None)
-        self._answer_panes[message.pane_id].settle(
+        pane = self._answer_panes.get(message.pane_id)
+        if pane is None:
+            pane = AnswerPane(pane_id=message.pane_id)
+            self._answer_panes[message.pane_id] = pane
+            await self._mount_at_bottom(pane)
+        pane.settle(
             content=message.content,
             accepted=message.accepted,
             reason=message.reason,
