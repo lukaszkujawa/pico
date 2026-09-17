@@ -2,6 +2,7 @@ from pico.core.stuckness import (
     NUDGE_THRESHOLD,
     PLAN_STALL_GENERATIONS,
     STUCK_THRESHOLD,
+    WINDOW_GENERATIONS,
     Stuckness,
     assess,
     generations_since_plan_event,
@@ -207,26 +208,98 @@ def test_assess_windowed_repeat_nudge_names_existing_fact_id() -> None:
     assert result.stuck is False
 
 
-def test_assess_windowed_repeat_nudge_without_fact_when_calls_all_failed() -> None:
+def test_windowed_repeat_ignores_errored_calls() -> None:
+    session = _session()
+    session.append(_call(name="read_file", arguments={"path": "a"}, is_error=True))
+    session.append(_call(name="read_file", arguments={"path": "a"}))
+    repeat = windowed_repeat(session)
+    assert repeat is not None
+    assert repeat.count == 1
+
+
+def test_assess_errored_call_then_identical_success_draws_no_repeat_nudge() -> None:
     session = _session()
     session.append(_call(name="read_file", arguments={"path": "a"}, is_error=True))
     session.append(_call(name="read_file", arguments={"path": "b"}))
-    session.append(_call(name="read_file", arguments={"path": "a"}, is_error=True))
+    session.append(_call(name="read_file", arguments={"path": "a"}))
     result = assess(session)
-    assert result.nudge is not None
-    assert "read_file(a)" in result.nudge
-    assert "fact" not in result.nudge
+    assert result.nudge is None
+    assert result.stuck is False
 
 
-def test_assess_windowed_repeat_stops_run_at_stuck_threshold_when_interleaved() -> None:
+def test_windowed_repeat_exempts_bookkeeping_tools() -> None:
+    session = _session()
+    for _ in range(STUCK_THRESHOLD):
+        session.append(_call(name="read_fact", arguments={"id": 27}))
+        session.append(_call(name="shell", arguments={"command": "ls"}))
+    repeat = windowed_repeat(session)
+    assert repeat is not None
+    assert repeat.call.name == "shell"
+
+
+def test_assess_repeated_recall_neither_nudges_nor_stops() -> None:
+    session = _session()
+    for i in range(STUCK_THRESHOLD):
+        session.append(_call(name="read_fact", arguments={"id": 27}))
+        session.append(_call(name="shell", arguments={"command": str(i)}))
+    result = assess(session)
+    assert result.nudge is None
+    assert result.stuck is False
+
+
+def test_assess_windowed_repeat_never_stops_the_run() -> None:
     session = _session()
     for i in range(STUCK_THRESHOLD):
         session.append(_call(name="read_file", arguments={"path": "a"}))
         session.append(_call(name="read_file", arguments={"path": str(i)}))
     result = assess(session)
+    assert result.stuck is False
+    assert result.nudge is not None
+    assert "read_file(a)" in result.nudge
+    assert "fact 1" in result.nudge
+
+
+def test_assess_consecutive_repeats_still_stop_the_run() -> None:
+    session = _session()
+    for _ in range(STUCK_THRESHOLD):
+        session.append(_call(name="read_file", arguments={"path": "a"}))
+    result = assess(session)
     assert result.stuck is True
     assert result.reason is not None
-    assert "read_file(a)" in result.reason
+    assert "same action" in result.reason
+
+
+def test_streak_stop_survives_one_generation_per_tool_call() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="go"))
+    for _ in range(STUCK_THRESHOLD):
+        session.append(AssistantMessageRecorded(content="", thinking=""))
+        session.append(_call(name="shell", arguments={"command": "a"}))
+    result = assess(session)
+    assert result.repeated_action_streak == STUCK_THRESHOLD
+    assert result.stuck is True
+
+
+def test_windowed_repeat_window_ends_after_window_generations() -> None:
+    session = _session()
+    session.append(_call(name="read_file", arguments={"path": "a"}))
+    for _ in range(WINDOW_GENERATIONS):
+        session.append(AssistantMessageRecorded(content="", thinking=""))
+    session.append(_call(name="read_file", arguments={"path": "a"}))
+    repeat = windowed_repeat(session)
+    assert repeat is not None
+    assert repeat.count == 1
+
+
+def test_windowed_repeat_counts_pair_within_the_generation_window() -> None:
+    session = _session()
+    session.append(_call(name="read_file", arguments={"path": "a"}))
+    for _ in range(WINDOW_GENERATIONS - 1):
+        session.append(AssistantMessageRecorded(content="", thinking=""))
+    session.append(_call(name="read_file", arguments={"path": "a"}))
+    repeat = windowed_repeat(session)
+    assert repeat is not None
+    assert repeat.count == 2
 
 
 def test_assess_windowed_repeat_never_fires_for_distinct_calls() -> None:

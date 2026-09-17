@@ -195,13 +195,85 @@ def test_fact_index_collapses_multiline_content_to_a_bounded_preview() -> None:
     assert len(line) < 95
 
 
+def test_fact_index_line_stays_within_the_bound_for_a_wide_signature() -> None:
+    command = "cd /tmp/pico2 && uv run pytest tests/core/test_loop.py | tail -20"
+    index = fact_index([_fact(12345, "x" * 500, "shell", {"command": command})])
+    line = index.splitlines()[0]
+
+    assert len(line) <= 90
+    assert "\n" not in line
+    assert "tail -20" in line
+
+
 def test_fact_index_caps_at_the_most_recent_facts_with_overflow_line() -> None:
-    all_facts = [_fact(fact_id, f"content {fact_id}") for fact_id in range(30)]
+    all_facts = [
+        _fact(fact_id, f"content {fact_id}", arguments={"command": str(fact_id)})
+        for fact_id in range(30)
+    ]
     lines = fact_index(all_facts).splitlines()
 
     listed_ids = [int(line[1 : line.index("]")]) for line in lines if line.startswith("[")]
     assert listed_ids == list(range(10, 30))
     assert "+10 earlier facts" in lines
+
+
+def test_fact_index_keeps_only_the_newest_fact_per_producing_call() -> None:
+    args: dict[str, object] = {"path": "loop.py"}
+    lines = fact_index(
+        [
+            _fact(1, "old", "read_file", args),
+            _fact(2, "older", "read_file", args),
+            _fact(3, "newest", "read_file", args),
+        ]
+    ).splitlines()
+
+    assert lines[0] == "[3] read_file(loop.py): newest"
+    assert not any(line.startswith("[1]") or line.startswith("[2]") for line in lines)
+
+
+def test_facts_deduped_from_the_index_remain_recoverable_by_id() -> None:
+    session = _session()
+    for index in range(3):
+        session.append(
+            ToolCallRecorded(
+                name="read_file",
+                arguments={"path": "loop.py"},
+                result=f"body {index}",
+                is_error=False,
+            )
+        )
+    all_facts = facts(session)
+    index = fact_index(all_facts)
+
+    assert [fact.id for fact in all_facts] == [1, 2, 3]
+    assert "[3]" in index
+    assert "[1]" not in index and "[2]" not in index
+
+
+def test_fact_index_never_merges_distinct_calls() -> None:
+    lines = fact_index(
+        [
+            _fact(1, "a", "read_file", {"path": "loop.py"}),
+            _fact(2, "b", "read_file", {"path": "context.py"}),
+            _fact(3, "c", "shell", {"command": "loop.py"}),
+        ]
+    ).splitlines()
+
+    listed_ids = [int(line[1 : line.index("]")]) for line in lines if line.startswith("[")]
+    assert listed_ids == [1, 2, 3]
+
+
+def test_fact_index_overflow_counts_only_facts_hidden_by_the_cut() -> None:
+    duplicates = [_fact(fact_id, "dup", "read_file", {"path": "loop.py"}) for fact_id in range(10)]
+    distinct = [
+        _fact(100 + index, "content", "shell", {"command": str(index)}) for index in range(25)
+    ]
+    lines = fact_index([*duplicates, *distinct]).splitlines()
+
+    listed = [line for line in lines if line.startswith("[")]
+    assert len(listed) == 20
+    assert "+6 earlier facts" in lines
+    assert len(lines) == 22
 
 
 def test_fact_index_of_no_facts_is_empty() -> None:
@@ -515,7 +587,12 @@ def test_compile_context_keeps_dropped_facts_addressable_in_the_index() -> None:
     session.append(UserMessageRecorded(content="start"))
     for index in range(RECENT_UNITS + 4):
         session.append(
-            ToolCallRecorded(name="shell", arguments={}, result=f"result {index}", is_error=False)
+            ToolCallRecorded(
+                name="shell",
+                arguments={"command": str(index)},
+                result=f"result {index}",
+                is_error=False,
+            )
         )
         session.append(UserMessageRecorded(content=f"next {index}"))
 

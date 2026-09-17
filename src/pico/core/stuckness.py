@@ -3,7 +3,7 @@ from collections.abc import Hashable, Mapping
 from dataclasses import dataclass
 from typing import cast
 
-from pico.core.ledger import facts, plan, render_call
+from pico.core.ledger import BOOKKEEPING_TOOLS, facts, plan, render_call
 from pico.session import (
     AssistantMessageRecorded,
     PlanSet,
@@ -16,6 +16,7 @@ from pico.session import (
 NUDGE_THRESHOLD = 2
 STUCK_THRESHOLD = 6
 PLAN_STALL_GENERATIONS = 6
+WINDOW_GENERATIONS = 10
 
 
 @dataclass(frozen=True)
@@ -29,9 +30,14 @@ class Stuckness:
 
 def _trailing_tool_calls(session: Session) -> list[ToolCallRecorded]:
     result: list[ToolCallRecorded] = []
+    generations = 0
     for event in reversed(list(session.events())):
         if isinstance(event, UserMessageRecorded):
             break
+        if isinstance(event, AssistantMessageRecorded):
+            generations += 1
+            if generations >= WINDOW_GENERATIONS:
+                break
         if isinstance(event, ToolCallRecorded):
             result.append(event)
     return result
@@ -57,7 +63,11 @@ class _WindowedRepeat:
 
 
 def windowed_repeat(session: Session) -> _WindowedRepeat | None:
-    calls = _turn_tool_calls(session)
+    calls = [
+        call
+        for call in _turn_tool_calls(session)
+        if not call.is_error and call.name not in BOOKKEEPING_TOOLS
+    ]
     if not calls:
         return None
     counts = Counter((call.name, _freeze(call.arguments)) for call in calls)
@@ -66,11 +76,12 @@ def windowed_repeat(session: Session) -> _WindowedRepeat | None:
     return _WindowedRepeat(call=call, count=count)
 
 
-def _existing_fact_id(session: Session, call: ToolCallRecorded) -> int | None:
-    for fact in facts(session):
-        if fact.source == call.name and fact.arguments == call.arguments:
-            return fact.id
-    return None
+def _existing_fact_id(session: Session, call: ToolCallRecorded) -> int:
+    return next(
+        fact.id
+        for fact in facts(session)
+        if fact.source == call.name and fact.arguments == call.arguments
+    )
 
 
 def generations_since_plan_event(session: Session) -> int:
@@ -127,11 +138,6 @@ def tool_failure_streak(session: Session) -> int:
 def _windowed_nudge(session: Session, repeat: _WindowedRepeat) -> str:
     signature = render_call(repeat.call.name, repeat.call.arguments)
     fact_id = _existing_fact_id(session, repeat.call)
-    if fact_id is None:
-        return (
-            f"you already ran {signature} {repeat.count} times this turn "
-            "— do something new instead of repeating it"
-        )
     return (
         f"you already ran {signature} — its result is fact {fact_id}; "
         f"use read_fact({fact_id}) or do something new"
@@ -142,16 +148,12 @@ def assess(session: Session) -> Stuckness:
     repeated = repeated_action_streak(session)
     failures = tool_failure_streak(session)
     repeat = windowed_repeat(session)
-    windowed_count = 0 if repeat is None else repeat.count
 
     reason: str | None = None
     if repeated >= STUCK_THRESHOLD:
         reason = f"repeated the same action {repeated} times"
     elif failures >= STUCK_THRESHOLD:
         reason = f"{failures} tool calls failed in a row"
-    elif repeat is not None and windowed_count >= STUCK_THRESHOLD:
-        signature = render_call(repeat.call.name, repeat.call.arguments)
-        reason = f"repeated {signature} {windowed_count} times this turn"
 
     nudge: str | None = None
     if repeated >= NUDGE_THRESHOLD:
@@ -164,7 +166,7 @@ def assess(session: Session) -> Stuckness:
             f"the last {failures} tool calls failed "
             "— reconsider your approach instead of retrying the same way"
         )
-    elif repeat is not None and windowed_count >= NUDGE_THRESHOLD:
+    elif repeat is not None and repeat.count >= NUDGE_THRESHOLD:
         nudge = _windowed_nudge(session, repeat)
     else:
         nudge = plan_stall_nudge(session)

@@ -13,7 +13,7 @@ The principle this milestone restores: supervision punishes only pathology, and 
 * **The fact index dedupes by producing call.** `fact_index` shows only the newest fact for each `(source, arguments)` pair, so re-reading a file replaces its index line instead of stacking ten copies and burying everything else. Fact ids, the ledger, `facts()`, citations, and `read_fact` are untouched — only the index view dedupes.
 * **Call signatures keep their distinguishing middle.** `_SIGNATURE_CHARS` rises from 40 to 60 so typical shell commands survive whole; elision still cuts the middle of what remains over-long. Index lines keep their existing one-line bound; the preview yields the extra room.
 
-## [ ] T001 Bound the window, exempt recall, drop the windowed stop
+## [X] T001 Bound the window, exempt recall, drop the windowed stop
 
 ### Description
 
@@ -28,7 +28,7 @@ In `core/stuckness.py`: stop `_trailing_tool_calls` after `WINDOW_GENERATIONS` a
 * Streak-based stops, failure streaks, plan-stall, and the no-action nudge behave exactly as before.
 * `make check` passes.
 
-## [ ] T002 Dedupe the fact index by producing call
+## [X] T002 Dedupe the fact index by producing call
 
 ### Description
 
@@ -41,7 +41,7 @@ In `core/context.py`, make `fact_index` keep only the newest fact per `(source, 
 * The overflow count reflects facts hidden by the cut, and the index never exceeds `_INDEX_FACTS` lines plus the overflow and recovery lines.
 * `make check` passes.
 
-## [ ] T003 Widen call signatures
+## [X] T003 Widen call signatures
 
 ### Description
 

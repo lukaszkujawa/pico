@@ -34,11 +34,19 @@ def _index_line(fact: Fact) -> str:
     return f"{prefix}{preview}"
 
 
+def _newest_per_call(all_facts: list[Fact]) -> list[Fact]:
+    newest: dict[str, Fact] = {}
+    for fact in all_facts:
+        newest[f"{fact.source}{json.dumps(fact.arguments, sort_keys=True)}"] = fact
+    return list(newest.values())
+
+
 def fact_index(all_facts: list[Fact]) -> str:
     if not all_facts:
         return ""
-    shown = all_facts[-_INDEX_FACTS:]
-    overflow = len(all_facts) - len(shown)
+    distinct = _newest_per_call(all_facts)
+    shown = distinct[-_INDEX_FACTS:]
+    overflow = len(distinct) - len(shown)
     lines = [_index_line(fact) for fact in shown]
     if overflow:
         lines.append(f"+{overflow} earlier facts")

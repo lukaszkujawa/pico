@@ -10,7 +10,7 @@ from pico.session import (
 
 BOOKKEEPING_TOOLS = frozenset({"read_fact", "search_facts", "set_plan", "complete_step"})
 
-_SIGNATURE_CHARS = 40
+_SIGNATURE_CHARS = 60
 _ELLIPSIS = "…"
 
 

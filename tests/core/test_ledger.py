@@ -102,11 +102,32 @@ def test_render_call_with_no_arguments_shows_empty_parens() -> None:
 
 
 def test_render_call_elides_the_middle_of_a_long_call_keeping_head_and_tail() -> None:
-    rendered = render_call("read_file", {"path": "src/pico/core/very/deeply/nested/loop.py"})
+    rendered = render_call(
+        "read_file", {"path": "src/pico/core/very/deeply/nested/and/even/longer/loop.py"}
+    )
 
-    assert len(rendered) <= 40
+    assert len(rendered) <= 60
     assert rendered.startswith("read_file(")
     assert rendered.endswith("loop.py)")
+    assert "…" in rendered
+
+
+def test_render_call_keeps_the_distinguishing_tool_name_of_a_shell_command() -> None:
+    vulture = render_call("shell", {"command": "cd /tmp/pico2 && uv run vulture 2>&1 | tail -10"})
+    pyright = render_call("shell", {"command": "cd /tmp/pico2 && uv run pyright 2>&1 | tail -10"})
+
+    assert "vulture" in vulture
+    assert "pyright" in pyright
+    assert vulture != pyright
+
+
+def test_render_call_keeps_the_pipe_tail_of_an_over_long_command() -> None:
+    rendered = render_call(
+        "shell", {"command": "cd /tmp/pico2 && uv run pytest tests/core/test_loop.py | tail -20"}
+    )
+
+    assert len(rendered) <= 60
+    assert rendered.endswith("tail -20)")
     assert "…" in rendered
 
 
