@@ -94,7 +94,12 @@ def _consume_bus_to_log(bus: Bus, run_log: RunLog) -> None:
         run_log.log(repr(event))
 
 
-def run_pico(config: Config, debug: bool = False, session_id: str | None = None) -> None:
+def run_pico(
+    config: Config,
+    debug: bool = False,
+    session_id: str | None = None,
+    initial_prompt: str | None = None,
+) -> None:
     llm = build_llm_client(config)
     bus = Bus()
     conn = connect(config.session_path)
@@ -127,7 +132,7 @@ def run_pico(config: Config, debug: bool = False, session_id: str | None = None)
     core_thread.start()
 
     try:
-        PicoApp(bus, input_queue, cancel_handle, session_handle).run()
+        PicoApp(bus, input_queue, cancel_handle, session_handle, initial_prompt).run()
     finally:
         shutdown.set()
         core_thread.join(timeout=1)

@@ -654,6 +654,27 @@ async def test_submitting_input_mounts_user_pane_and_enqueues_text() -> None:
         assert input_queue.get_nowait() == "hi"
 
 
+async def test_initial_prompt_is_submitted_on_mount() -> None:
+    bus = Bus()
+    input_queue: queue.Queue[str] = queue.Queue()
+    app = PicoApp(bus, input_queue, initial_prompt="do x and y")
+    async with app.run_test() as pilot:
+        await settle(pilot, lambda: len(app.query(UserPane)) == 1, "the user pane mounts")
+        assert app.query_one(UserPane).render().plain == "do x and y"
+        assert input_queue.get_nowait() == "do x and y"
+
+
+async def test_without_initial_prompt_nothing_is_submitted() -> None:
+    bus = Bus()
+    input_queue: queue.Queue[str] = queue.Queue()
+    app = PicoApp(bus, input_queue)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        assert len(app.query(UserPane)) == 0
+        assert input_queue.empty()
+
+
 async def test_first_message_is_not_marked_queued() -> None:
     bus = Bus()
     app = PicoApp(bus, queue.Queue())

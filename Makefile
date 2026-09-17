@@ -35,7 +35,7 @@ run:
 	uv run python -m pico
 
 run_in_docker:
-	bin/run_in_docker.sh
+	bin/run_in_docker.sh $(ARGS)
 
 evals:
 	uv run python -m pico.evals

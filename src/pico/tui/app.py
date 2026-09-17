@@ -138,12 +138,14 @@ class PicoApp(App[None]):
         input_queue: "queue.Queue[str]",
         cancel_handle: CancelHandle | None = None,
         session_handle: SessionHandle | None = None,
+        initial_prompt: str | None = None,
     ) -> None:
         super().__init__()
         self._bus = bus
         self._input_queue = input_queue
         self._cancel_handle = cancel_handle
         self._session_handle = session_handle
+        self._initial_prompt = initial_prompt
         self._run_in_flight = False
         self._error_shown_this_run = False
         self._assistant_panes: dict[str, AssistantPane] = {}
@@ -182,6 +184,8 @@ class PicoApp(App[None]):
         self._conversation().anchor(False)
         threading.Thread(target=self._consume_bus, daemon=True).start()
         self._flush_timer = self.set_interval(0.05, self._flush_pending_updates)
+        if self._initial_prompt is not None:
+            self.post_message(UserInputSubmitted(text=self._initial_prompt))
 
     def on_click(self, event: events.Click) -> None:
         text_input = self.query_one("#user-input", ChatInput)

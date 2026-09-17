@@ -24,7 +24,12 @@ def test_main_calls_run_pico_with_loaded_config(monkeypatch: pytest.MonkeyPatch)
     config = _config()
     received: list[tuple[Config, bool]] = []
 
-    def fake_run_pico(cfg: Config, debug: bool = False, session_id: str | None = None) -> None:
+    def fake_run_pico(
+        cfg: Config,
+        debug: bool = False,
+        session_id: str | None = None,
+        initial_prompt: str | None = None,
+    ) -> None:
         received.append((cfg, debug))
 
     monkeypatch.setattr(pico, "load_config", lambda: config)
@@ -40,7 +45,12 @@ def test_main_passes_debug_flag_when_present(monkeypatch: pytest.MonkeyPatch) ->
     config = _config()
     received: list[tuple[Config, bool]] = []
 
-    def fake_run_pico(cfg: Config, debug: bool = False, session_id: str | None = None) -> None:
+    def fake_run_pico(
+        cfg: Config,
+        debug: bool = False,
+        session_id: str | None = None,
+        initial_prompt: str | None = None,
+    ) -> None:
         received.append((cfg, debug))
 
     monkeypatch.setattr(pico, "load_config", lambda: config)
@@ -50,6 +60,48 @@ def test_main_passes_debug_flag_when_present(monkeypatch: pytest.MonkeyPatch) ->
     pico.main()
 
     assert received == [(config, True)]
+
+
+def test_main_passes_prompt_to_run_pico(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = _config()
+    received: list[str | None] = []
+
+    def fake_run_pico(
+        cfg: Config,
+        debug: bool = False,
+        session_id: str | None = None,
+        initial_prompt: str | None = None,
+    ) -> None:
+        received.append(initial_prompt)
+
+    monkeypatch.setattr(pico, "load_config", lambda: config)
+    monkeypatch.setattr(pico, "run_pico", fake_run_pico)
+    monkeypatch.setattr(sys, "argv", ["pico", "--prompt", "do x and y"])
+
+    pico.main()
+
+    assert received == ["do x and y"]
+
+
+def test_main_defaults_prompt_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = _config()
+    received: list[str | None] = []
+
+    def fake_run_pico(
+        cfg: Config,
+        debug: bool = False,
+        session_id: str | None = None,
+        initial_prompt: str | None = None,
+    ) -> None:
+        received.append(initial_prompt)
+
+    monkeypatch.setattr(pico, "load_config", lambda: config)
+    monkeypatch.setattr(pico, "run_pico", fake_run_pico)
+    monkeypatch.setattr(sys, "argv", ["pico"])
+
+    pico.main()
+
+    assert received == [None]
 
 
 def test_main_exits_cleanly_on_config_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -78,7 +130,12 @@ def test_dunder_main_calls_main(monkeypatch: pytest.MonkeyPatch) -> None:
 def _record_session_ids(monkeypatch: pytest.MonkeyPatch, config: Config) -> list[str | None]:
     received: list[str | None] = []
 
-    def fake_run_pico(cfg: Config, debug: bool = False, session_id: str | None = None) -> None:
+    def fake_run_pico(
+        cfg: Config,
+        debug: bool = False,
+        session_id: str | None = None,
+        initial_prompt: str | None = None,
+    ) -> None:
         received.append(session_id)
 
     monkeypatch.setattr(pico, "load_config", lambda: config)
