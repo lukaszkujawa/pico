@@ -9,6 +9,7 @@ from typing import IO, Self, cast
 
 from pico.core.errors import ToolError
 from pico.core.ledger import facts, plan, render_plan
+from pico.core.scratch import Scratch, load_table, query
 from pico.core.tools import Tool, ToolRegistry
 from pico.llm.types import ToolSpec
 from pico.session import PlanSet, PlanStepCompleted, Session
@@ -290,6 +291,39 @@ _TOOL_SPECS = {
             "required": ["index"],
         },
     ),
+    "load_table": ToolSpec(
+        name="load_table",
+        description=(
+            "Load a CSV file into a scratch SQL database table without reading it into context, "
+            "and return the table's schema and row count. "
+            "Prefer this over shell pipelines for anything tabular or numeric: "
+            "load the file, then compute with the sql tool."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "table": {"type": "string"},
+            },
+            "required": ["path", "table"],
+        },
+    ),
+    "sql": ToolSpec(
+        name="sql",
+        description=(
+            "Run one SQL statement against the scratch database and return the rows. "
+            "Prefer this over shell pipelines for filtering, joins, aggregation, and arithmetic: "
+            "one SELECT with GROUP BY is computed exactly, where awk and sort are guesswork. "
+            "CREATE and INSERT work too, so you can stage intermediate results. "
+            "This is a tool, not a shell command: there is no 'sql' executable, "
+            "so never put it in a shell command or in answer's verify."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+        },
+    ),
     "delegate": ToolSpec(
         name="delegate",
         description=(
@@ -371,10 +405,36 @@ def complete_step_tool(session: Session) -> Tool:
     return Tool(spec=_TOOL_SPECS["complete_step"], execute=execute)
 
 
+def load_table_tool(scratch: Scratch) -> Tool:
+    def execute(arguments: Mapping[str, object]) -> str:
+        try:
+            path = _require(arguments, "path", str)
+            table = _require(arguments, "table", str)
+        except InvalidActionError as error:
+            return str(error)
+        return load_table(scratch, path, table)
+
+    return Tool(spec=_TOOL_SPECS["load_table"], execute=execute)
+
+
+def sql_tool(scratch: Scratch) -> Tool:
+    def execute(arguments: Mapping[str, object]) -> str:
+        try:
+            statement = _require(arguments, "query", str)
+        except InvalidActionError as error:
+            return str(error)
+        return query(scratch, statement)
+
+    return Tool(spec=_TOOL_SPECS["sql"], execute=execute)
+
+
 def register_actions(registry: ToolRegistry, session: Session) -> None:
     registry.register(_action_tool(ReadFile, "read_file"))
     registry.register(_action_tool(WriteFile, "write_file"))
     registry.register(_action_tool(Shell, "shell"))
+    scratch = Scratch(session)
+    registry.register(load_table_tool(scratch))
+    registry.register(sql_tool(scratch))
     registry.register(fact_recall_tool(session))
     registry.register(set_plan_tool(session))
     registry.register(complete_step_tool(session))

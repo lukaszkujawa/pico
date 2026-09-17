@@ -10,9 +10,11 @@ from pico.core.actions import (
     WriteFile,
     complete_step_tool,
     fact_recall_tool,
+    load_table_tool,
     register_actions,
     register_delegate_actions,
     set_plan_tool,
+    sql_tool,
 )
 from pico.core.bus import Bus
 from pico.core.context import (
@@ -62,6 +64,7 @@ from pico.core.loop import (
     stuckness_step,
     tool_call_step,
 )
+from pico.core.scratch import MAX_ROWS, Scratch, load_table, query, render
 from pico.core.stuckness import (
     NUDGE_THRESHOLD,
     STUCK_THRESHOLD,
@@ -80,6 +83,7 @@ __all__ = [
     "MAX_CHARS_PER_TOKEN",
     "MAX_DELEGATE_STEPS",
     "MAX_INVALID_ACTION_ATTEMPTS",
+    "MAX_ROWS",
     "MIN_CHARS_PER_TOKEN",
     "NUDGE_THRESHOLD",
     "RECENT_UNITS",
@@ -109,6 +113,7 @@ __all__ = [
     "RunCancelled",
     "RunFinished",
     "RunStarted",
+    "Scratch",
     "SetPlan",
     "Shell",
     "StepOutcome",
@@ -127,17 +132,22 @@ __all__ = [
     "fact_index",
     "fact_recall_tool",
     "facts",
+    "load_table",
+    "load_table_tool",
     "message_text",
     "plan",
     "prompt_budget",
+    "query",
     "recency_window",
     "register_actions",
     "register_delegate_actions",
+    "render",
     "render_plan",
     "render_tool_result",
     "repeated_action_streak",
     "set_plan_tool",
     "specs_text",
+    "sql_tool",
     "stream_step",
     "stuckness_step",
     "tool_call_step",

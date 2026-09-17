@@ -193,6 +193,39 @@ def _check_many_small_steps(directory: Path, answer: str) -> bool:
     )
 
 
+SALES_REGIONS = ("north", "south", "east", "west")
+SALES_ROWS = 3000
+
+
+def _sales_rows() -> list[tuple[str, int]]:
+    return [
+        (SALES_REGIONS[index % len(SALES_REGIONS)], (index % len(SALES_REGIONS)) * 5 + 1)
+        for index in range(SALES_ROWS)
+    ]
+
+
+EXPECTED_SALES_TOTALS = {
+    region: sum(amount for name, amount in _sales_rows() if name == region)
+    for region in SALES_REGIONS
+}
+EXPECTED_TOP_REGION = max(EXPECTED_SALES_TOTALS, key=lambda region: EXPECTED_SALES_TOTALS[region])
+EXPECTED_TOP_SALES = EXPECTED_SALES_TOTALS[EXPECTED_TOP_REGION]
+
+
+def _setup_group_by_region(directory: Path) -> None:
+    (directory / "sales.csv").write_text(
+        "order_id,region,amount\n"
+        + "".join(
+            f"{index:05d},{region},{amount}\n"
+            for index, (region, amount) in enumerate(_sales_rows())
+        )
+    )
+
+
+def _check_group_by_region(directory: Path, answer: str) -> bool:
+    return _mentions(answer, EXPECTED_TOP_REGION, str(EXPECTED_TOP_SALES))
+
+
 SUITE: tuple[EvalTask, ...] = (
     EvalTask(
         name="read_one_file",
@@ -226,6 +259,16 @@ SUITE: tuple[EvalTask, ...] = (
         ),
         setup=_setup_aggregate_large_file,
         check=_check_aggregate_large_file,
+    ),
+    EvalTask(
+        name="group_by_region",
+        prompt=(
+            "sales.csv has columns order_id, region and amount. "
+            "Which region has the highest total amount, and what is that total? "
+            "Answer with the region name and the number."
+        ),
+        setup=_setup_group_by_region,
+        check=_check_group_by_region,
     ),
     EvalTask(
         name="recall_from_log",

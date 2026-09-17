@@ -9,8 +9,11 @@ from pico.core.context import (
 from pico.evals.tasks import (
     EXPECTED_INVENTORY_VALUE,
     EXPECTED_LARGEST_REGION,
+    EXPECTED_SALES_TOTALS,
     EXPECTED_SHIFT_TOTAL,
     EXPECTED_TALLY,
+    EXPECTED_TOP_REGION,
+    EXPECTED_TOP_SALES,
     LOG_MARKER,
     MEASUREMENT_TOTAL,
     REFERENCE_CONTEXT_SIZE,
@@ -244,3 +247,25 @@ def test_many_small_steps_compiles_within_budget(tmp_path: Path) -> None:
     total = sum(estimate_tokens(message_text(message)) for message in compiled)
 
     assert total <= prompt_budget(REFERENCE_CONTEXT_SIZE)
+
+
+def test_group_by_region_accepts_the_top_group_and_rejects_the_grand_total(tmp_path: Path) -> None:
+    task = _seeded("group_by_region", tmp_path)
+    rows = [line.split(",") for line in (tmp_path / "sales.csv").read_text().splitlines()[1:]]
+
+    totals: dict[str, int] = {}
+    for _, region, amount in rows:
+        totals[region] = totals.get(region, 0) + int(amount)
+    assert totals == EXPECTED_SALES_TOTALS
+    assert max(totals, key=lambda region: totals[region]) == EXPECTED_TOP_REGION
+
+    assert task.check(tmp_path, f"{EXPECTED_TOP_REGION} leads with {EXPECTED_TOP_SALES}.")
+    assert not task.check(tmp_path, f"west leads with {sum(EXPECTED_SALES_TOTALS.values())}.")
+    assert not task.check(tmp_path, f"north leads with {EXPECTED_TOP_SALES}.")
+
+
+def test_group_by_region_seeds_more_than_the_reference_prompt_budget(tmp_path: Path) -> None:
+    _seeded("group_by_region", tmp_path)
+
+    content = (tmp_path / "sales.csv").read_text()
+    assert estimate_tokens(content) > prompt_budget(REFERENCE_CONTEXT_SIZE)

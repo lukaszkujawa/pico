@@ -40,13 +40,13 @@ def _patch_ollama_client(monkeypatch: pytest.MonkeyPatch, release: threading.Eve
     monkeypatch.setattr(app_module, "OllamaClient", factory)
 
 
-def _config(tmp_path: Path, vendor: str = "ollama") -> Config:
+def _config(tmp_path: Path, vendor: str = "ollama", context_size: int = 1024) -> Config:
     return Config(
         vendor=vendor,
         base_url="http://localhost:11434",
         model="qwen3",
         api_key=None,
-        context_size=1024,
+        context_size=context_size,
         session_path=str(tmp_path / "session.db"),
     )
 
@@ -142,7 +142,7 @@ def test_turn_loop_runs_one_turn_per_queued_message(
     monkeypatch.setattr(PicoApp, "__init__", tracking_init)
     monkeypatch.setattr(PicoApp, "run", driving_run)
 
-    run_pico(_config(tmp_path))
+    run_pico(_config(tmp_path, context_size=8192))
 
     assert len(client.seen_messages) == 2
     assert [m.content for m in client.seen_messages[0]] == [SYSTEM_PROMPT, "hello"]
@@ -157,6 +157,8 @@ def test_turn_loop_runs_one_turn_per_queued_message(
         "read_file",
         "write_file",
         "shell",
+        "load_table",
+        "sql",
         "read_fact",
         "set_plan",
         "complete_step",
