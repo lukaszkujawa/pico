@@ -51,3 +51,6 @@ logs/
 
 # Eval reports
 eval_results/
+
+# Autonomous loop run logs
+logs-code/
