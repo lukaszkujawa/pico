@@ -1,3 +1,5 @@
+import os
+import time
 import uuid
 from pathlib import Path
 
@@ -14,10 +16,13 @@ from pico.core.actions import (
     SetPlan,
     Shell,
     WriteFile,
+    _read_timeout,  # pyright: ignore[reportPrivateUsage]
     complete_step_tool,
     fact_recall_tool,
     load_table_tool,
+    note_tool,
     register_actions,
+    search_facts_tool,
     set_plan_tool,
     sql_tool,
 )
@@ -203,19 +208,41 @@ def test_shell_run_returns_exit_code_and_output() -> None:
     assert "boom" in output
 
 
-def test_shell_run_invokes_callback_per_chunk_and_preserves_combined_output() -> None:
+def test_shell_run_invokes_callback_and_preserves_combined_output() -> None:
     chunks: list[str] = []
-    code, output = Shell(command="echo one; sleep 0.2; echo two").run(on_chunk=chunks.append)
+    code, output = Shell(command="echo one; echo two").run(on_chunk=chunks.append)
 
     assert code == 0
-    assert len(chunks) > 1
     assert "".join(chunks) == output
     assert output == "one\ntwo\n"
 
 
-def test_shell_run_times_out_on_output_without_a_trailing_newline() -> None:
-    with pytest.raises(ToolError, match="timed out"):
-        Shell(command="printf partial; sleep 5").run(timeout=0.2)
+def test_read_timeout_yields_bytes_without_waiting_for_a_newline() -> None:
+    read_fd, write_fd = os.pipe()
+    try:
+        with open(read_fd, "rb", buffering=0) as reader:
+            chunks = _read_timeout(reader, time.monotonic() + 5)
+            os.write(write_fd, b"partial")
+            assert next(chunks) == "partial"
+            os.write(write_fd, b" caf\xc3")
+            assert next(chunks) == " caf"
+            os.write(write_fd, b"\xa9\n")
+            assert next(chunks) == "é\n"
+    finally:
+        os.close(write_fd)
+
+
+def test_read_timeout_times_out_on_a_stalled_partial_line() -> None:
+    read_fd, write_fd = os.pipe()
+    try:
+        with open(read_fd, "rb", buffering=0) as reader:
+            chunks = _read_timeout(reader, time.monotonic() + 0.05)
+            os.write(write_fd, b"no newline")
+            assert next(chunks) == "no newline"
+            with pytest.raises(TimeoutError):
+                next(chunks)
+    finally:
+        os.close(write_fd)
 
 
 def test_shell_run_reports_non_zero_exit_code_with_callback() -> None:
@@ -359,6 +386,8 @@ def test_register_actions_populates_all_tool_names() -> None:
         "shell",
         "load_table",
         "sql",
+        "note",
+        "search_facts",
         "read_fact",
         "set_plan",
         "complete_step",
@@ -760,3 +789,71 @@ def test_sql_spec_warns_against_using_it_as_a_shell_command(tmp_path: Path) -> N
 
     assert "not a shell command" in description
     assert "verify" in description
+
+
+def test_note_records_its_content_as_the_result() -> None:
+    assert note_tool().execute({"content": "the Bus drops subscribers on error"}) == (
+        "the Bus drops subscribers on error"
+    )
+
+
+def test_note_empty_content_raises_invalid_action_error() -> None:
+    with pytest.raises(InvalidActionError, match="must not be empty"):
+        note_tool().execute({"content": "   "})
+
+
+def test_noted_finding_becomes_a_searchable_fact() -> None:
+    session = Session(connect(":memory:"), "s1")
+    session.append(
+        ToolCallRecorded(
+            name="note", arguments={}, result="the Bus drops subscribers", is_error=False
+        )
+    )
+
+    result = search_facts_tool(session).execute({"query": "bus"})
+
+    assert "[1] note:" in result
+    assert "Bus drops subscribers" in result
+
+
+def test_search_facts_matches_case_insensitively_and_names_recovery() -> None:
+    session, fact_id = _session_with_fact("The LIMIT constant lives in beta.py")
+
+    result = search_facts_tool(session).execute({"query": "limit"})
+
+    assert f"[{fact_id}] shell:" in result
+    assert "read_fact(id)" in result
+
+
+def test_search_facts_without_match_says_so() -> None:
+    session, _ = _session_with_fact("nothing relevant here")
+
+    assert "no facts match 'quantum'" in search_facts_tool(session).execute({"query": "quantum"})
+
+
+def test_search_facts_skips_error_results() -> None:
+    session = Session(connect(":memory:"), "s1")
+    session.append(ToolCallRecorded(name="shell", arguments={}, result="boom", is_error=True))
+
+    assert "no facts match" in search_facts_tool(session).execute({"query": "boom"})
+
+
+def test_search_facts_caps_matches_and_reports_the_overflow() -> None:
+    session = Session(connect(":memory:"), "s1")
+    for index in range(25):
+        session.append(
+            ToolCallRecorded(name="shell", arguments={}, result=f"needle {index}", is_error=False)
+        )
+
+    result = search_facts_tool(session).execute({"query": "needle"})
+
+    lines = result.splitlines()
+    assert lines[0].startswith("[6] shell:")
+    assert "+5 earlier matches" in result
+
+
+def test_search_facts_empty_query_raises_invalid_action_error() -> None:
+    session, _ = _session_with_fact("content")
+
+    with pytest.raises(InvalidActionError, match="must not be empty"):
+        search_facts_tool(session).execute({"query": "  "})

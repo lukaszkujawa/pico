@@ -24,7 +24,6 @@ _.on_unmount
 _.padding
 _.display
 _.running
-_._flush_timer
 _.row_factory
 _.finish_reason
 CSS_PATH

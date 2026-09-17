@@ -1011,7 +1011,7 @@ def test_stream_step_sends_budget_rendered_messages_to_llm() -> None:
     )
     client = ScriptedClient([[TextDelta(text="ok"), GenerationComplete(finish_reason="stop")]])
 
-    runner = LoopRunner(client, ToolRegistry(), bus, session, 100, DEFAULT_LOOP_CONFIG)
+    runner = LoopRunner(client, ToolRegistry(), bus, session, 400, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
     sent_tool_messages = [m for m in client.seen_messages[0] if m.role.value == "tool"]
@@ -1578,7 +1578,7 @@ def test_model_recovers_a_truncated_fact_via_read_fact_and_cites_it() -> None:
         ]
     )
 
-    runner = LoopRunner(client, tools, bus, session, 100, DEFAULT_LOOP_CONFIG)
+    runner = LoopRunner(client, tools, bus, session, 2000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
     handle = client.seen_messages[0][-1]
@@ -1783,7 +1783,7 @@ def test_stream_step_sends_briefing_and_window_not_the_full_transcript() -> None
     assert "Facts gathered so far:" in briefing.content
     window = sent[2:]
     assert len(window) < len(transcript)
-    assert window == transcript[-RECENT_UNITS:]
+    assert window == [transcript[0], *transcript[-RECENT_UNITS:]]
     assert sum("Your current plan:" in message.content for message in sent) == 1
 
 
@@ -2698,3 +2698,31 @@ def test_delegate_at_max_depth_reports_it_is_unavailable() -> None:
     assert recorded.is_error is True
     assert "not available at this depth" in recorded.result
     assert runner.invalid_action_attempts == 1
+
+
+def test_long_single_prompt_run_keeps_the_prompt_bounded() -> None:
+    session = _session()
+    session.append(UserMessageRecorded(content="review everything"))
+    turns: list[list[StreamEvent]] = [
+        [
+            ToolCallReady(
+                tool_call=ToolCall(
+                    id=str(i), name="echo", arguments={"text": f"chunk {i} " + "x" * 1500}
+                )
+            ),
+            GenerationComplete(finish_reason="tool_calls"),
+        ]
+        for i in range(25)
+    ]
+    turns.append([TextDelta(text="done"), GenerationComplete(finish_reason="stop")])
+    client = ScriptedClient(turns)
+
+    LoopRunner(client, _echo_registry(), Bus(), session, 4000, DEFAULT_LOOP_CONFIG).execute()
+
+    final = sum(len(message_text(message)) for message in client.seen_messages[-1])
+    full_transcript = sum(len(message_text(message)) for message in session.messages())
+    assert final < full_transcript / 2
+    assert final <= prompt_budget(4000) * 6
+    task = client.seen_messages[-1][2]
+    assert task.role is Role.USER
+    assert task.content == "review everything"

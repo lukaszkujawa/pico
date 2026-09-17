@@ -59,11 +59,13 @@ class OllamaClient:
         base_url: str = "http://localhost:11434",
         api_key: str | None = None,
         transport: httpx.BaseTransport | None = None,
+        context_size: int | None = None,
     ) -> None:
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._transport = transport
+        self._context_size = context_size
         self._fallback_call_ids = itertools.count()
 
     def stream(self, messages: list[Message], tools: list[ToolSpec]) -> Iterator[StreamEvent]:
@@ -72,6 +74,8 @@ class OllamaClient:
             "messages": [_message_to_payload(message) for message in messages],
             "stream": True,
         }
+        if self._context_size is not None:
+            payload["options"] = {"num_ctx": self._context_size}
         if tools:
             payload["tools"] = [_tool_spec_to_payload(tool) for tool in tools]
 

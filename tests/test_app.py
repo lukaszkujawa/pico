@@ -34,7 +34,7 @@ class SlowClient:
 
 
 def _patch_ollama_client(monkeypatch: pytest.MonkeyPatch, release: threading.Event) -> None:
-    def factory(*, model: str, base_url: str, api_key: str | None) -> SlowClient:
+    def factory(*, model: str, base_url: str, api_key: str | None, context_size: int) -> SlowClient:
         return SlowClient(release)
 
     monkeypatch.setattr(app_module, "OllamaClient", factory)
@@ -113,7 +113,9 @@ def test_turn_loop_runs_one_turn_per_queued_message(
 ) -> None:
     client = RecordingClient()
 
-    def factory(*, model: str, base_url: str, api_key: str | None) -> RecordingClient:
+    def factory(
+        *, model: str, base_url: str, api_key: str | None, context_size: int
+    ) -> RecordingClient:
         return client
 
     monkeypatch.setattr(app_module, "OllamaClient", factory)
@@ -160,6 +162,8 @@ def test_turn_loop_runs_one_turn_per_queued_message(
         "shell",
         "load_table",
         "sql",
+        "note",
+        "search_facts",
         "read_fact",
         "set_plan",
         "complete_step",
@@ -224,7 +228,9 @@ def test_turn_persists_to_session_file_on_disk(
 ) -> None:
     client = RecordingClient()
 
-    def factory(*, model: str, base_url: str, api_key: str | None) -> RecordingClient:
+    def factory(
+        *, model: str, base_url: str, api_key: str | None, context_size: int
+    ) -> RecordingClient:
         return client
 
     monkeypatch.setattr(app_module, "OllamaClient", factory)
@@ -270,7 +276,9 @@ def test_turn_persists_to_session_file_on_disk(
 def test_debug_true_writes_run_log(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     client = RecordingClient()
 
-    def factory(*, model: str, base_url: str, api_key: str | None) -> RecordingClient:
+    def factory(
+        *, model: str, base_url: str, api_key: str | None, context_size: int
+    ) -> RecordingClient:
         return client
 
     monkeypatch.setattr(app_module, "OllamaClient", factory)
@@ -314,7 +322,9 @@ def test_debug_true_writes_run_log(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
 def test_debug_false_creates_no_logs_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     client = RecordingClient()
 
-    def factory(*, model: str, base_url: str, api_key: str | None) -> RecordingClient:
+    def factory(
+        *, model: str, base_url: str, api_key: str | None, context_size: int
+    ) -> RecordingClient:
         return client
 
     monkeypatch.setattr(app_module, "OllamaClient", factory)
@@ -351,7 +361,9 @@ def test_debug_false_creates_no_logs_dir(monkeypatch: pytest.MonkeyPatch, tmp_pa
 def _run_one_turn(monkeypatch: pytest.MonkeyPatch, config: Config, session_id: str | None) -> None:
     client = RecordingClient()
 
-    def factory(*, model: str, base_url: str, api_key: str | None) -> RecordingClient:
+    def factory(
+        *, model: str, base_url: str, api_key: str | None, context_size: int
+    ) -> RecordingClient:
         return client
 
     monkeypatch.setattr(app_module, "OllamaClient", factory)

@@ -95,8 +95,7 @@ def load_table(scratch: Scratch, path: str, table: str) -> str:
         if len(row) > width:
             raise ToolError(f"{path} line {number} has {len(row)} cells but the header has {width}")
     grid = [row + [""] * (width - len(row)) for row in data]
-    transposed = list(zip(*grid, strict=True)) if grid else [()] * width
-    numeric = [_numeric(column) for column in transposed]
+    numeric = [_numeric([row[index] for row in grid]) for index in range(width)]
     types = ["NUMERIC" if flag else "TEXT" for flag in numeric]
     definition = ", ".join(f'"{c}" {t}' for c, t in zip(columns, types, strict=True))
     values = [

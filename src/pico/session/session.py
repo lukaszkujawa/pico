@@ -68,8 +68,8 @@ class Session:
         with self._conn:
             self._conn.execute(
                 "INSERT INTO events (session_id, seq, kind, payload, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (self._session_id, self.next_seq(), kind, payload, created_at),
+                "SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ? FROM events WHERE session_id = ?",
+                (self._session_id, kind, payload, created_at, self._session_id),
             )
 
     def records(self) -> Iterator[tuple[int, SessionEvent]]:

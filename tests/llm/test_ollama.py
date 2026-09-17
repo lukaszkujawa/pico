@@ -251,3 +251,30 @@ def test_stream_http_error_raises_llm_error() -> None:
 
     with pytest.raises(LLMError):
         list(client.stream([Message(role=Role.USER, content="hi")], []))
+
+
+def test_context_size_is_sent_as_num_ctx() -> None:
+    captured: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return _ndjson_response([{"done": True, "done_reason": "stop"}])
+
+    client = OllamaClient(model="qwen3", transport=httpx.MockTransport(handle), context_size=16000)
+    list(client.stream([Message(role=Role.USER, content="hi")], []))
+
+    payload = json.loads(captured[0].content)
+    assert payload["options"] == {"num_ctx": 16000}
+
+
+def test_without_context_size_no_options_are_sent() -> None:
+    captured: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return _ndjson_response([{"done": True, "done_reason": "stop"}])
+
+    client = OllamaClient(model="qwen3", transport=httpx.MockTransport(handle))
+    list(client.stream([Message(role=Role.USER, content="hi")], []))
+
+    assert "options" not in json.loads(captured[0].content)

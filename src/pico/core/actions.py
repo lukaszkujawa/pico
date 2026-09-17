@@ -1,4 +1,5 @@
 import codecs
+import contextlib
 import json
 import os
 import selectors
@@ -159,10 +160,12 @@ class Shell:
                         on_chunk(chunk)
                 code = process.wait(timeout=max(0.0, deadline - time.monotonic()))
             except (TimeoutError, subprocess.TimeoutExpired) as error:
-                os.killpg(process.pid, signal.SIGKILL)
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGKILL)
                 raise ToolError(f"command timed out after {timeout}s: {self.command}") from error
             except BaseException:
-                os.killpg(process.pid, signal.SIGKILL)
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGKILL)
                 raise
         return code, "".join(chunks)
 
@@ -338,6 +341,34 @@ _TOOL_SPECS = {
             "required": ["content", "citations"],
         },
     ),
+    "note": ToolSpec(
+        name="note",
+        description=(
+            "Record an important finding, conclusion, or decision as a fact. "
+            "Older messages fall out of your context, but facts are kept: "
+            "noted findings stay in the fact index and can be recovered with "
+            "read_fact or found again with search_facts."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {"content": {"type": "string"}},
+            "required": ["content"],
+        },
+    ),
+    "search_facts": ToolSpec(
+        name="search_facts",
+        description=(
+            "Search all recorded facts (tool results and notes) for a text query "
+            "and return matching fact ids with previews. Use it to rediscover "
+            "earlier work that is no longer in your context, then read_fact(id) "
+            "to recover a match in full."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+        },
+    ),
     "read_fact": ToolSpec(
         name="read_fact",
         description=(
@@ -444,6 +475,50 @@ def _answer_tool() -> Tool:
     return Tool(spec=_TOOL_SPECS["answer"], execute=lambda _: "")
 
 
+def note_tool() -> Tool:
+    def execute(arguments: Mapping[str, object]) -> str:
+        content = _require(arguments, "content", str)
+        if not content.strip():
+            raise InvalidActionError("field 'content' must not be empty")
+        return content
+
+    return Tool(spec=_TOOL_SPECS["note"], execute=execute)
+
+
+MAX_SEARCH_MATCHES = 20
+_SNIPPET_CHARS = 120
+
+
+def _flatten(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _snippet(content: str, needle: str) -> str:
+    flat = _flatten(content)
+    position = flat.lower().find(needle)
+    start = max(0, position - _SNIPPET_CHARS // 3)
+    return flat[start : start + _SNIPPET_CHARS]
+
+
+def search_facts_tool(session: Session) -> Tool:
+    def execute(arguments: Mapping[str, object]) -> str:
+        query = _require(arguments, "query", str)
+        needle = _flatten(query).lower()
+        if not needle:
+            raise InvalidActionError("field 'query' must not be empty")
+        matches = [fact for fact in facts(session) if needle in _flatten(fact.content).lower()]
+        if not matches:
+            return f"no facts match {query!r}"
+        shown = matches[-MAX_SEARCH_MATCHES:]
+        lines = [f"[{fact.id}] {fact.source}: {_snippet(fact.content, needle)}" for fact in shown]
+        if len(matches) > len(shown):
+            lines.append(f"+{len(matches) - len(shown)} earlier matches")
+        lines.append("Call read_fact(id) to recover any fact in full.")
+        return "\n".join(lines)
+
+    return Tool(spec=_TOOL_SPECS["search_facts"], execute=execute)
+
+
 def fact_recall_tool(session: Session) -> Tool:
     def execute(arguments: Mapping[str, object]) -> str:
         fact_id = _require(arguments, "id", int)
@@ -510,6 +585,8 @@ def register_actions(registry: ToolRegistry, session: Session, depth: int = 0) -
     scratch = Scratch(session, in_memory=depth > 0)
     registry.register(load_table_tool(scratch))
     registry.register(sql_tool(scratch))
+    registry.register(note_tool())
+    registry.register(search_facts_tool(session))
     registry.register(fact_recall_tool(session))
     registry.register(set_plan_tool(session))
     registry.register(complete_step_tool(session))

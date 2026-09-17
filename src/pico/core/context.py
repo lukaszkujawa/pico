@@ -10,7 +10,12 @@ RenderLevel = Literal["full", "handle"]
 COMPLETION_RESERVE_FRACTION = 0.25
 COMPLETION_RESERVE_CAP = 4096
 
-SYSTEM_PROMPT = "You are Pico, a tiny agent solving big problems."
+SYSTEM_PROMPT = (
+    "You are Pico, a tiny agent solving big problems. "
+    "Older messages fall out of your context, but facts are kept: record important "
+    "findings with note, rediscover facts with search_facts, and recover any fact "
+    "in full with read_fact."
+)
 
 _HANDLE_PREVIEW_CHARS = 200
 _INDEX_FACTS = 20
@@ -116,19 +121,39 @@ def _demote_to_handle(message: Message) -> Message:
     )
 
 
+def _task_index(messages: list[Message]) -> int | None:
+    for position, message in enumerate(messages):
+        if message.role is Role.USER:
+            return position
+    return None
+
+
 def recency_window(
     messages: list[Message], budget: int, chars_per_token: float = 4.0
 ) -> list[Message]:
     if not messages:
         return []
     protected = _protected_start(messages)
-    starts = _unit_starts(messages)
-    cap_start = starts[-RECENT_UNITS] if len(starts) > RECENT_UNITS else 0
-    start = min(cap_start, protected)
-    window = list(messages[start:])
-    total = sum(_message_tokens(message, chars_per_token) for message in window)
+    task = _task_index(messages)
 
-    for position, message in enumerate(window):
+    if task is None or task != protected:
+        starts = _unit_starts(messages)
+        cap_start = starts[-RECENT_UNITS] if len(starts) > RECENT_UNITS else 0
+        start = min(cap_start, protected)
+        head = [messages[task]] if task is not None and task < start else []
+        body = list(messages[start:])
+        evictable = protected - start
+    else:
+        head = [messages[task]]
+        rest = messages[_unit_end(messages, task) :]
+        starts = _unit_starts(rest)
+        cap_start = starts[-RECENT_UNITS] if len(starts) > RECENT_UNITS else 0
+        body = list(rest[cap_start:])
+        evictable = len(body)
+
+    total = sum(_message_tokens(message, chars_per_token) for message in [*head, *body])
+
+    for position, message in enumerate(body):
         if total <= budget:
             break
         if message.role is not Role.TOOL:
@@ -140,15 +165,14 @@ def recency_window(
         total += _message_tokens(demoted, chars_per_token) - _message_tokens(
             message, chars_per_token
         )
-        window[position] = demoted
+        body[position] = demoted
 
-    tail_start = protected - start
     cut = 0
-    while cut < tail_start and total > budget:
-        next_cut = _unit_end(window, cut)
-        total -= sum(_message_tokens(message, chars_per_token) for message in window[cut:next_cut])
+    while cut < evictable and total > budget:
+        next_cut = _unit_end(body, cut)
+        total -= sum(_message_tokens(message, chars_per_token) for message in body[cut:next_cut])
         cut = next_cut
-    return window[cut:]
+    return [*head, *body[cut:]]
 
 
 def _briefing(session: Session) -> Message | None:

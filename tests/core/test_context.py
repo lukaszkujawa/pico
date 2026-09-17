@@ -214,20 +214,20 @@ def test_recency_window_cuts_to_recent_units_even_with_a_generous_budget() -> No
 
     window = recency_window(messages, budget=1_000_000)
 
-    assert window == messages[-RECENT_UNITS:]
+    assert window == [messages[0], *messages[-RECENT_UNITS:]]
 
 
 def test_recency_window_keeps_a_pair_straddling_the_cut_atomic() -> None:
-    messages: list[Message] = []
+    messages: list[Message] = [Message(role=Role.USER, content="the task")]
     for fact_id in range(10):
         messages.extend(_tool_pair(fact_id, f"result {fact_id}"))
-    messages.append(Message(role=Role.USER, content="latest question"))
 
     window = recency_window(messages, budget=1_000_000)
 
-    assert window[0].role is Role.ASSISTANT
-    assert window[0].tool_calls
-    for previous, current in pairwise(window):
+    assert window[0].content == "the task"
+    assert window[1].role is Role.ASSISTANT
+    assert window[1].tool_calls
+    for previous, current in pairwise(window[1:]):
         if current.role is Role.TOOL:
             assert previous.tool_calls or previous.role is Role.TOOL
 
@@ -259,9 +259,10 @@ def test_recency_window_keeps_the_protected_tail_beyond_cap_and_budget() -> None
 
     window = recency_window(messages, budget=10)
 
-    assert len(window) == len(tail)
-    assert window[0].content == "latest question"
-    assert all(before.role == after.role for before, after in zip(tail, window, strict=True))
+    assert len(window) == len(tail) + 1
+    assert window[0].content == "old question 0"
+    assert window[1].content == "latest question"
+    assert all(before.role == after.role for before, after in zip(tail, window[1:], strict=True))
 
 
 def test_recency_window_demoted_handle_names_the_correct_fact_id() -> None:
@@ -274,9 +275,8 @@ def test_recency_window_demoted_handle_names_the_correct_fact_id() -> None:
     assert "read_fact(41)" in demoted.tool_result.content
 
 
-def test_recency_window_never_demotes_error_results() -> None:
-    messages = [
-        Message(role=Role.USER, content="question"),
+def _error_pair() -> list[Message]:
+    return [
         Message(role=Role.ASSISTANT, tool_calls=(ToolCall(id="2", name="shell", arguments={}),)),
         Message(
             role=Role.TOOL,
@@ -284,10 +284,51 @@ def test_recency_window_never_demotes_error_results() -> None:
         ),
     ]
 
-    window = recency_window(messages, budget=10)
+
+def test_recency_window_never_demotes_error_results() -> None:
+    messages = [Message(role=Role.USER, content="question"), *_error_pair()]
+
+    window = recency_window(messages, budget=10_000)
 
     assert window[-1].tool_result is not None
     assert window[-1].tool_result.content == "e" * 2_000
+
+
+def test_recency_window_evicts_an_over_budget_error_unit_whole() -> None:
+    messages = [Message(role=Role.USER, content="question"), *_error_pair()]
+
+    window = recency_window(messages, budget=10)
+
+    assert window == [messages[0]]
+
+
+def test_recency_window_evicts_oldest_units_first_and_keeps_the_task() -> None:
+    messages = [Message(role=Role.USER, content="the task")]
+    for fact_id in range(4):
+        messages.extend(_tool_pair(fact_id, "x" * 2_000))
+    demoted_pair = [
+        messages[1],
+        Message(
+            role=Role.TOOL,
+            tool_result=ToolResult(
+                tool_call_id="0", content=render_tool_result("x" * 2_000, 0, "handle")
+            ),
+        ),
+    ]
+    budget = _tokens([messages[0], *demoted_pair, *demoted_pair]) + 1
+
+    window = recency_window(messages, budget=budget)
+
+    assert window[0].content == "the task"
+    kept_ids = [
+        message.tool_result.tool_call_id for message in window if message.tool_result is not None
+    ]
+    assert kept_ids == ["2", "3"]
+    dropped = {"0", "1"}
+    assert all(
+        message.tool_result is None or message.tool_result.tool_call_id not in dropped
+        for message in window
+    )
 
 
 def test_compile_context_briefs_then_windows_with_plan_and_facts() -> None:

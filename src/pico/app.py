@@ -56,7 +56,12 @@ class CancelHandle:
 def build_llm_client(config: Config) -> LLMClient:
     if config.vendor != "ollama":
         raise UnsupportedVendorError(f"unsupported LLM vendor: {config.vendor}")
-    return OllamaClient(model=config.model, base_url=config.base_url, api_key=config.api_key)
+    return OllamaClient(
+        model=config.model,
+        base_url=config.base_url,
+        api_key=config.api_key,
+        context_size=config.context_size,
+    )
 
 
 def _turn_loop(
