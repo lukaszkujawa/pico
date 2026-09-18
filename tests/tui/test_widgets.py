@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import pytest
 from rich.console import Console
 from rich.text import Text
@@ -10,6 +12,7 @@ from pico.tui.widgets import (
     ERROR_GLYPH,
     SUCCESS_GLYPH,
     WAITING_FRAMES,
+    ActivityStrip,
     AnswerPane,
     AssistantPane,
     CommandMenu,
@@ -64,6 +67,34 @@ class ElapsedTimerHarness(App[None]):
 
     def compose(self) -> ComposeResult:
         yield ElapsedTimer(clock=self._clock)
+
+
+class ActivityStripHarness(App[None]):
+    def compose(self) -> ComposeResult:
+        yield ActivityStrip(wall=lambda: datetime(2026, 9, 18, 14, 5))
+
+
+async def test_activity_strip_stop_swaps_readouts_for_a_worked_summary() -> None:
+    app = ActivityStripHarness()
+    async with app.run_test() as pilot:
+        strip = app.query_one(ActivityStrip)
+        strip.start()
+        await pilot.pause()
+        assert strip.summary.display is False
+
+        strip.timer.elapsed = 72
+        strip.stop()
+        await pilot.pause()
+
+        assert strip.summary.display is True
+        assert strip.query_one("#activity-live").display is False
+        assert str(strip.summary.render()) == "* Worked for 1m12s - done 14:05"
+
+        strip.start()
+        await pilot.pause()
+
+        assert strip.summary.display is False
+        assert strip.query_one("#activity-live").display is True
 
 
 class ToolCallPaneHarness(App[None]):

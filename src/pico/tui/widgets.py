@@ -1,5 +1,6 @@
 import time
 from collections.abc import Callable
+from datetime import datetime
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -386,19 +387,27 @@ class RequestCounter(Static):
 
 class ActivityStrip(Horizontal):
     def __init__(
-        self, theme: Theme = PICO_THEME, clock: Callable[[], float] = time.monotonic
+        self,
+        theme: Theme = PICO_THEME,
+        clock: Callable[[], float] = time.monotonic,
+        wall: Callable[[], datetime] = datetime.now,
     ) -> None:
         super().__init__(id="activity-strip")
         self._theme = theme
         self._clock = clock
+        self._wall = wall
         self.display = False
 
     def compose(self) -> ComposeResult:
-        yield WaitingIndicator(self._theme)
-        yield Static(" ", classes="stats-separator")
-        yield TokenCounter(self._theme)
-        yield Static(f" {SEPARATOR_GLYPH} ", classes="stats-separator")
-        yield ElapsedTimer(self._theme, self._clock)
+        with Horizontal(id="activity-live"):
+            yield WaitingIndicator(self._theme)
+            yield Static(" ", classes="stats-separator")
+            yield TokenCounter(self._theme)
+            yield Static(f" {SEPARATOR_GLYPH} ", classes="stats-separator")
+            yield ElapsedTimer(self._theme, self._clock)
+        summary = Static(id="activity-summary")
+        summary.display = False
+        yield summary
 
     @property
     def indicator(self) -> WaitingIndicator:
@@ -412,15 +421,35 @@ class ActivityStrip(Horizontal):
     def counter(self) -> TokenCounter:
         return self.query_one(TokenCounter)
 
+    @property
+    def summary(self) -> Static:
+        return self.query_one("#activity-summary", Static)
+
     def start(self) -> None:
         self.display = True
+        self.query_one("#activity-live").display = True
+        self.summary.display = False
         self.indicator.start()
         self.timer.start()
         self.counter.reset()
 
     def stop(self) -> None:
+        was_running = self.timer.running
         self.indicator.stop()
         self.timer.stop()
+        if was_running:
+            self._show_summary()
+
+    def _show_summary(self) -> None:
+        finished = self._wall()
+        self.summary.update(
+            Text(
+                f"* Worked for {format_elapsed(self.timer.elapsed)} - done {finished:%H:%M}",
+                style=self._theme.muted_text,
+            )
+        )
+        self.query_one("#activity-live").display = False
+        self.summary.display = True
 
     def reset(self) -> None:
         self.stop()

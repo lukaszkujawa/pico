@@ -1,4 +1,5 @@
 import queue
+import re
 
 import pytest
 from textual.containers import Vertical, VerticalScroll
@@ -1079,7 +1080,7 @@ async def test_submitting_input_starts_spinner_elapsed_and_tokens_together() -> 
         [ErrorOccurred(message="boom"), RunFinished(error="boom")],
     ],
 )
-async def test_run_ending_freezes_elapsed_and_tokens_while_stopping_spinner(
+async def test_run_ending_replaces_readouts_with_a_worked_summary(
     ending: list[BusEvent],
 ) -> None:
     bus = Bus()
@@ -1098,9 +1099,14 @@ async def test_run_ending_freezes_elapsed_and_tokens_while_stopping_spinner(
             "the run ends and the spinner stops",
         )
 
+        activity = app.query_one(ActivityStrip)
         assert app.query_one(ElapsedTimer).running is False
-        assert app.query_one(ActivityStrip).display is True
-        assert app.query_one(TokenCounter).render().plain == "37 tokens"
+        assert activity.display is True
+        assert activity.summary.display is True
+        assert activity.query_one("#activity-live").display is False
+        assert re.fullmatch(
+            r"\* Worked for \d+(m\d\d)?s - done \d\d:\d\d", str(activity.summary.render())
+        )
 
 
 async def test_status_row_reflows_as_the_readouts_grow_wider() -> None:
@@ -1113,7 +1119,6 @@ async def test_status_row_reflows_as_the_readouts_grow_wider() -> None:
         bus.publish(RunStarted())
         bus.publish(GenerationCompleted(prompt_tokens=1, completion_tokens=58))
         bus.publish(GenerationCompleted(prompt_tokens=1, completion_tokens=91))
-        bus.publish(RunFinished())
 
         counter = app.query_one(TokenCounter)
         await settle(
@@ -1325,7 +1330,7 @@ async def test_activity_strip_holds_spinner_tokens_and_timer_inside_the_conversa
         assert activity.parent is conversation
         activity_readouts = [
             type(child)
-            for child in activity.children
+            for child in activity.query_one("#activity-live").children
             if isinstance(child, WaitingIndicator | TokenCounter | ElapsedTimer)
         ]
         assert activity_readouts == [WaitingIndicator, TokenCounter, ElapsedTimer]

@@ -21,6 +21,14 @@
     width: auto;
     height: 1;
 }
+#activity-live {
+    width: auto;
+    height: 1;
+}
+#activity-live Static {
+    width: auto;
+    height: 1;
+}
 #stats-strip {
     height: 2;
     padding: 0 1 1 1;
