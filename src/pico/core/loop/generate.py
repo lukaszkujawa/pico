@@ -12,12 +12,12 @@ from pico.core.events import (
     GenerationCompleted,
     ToolCallArgumentsDelta,
 )
-from pico.core.loop.decision import Crossroads
+from pico.core.loop.decision import Crossroads, IterationView
 from pico.core.loop.policy import restriction
 from pico.core.loop.prompt import Prompt, assemble, reconcile
 from pico.core.loop.runner import LoopRunner, StepOutcome
 from pico.core.loop.signals import Nudge
-from pico.core.loop.state import LastWords, WindingDown
+from pico.core.loop.state import GenerationState, LastWords, RunState
 from pico.llm.types import (
     GenerationComplete,
     TextDelta,
@@ -44,12 +44,28 @@ class Generation:
 
 
 @dataclass(frozen=True)
+class Press:
+    pass
+
+
+@dataclass(frozen=True)
+class Emit:
+    nudge: str
+
+
+@dataclass(frozen=True)
+class Fail:
+    reason: str
+
+
+Command = Press | Emit | Fail
+
+
+@dataclass(frozen=True)
 class Recorded:
     outcome: StepOutcome
     actionless: int
-    pressed: bool = False
-    nudge: str | None = None
-    failure: str | None = None
+    command: Command | None = None
 
 
 def stream(runner: LoopRunner, prompt: Prompt, pressured: bool) -> Generation | None:
@@ -112,29 +128,29 @@ def stream(runner: LoopRunner, prompt: Prompt, pressured: bool) -> Generation | 
     return Generation(text=text, thinking=thinking, tool_calls=tool_calls)
 
 
-def record(generation: Generation, dying: bool, undecided: bool, actionless: int) -> Recorded:
+def record(
+    generation: Generation, state: RunState, seen: IterationView, counted: GenerationState
+) -> Recorded:
     if generation.tool_calls:
         return Recorded("continue", actionless=0)
-    if dying:
-        return Recorded("done", actionless=actionless)
-    if undecided:
-        return Recorded("continue", actionless=0, pressed=True)
-    attempts = actionless + 1
+    if isinstance(state, LastWords):
+        return Recorded("done", actionless=counted.actionless_generations)
+    if seen.undecided:
+        return Recorded("continue", actionless=0, command=Press())
+    attempts = counted.actionless_generations + 1
     if attempts >= MAX_ACTIONLESS_GENERATIONS:
         return Recorded(
             "done",
             actionless=attempts,
-            failure=(
+            command=Fail(
                 f"run stopped: {MAX_ACTIONLESS_GENERATIONS} generations without a tool call "
                 "while the plan has unfinished steps"
             ),
         )
-    return Recorded("continue", actionless=attempts, nudge=NO_ACTION_NUDGE)
+    return Recorded("continue", actionless=attempts, command=Emit(NO_ACTION_NUDGE))
 
 
 def generation_step(runner: LoopRunner) -> StepOutcome:
-    if isinstance(runner.state, WindingDown):
-        runner.state = LastWords(runner.state.cause)
     nudges = runner.take_nudges()
     joined = "\n\n".join(nudge.text for nudge in nudges) if nudges else None
     active = restriction(runner.state, runner.decision, joined)
@@ -163,17 +179,15 @@ def generation_step(runner: LoopRunner) -> StepOutcome:
         runner.generation.last_narration = generation.text
     if generation.tool_calls:
         runner.pending_tool_calls = generation.tool_calls
-    recorded = record(
-        generation,
-        isinstance(runner.state, LastWords),
-        runner.view.undecided,
-        runner.generation.actionless_generations,
-    )
+    recorded = record(generation, runner.state, runner.view, runner.generation)
     runner.generation.actionless_generations = recorded.actionless
-    if recorded.pressed:
-        runner.generation.narration_pressure = True
-    if recorded.nudge is not None:
-        runner.emit(Nudge(recorded.nudge))
-    if recorded.failure is not None:
-        runner.fail(recorded.failure)
+    match recorded.command:
+        case Press():
+            runner.generation.narration_pressure = True
+        case Emit(nudge=nudge):
+            runner.emit(Nudge(nudge))
+        case Fail(reason=reason):
+            runner.fail(reason)
+        case None:
+            pass
     return recorded.outcome

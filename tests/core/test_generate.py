@@ -29,11 +29,14 @@ from pico.core.events import (
     ToolCallStarted,
 )
 from pico.core.loop import DEFAULT_LOOP_CONFIG
-from pico.core.loop.decision import NARRATION_PRESSURE, Crossroads
+from pico.core.loop.decision import NARRATION_PRESSURE, Crossroads, IterationView
 from pico.core.loop.generate import (
     MAX_ACTIONLESS_GENERATIONS,
     NO_ACTION_NUDGE,
+    Emit,
+    Fail,
     Generation,
+    Press,
     Recorded,
     generation_step,
     record,
@@ -41,7 +44,14 @@ from pico.core.loop.generate import (
 from pico.core.loop.policy import snapshot_step
 from pico.core.loop.prompt import MAX_CHARS_PER_TOKEN, MIN_CHARS_PER_TOKEN, reconcile, specs_text
 from pico.core.loop.runner import LoopConfig, LoopRunner
-from pico.core.loop.state import DEFAULT_CHARS_PER_TOKEN, Answered, Failed, Running
+from pico.core.loop.state import (
+    DEFAULT_CHARS_PER_TOKEN,
+    Answered,
+    Failed,
+    GenerationState,
+    LastWords,
+    Running,
+)
 from pico.core.stuckness import NUDGE_THRESHOLD
 from pico.core.tools import ToolRegistry
 from pico.llm.types import (
@@ -758,29 +768,36 @@ def _silence(text: str = "musing") -> Generation:
     return Generation(text=text, thinking="", tool_calls=[])
 
 
+def _counted(actionless: int) -> GenerationState:
+    return GenerationState(actionless_generations=actionless)
+
+
 def test_record_of_a_tool_call_resets_the_actionless_count() -> None:
     generation = Generation(
         text="", thinking="", tool_calls=[ToolCall(id="1", name="echo", arguments={})]
     )
-    assert record(generation, False, False, 2) == Recorded("continue", actionless=0)
+    recorded = record(generation, Running(), IterationView(), _counted(2))
+    assert recorded == Recorded("continue", actionless=0)
 
 
 def test_record_of_silence_while_dying_ends_the_run() -> None:
-    assert record(_silence(), True, False, 1) == Recorded("done", actionless=1)
+    recorded = record(_silence(), LastWords("spent"), IterationView(), _counted(1))
+    assert recorded == Recorded("done", actionless=1)
 
 
 def test_record_of_narration_without_a_plan_presses_for_a_decision() -> None:
-    assert record(_silence(), False, True, 2) == Recorded("continue", actionless=0, pressed=True)
+    recorded = record(_silence(), Running(), IterationView(undecided=True), _counted(2))
+    assert recorded == Recorded("continue", actionless=0, command=Press())
 
 
 def test_record_counts_actionless_generations_up_to_the_failure() -> None:
-    recorded = record(_silence(), False, False, 0)
-    assert recorded == Recorded("continue", actionless=1, nudge=NO_ACTION_NUDGE)
-    final = record(_silence(), False, False, MAX_ACTIONLESS_GENERATIONS - 1)
+    recorded = record(_silence(), Running(), IterationView(), _counted(0))
+    assert recorded == Recorded("continue", actionless=1, command=Emit(NO_ACTION_NUDGE))
+    final = record(_silence(), Running(), IterationView(), _counted(MAX_ACTIONLESS_GENERATIONS - 1))
     assert final.outcome == "done"
     assert final.actionless == MAX_ACTIONLESS_GENERATIONS
-    assert final.failure is not None
-    assert "without a tool call" in final.failure
+    assert isinstance(final.command, Fail)
+    assert "without a tool call" in final.command.reason
 
 
 def test_reconcile_clamps_the_observed_ratio() -> None:

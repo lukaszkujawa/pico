@@ -15,6 +15,7 @@ from pico.core.loop.generate import generation_step
 from pico.core.loop.policy import (
     budget_step,
     decision_step,
+    lifecycle_step,
     snapshot_step,
     stuckness_step,
 )
@@ -244,6 +245,7 @@ def test_default_loop_config_snapshots_before_the_steps_that_read_the_view() -> 
         budget_step,
         decision_step,
         step_orchestration_step,
+        lifecycle_step,
         generation_step,
         tool_call_step,
     )

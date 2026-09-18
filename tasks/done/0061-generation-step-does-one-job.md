@@ -10,7 +10,7 @@
 * **`assemble` already takes explicit inputs (0059).** Keep it that way; this milestone does not touch prompt.py beyond removing the caller's lifecycle flip.
 * **Behaviour-preserving.** `MAX_ACTIONLESS_GENERATIONS`, `NO_ACTION_NUDGE`, and the actionless/undecided/dying decision table keep their values and order. Only where the transition happens and how the result is applied change.
 
-## [ ] T001 Move the lifecycle transition out
+## [X] T001 Move the lifecycle transition out
 
 ### Description
 
@@ -22,7 +22,7 @@ Relocate `WindingDown → LastWords` to the iteration edge with the other `RunSt
 * The transition still fires exactly once, on the generation that becomes last words, demonstrated by an existing or added scripted-LLM test.
 * `make check` passes.
 
-## [ ] T002 Record takes inputs and applies uniformly
+## [X] T002 Record takes inputs and applies uniformly
 
 ### Description
 

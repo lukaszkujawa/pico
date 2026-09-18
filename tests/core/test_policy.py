@@ -23,6 +23,7 @@ from pico.core.loop.policy import (
     budget_remaining,
     budget_step,
     decision_step,
+    lifecycle_step,
     pressure,
     restriction,
     snapshot_step,
@@ -142,6 +143,19 @@ def test_the_view_takes_the_narration_pressure_flag_once() -> None:
 
     snapshot_step(runner)
     assert runner.view.pressure is None
+
+
+def test_lifecycle_step_turns_winding_down_into_last_words_once() -> None:
+    runner = LoopRunner(
+        FailingClient(), echo_registry(), Bus(), make_session(), 128_000, LoopConfig(steps=())
+    )
+    runner.state = WindingDown("stuck")
+
+    assert lifecycle_step(runner) == "continue"
+    assert runner.state == LastWords("stuck")
+
+    assert lifecycle_step(runner) == "continue"
+    assert runner.state == LastWords("stuck")
 
 
 def test_restriction_prefers_last_words_over_a_crossroads() -> None:
@@ -369,7 +383,14 @@ def test_run_reaching_soft_threshold_gets_wind_down_nudge_then_answers_normally(
     )
     client = ScriptedClient(turns)
     config = LoopConfig(
-        steps=(stuckness_step, snapshot_step, budget_step, generation_step, tool_call_step),
+        steps=(
+            stuckness_step,
+            snapshot_step,
+            budget_step,
+            lifecycle_step,
+            generation_step,
+            tool_call_step,
+        ),
         max_steps=max_steps,
     )
 
@@ -398,7 +419,14 @@ def test_run_exhausting_budget_fails_explicitly_and_stays_resumable() -> None:
     turns.append(text_turn("I have nothing to say"))
     client = ScriptedClient(turns)
     config = LoopConfig(
-        steps=(stuckness_step, snapshot_step, budget_step, generation_step, tool_call_step),
+        steps=(
+            stuckness_step,
+            snapshot_step,
+            budget_step,
+            lifecycle_step,
+            generation_step,
+            tool_call_step,
+        ),
         max_steps=max_steps,
     )
 

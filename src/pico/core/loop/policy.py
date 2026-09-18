@@ -137,6 +137,12 @@ def decision_step(runner: LoopRunner) -> StepOutcome:
     return "continue"
 
 
+def lifecycle_step(runner: LoopRunner) -> StepOutcome:
+    if isinstance(runner.state, WindingDown):
+        runner.state = LastWords(runner.state.cause)
+    return "continue"
+
+
 def restriction(state: RunState, decision: DecisionState, nudge: str | None) -> Restrict | None:
     if isinstance(state, LastWords):
         return Restrict(
