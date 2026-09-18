@@ -9,7 +9,7 @@
 * **No behaviour change.** Budgets `(30, 10)`, `MAX_DELEGATE_DEPTH = 2`, and the depth floor are unchanged; this guards the indexing and aligns names, nothing more.
 * **Scope guard.** No new sub-run kinds, no depth-ceiling change — just make the existing budget lookup total and the existing names consistent.
 
-## [ ] T001 Total budget lookup
+## [X] T001 Total budget lookup
 
 ### Description
 
@@ -21,7 +21,7 @@ Replace `CHILD_BUDGETS[runner.depth]` with `child_budget(depth)` that is defined
 * A test covers the budget for each spawnable depth and that the lookup is total (no `IndexError`) past the current tuple length.
 * `make check` passes.
 
-## [ ] T002 Consistent sub-run names
+## [X] T002 Consistent sub-run names
 
 ### Description
 

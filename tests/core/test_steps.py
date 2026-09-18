@@ -1,3 +1,4 @@
+import threading
 from collections.abc import Iterator
 
 from pico.core.actions import MAX_DELEGATE_DEPTH, register_actions
@@ -11,7 +12,7 @@ from pico.core.ledger import facts
 from pico.core.loop import DEFAULT_LOOP_CONFIG
 from pico.core.loop.decision import DECISION_GRACE, MAX_CROSSROADS
 from pico.core.loop.runner import LoopRunner
-from pico.core.loop.state import Answered, Failed
+from pico.core.loop.state import Answered, Cancelled, Failed
 from pico.core.loop.subruns import (
     root_task,
 )
@@ -390,3 +391,32 @@ def test_a_step_child_answering_at_its_crossroads_settles_the_step() -> None:
     assert recorded.is_error is False
     assert recorded.result == "I counted 7 files"
     assert runner.state == Answered("done")
+
+
+def test_cancelling_parent_mid_step_stops_before_recording_the_step() -> None:
+    session, registry = _step_session()
+    cancel = threading.Event()
+
+    class CancelDuringStep(NoModels):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def stream(self, messages: list[Message], tools: list[ToolSpec]) -> Iterator[StreamEvent]:
+            self.calls += 1
+            if self.calls == 1:
+                yield from set_plan_turn(["count the files"])
+                return
+            cancel.set()
+            yield from text_turn("pondering")
+
+    runner = LoopRunner(
+        CancelDuringStep(), registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG, cancel
+    )
+    runner.execute()
+
+    assert runner.state == Cancelled()
+    assert [
+        event
+        for event in session.events()
+        if isinstance(event, ToolCallRecorded) and event.name == "step"
+    ] == []

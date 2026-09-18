@@ -34,7 +34,7 @@ from pico.core.loop.runner import LoopConfig, LoopRunner
 from pico.core.loop.signals import Nudge
 from pico.core.loop.state import Answered, Failed, LastWords, Running, WindingDown
 from pico.core.loop.subruns import (
-    CHILD_BUDGETS,
+    child_budget,
 )
 from pico.core.stuckness import NUDGE_THRESHOLD, STUCK_THRESHOLD
 from pico.llm.types import (
@@ -261,10 +261,10 @@ def test_budget_step_is_noop_for_delegates_regardless_of_iterations() -> None:
         Bus(),
         make_session(),
         128_000,
-        LoopConfig(steps=(), max_steps=CHILD_BUDGETS[-1]),
+        LoopConfig(steps=(), max_steps=child_budget(2)),
         depth=1,
     )
-    runner.iterations = CHILD_BUDGETS[-1]
+    runner.iterations = child_budget(2)
     snapshot_step(runner)
     assert budget_step(runner) == "continue"
     assert runner.pending_nudges == []

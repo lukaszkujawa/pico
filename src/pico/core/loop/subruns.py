@@ -20,6 +20,11 @@ CHILD_BUDGETS = (30, 10)
 MAX_STEP_ATTEMPTS = 2
 
 
+def child_budget(depth: int) -> int:
+    assert depth > 0, "depth 0 is the root run, not a child"
+    return CHILD_BUDGETS[min(depth, len(CHILD_BUDGETS)) - 1]
+
+
 def run_child(
     runner: LoopRunner,
     suffix: str,
@@ -36,7 +41,7 @@ def run_child(
         Bus(),
         child_session,
         runner.context_size,
-        LoopConfig(steps=runner.config.steps, max_steps=CHILD_BUDGETS[runner.depth]),
+        LoopConfig(steps=runner.config.steps, max_steps=child_budget(runner.depth + 1)),
         cancel=runner.cancel,
         result_shape=shape,
         depth=runner.depth + 1,
@@ -110,6 +115,21 @@ def _first_unfinished(current: Plan | None) -> int | None:
     return next((index for index, step in enumerate(current.steps) if not step.done), None)
 
 
+def spawn_step(runner: LoopRunner, current: Plan, index: int) -> tuple[str, bool] | None:
+    child = run_child(
+        runner,
+        f"step/{runner.session.next_seq()}",
+        compose_handoff(runner.session, current, index),
+    )
+    if runner.cancel.is_set():
+        return None
+    result, is_error = conclude(child)
+    if is_error:
+        text = current.steps[index].text
+        return f'step {index} failed — {result}\nstep was: "{text}"', True
+    return result, False
+
+
 def step_orchestration_step(runner: LoopRunner) -> StepOutcome:
     if runner.depth >= MAX_DELEGATE_DEPTH or not isinstance(runner.state, Running):
         return "continue"
@@ -125,20 +145,13 @@ def step_orchestration_step(runner: LoopRunner) -> StepOutcome:
         return "continue"
     runner.steps.attempts[signature] = attempts + 1
 
-    text = current.steps[index].text
     pane_id = runner.new_id()
-    arguments: Mapping[str, object] = {"step": text}
+    arguments: Mapping[str, object] = {"step": current.steps[index].text}
     runner.bus.publish(ToolCallStarted(id=pane_id, name="step", arguments=arguments))
-    child = run_child(
-        runner,
-        f"step/{runner.session.next_seq()}",
-        compose_handoff(runner.session, current, index),
-    )
-    if runner.cancel.is_set():
+    concluded = spawn_step(runner, current, index)
+    if concluded is None:
         return "cancelled"
-    result, is_error = conclude(child)
-    if is_error:
-        result = f'step {index} failed — {result}\nstep was: "{text}"'
+    result, is_error = concluded
     runner.session.append(
         ToolCallRecorded(name="step", arguments=arguments, result=result, is_error=is_error)
     )

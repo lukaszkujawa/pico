@@ -19,7 +19,7 @@ from pico.core.loop.dispatch import MAX_INVALID_ACTION_ATTEMPTS
 from pico.core.loop.runner import LoopRunner
 from pico.core.loop.state import Answered
 from pico.core.loop.subruns import (
-    CHILD_BUDGETS,
+    child_budget,
 )
 from pico.core.stuckness import STUCK_THRESHOLD
 from pico.core.tools import ToolRegistry
@@ -48,6 +48,16 @@ from tests.core.loop_fixtures import (
     text_turn,
 )
 from tests.llm_fakes import NoModels
+
+
+def test_child_budget_is_defined_for_every_spawnable_depth() -> None:
+    assert [child_budget(depth) for depth in range(1, MAX_DELEGATE_DEPTH + 1)] == [30, 10]
+
+
+def test_child_budget_is_total_past_the_deepest_tier() -> None:
+    deepest = child_budget(MAX_DELEGATE_DEPTH)
+    assert child_budget(MAX_DELEGATE_DEPTH + 1) == deepest
+    assert child_budget(MAX_DELEGATE_DEPTH + 99) == deepest
 
 
 def test_delegate_call_that_answers_records_fact_on_parent() -> None:
@@ -103,7 +113,7 @@ def test_delegate_call_exhausting_budget_without_answer_is_error() -> None:
             ),
             GenerationComplete(finish_reason="tool_calls"),
         ]
-        for i in range(CHILD_BUDGETS[0])
+        for i in range(child_budget(1))
     )
     client = ScriptedClient(turns)
 
@@ -129,7 +139,7 @@ def test_delegate_that_dies_of_budget_returns_a_partial_answer() -> None:
             ),
             GenerationComplete(finish_reason="tool_calls"),
         ]
-        for i in range(CHILD_BUDGETS[0])
+        for i in range(child_budget(1))
     )
     turns.append(answer_turn("x is probably 1"))
     turns.append(answer_turn("done"))
@@ -145,7 +155,7 @@ def test_delegate_that_dies_of_budget_returns_a_partial_answer() -> None:
     )
     assert delegated.is_error is False
     assert delegated.result == (
-        f"partial — the generation budget of {CHILD_BUDGETS[0]} is spent:\nx is probably 1"
+        f"partial — the generation budget of {child_budget(1)} is spent:\nx is probably 1"
     )
     assert runner.state == Answered("done")
 
@@ -338,7 +348,7 @@ def test_repeating_delegate_is_stopped_by_stuckness() -> None:
             ToolCallReady(tool_call=ToolCall(id="1", name="delegate", arguments={"question": "q"})),
             GenerationComplete(finish_reason="tool_calls"),
         ],
-        *[list(repeat) for _ in range(CHILD_BUDGETS[0])],
+        *[list(repeat) for _ in range(child_budget(1))],
         [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
     ]
     client = ScriptedClient(turns)
