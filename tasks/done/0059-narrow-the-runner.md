@@ -13,7 +13,7 @@
 * **No new abstraction layers.** No `RunnerView` protocol hierarchy, no dependency injection framework — plain arguments and frozen snapshots. If a helper needs more than five values, that is a sign it is two functions.
 * **Mechanical, behaviour-preserving.** Public module surface (`__init__.py` exports, `Step`, `LoopConfig`) is unchanged; evals and headless are untouched.
 
-## [ ] T001 Policy and prompt helpers take their inputs
+## [X] T001 Policy and prompt helpers take their inputs
 
 ### Description
 
@@ -25,7 +25,7 @@ Convert the remaining policy helpers and `prompt.assemble`/`reconcile` to explic
 * Helper tests construct plain values, no runner instances.
 * `make check` passes.
 
-## [ ] T002 Generate and dispatch helpers take their inputs
+## [X] T002 Generate and dispatch helpers take their inputs
 
 ### Description
 

@@ -31,8 +31,15 @@ from pico.core.events import (
 )
 from pico.core.loop import DEFAULT_LOOP_CONFIG
 from pico.core.loop.decision import NARRATION_PRESSURE, Crossroads
-from pico.core.loop.generate import MAX_ACTIONLESS_GENERATIONS, generation_step
-from pico.core.loop.prompt import MAX_CHARS_PER_TOKEN, MIN_CHARS_PER_TOKEN, specs_text
+from pico.core.loop.generate import (
+    MAX_ACTIONLESS_GENERATIONS,
+    NO_ACTION_NUDGE,
+    Generation,
+    Recorded,
+    generation_step,
+    record,
+)
+from pico.core.loop.prompt import MAX_CHARS_PER_TOKEN, MIN_CHARS_PER_TOKEN, reconcile, specs_text
 from pico.core.loop.runner import LoopConfig, LoopRunner
 from pico.core.loop.state import DEFAULT_CHARS_PER_TOKEN, Answered, Failed, Running
 from pico.core.stuckness import NUDGE_THRESHOLD
@@ -742,6 +749,41 @@ def test_overhead_shrinks_the_conversation_budget() -> None:
     assert unaware.tool_result is not None
     assert "fact 1" in sent.tool_result.content
     assert unaware.tool_result.content == "a" * 3_000
+
+
+def _silence(text: str = "musing") -> Generation:
+    return Generation(text=text, thinking="", tool_calls=[])
+
+
+def test_record_of_a_tool_call_resets_the_actionless_count() -> None:
+    generation = Generation(
+        text="", thinking="", tool_calls=[ToolCall(id="1", name="echo", arguments={})]
+    )
+    assert record(generation, False, False, 2) == Recorded("continue", actionless=0)
+
+
+def test_record_of_silence_while_dying_ends_the_run() -> None:
+    assert record(_silence(), True, False, 1) == Recorded("done", actionless=1)
+
+
+def test_record_of_narration_without_a_plan_presses_for_a_decision() -> None:
+    assert record(_silence(), False, True, 2) == Recorded("continue", actionless=0, pressed=True)
+
+
+def test_record_counts_actionless_generations_up_to_the_failure() -> None:
+    recorded = record(_silence(), False, False, 0)
+    assert recorded == Recorded("continue", actionless=1, nudge=NO_ACTION_NUDGE)
+    final = record(_silence(), False, False, MAX_ACTIONLESS_GENERATIONS - 1)
+    assert final.outcome == "done"
+    assert final.actionless == MAX_ACTIONLESS_GENERATIONS
+    assert final.failure is not None
+    assert "without a tool call" in final.failure
+
+
+def test_reconcile_clamps_the_observed_ratio() -> None:
+    assert reconcile(400, 100) == 4.0
+    assert reconcile(100, 1_000) == MIN_CHARS_PER_TOKEN
+    assert reconcile(10_000, 100) == MAX_CHARS_PER_TOKEN
 
 
 def test_ratio_moves_toward_the_observed_value() -> None:

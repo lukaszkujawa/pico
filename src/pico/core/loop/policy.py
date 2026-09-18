@@ -10,14 +10,16 @@ from pico.core.loop.decision import (
     NARRATION_PRESSURE,
     Ask,
     Crossroads,
+    DecisionState,
     EndDegraded,
     Observations,
     advance,
 )
 from pico.core.loop.runner import LoopRunner, StepOutcome
 from pico.core.loop.signals import Nudge, Restrict
-from pico.core.loop.state import Answered, LastWords, Running, WindingDown
+from pico.core.loop.state import Answered, LastWords, Running, RunState, WindingDown
 from pico.core.stuckness import assess
+from pico.session import Session
 
 BUDGET_WIND_DOWN_FRACTION = 0.8
 
@@ -45,18 +47,22 @@ def stuckness_step(runner: LoopRunner) -> StepOutcome:
     return "continue"
 
 
-def budget_nearly_spent(runner: LoopRunner) -> bool:
-    max_steps = runner.config.max_steps
-    if max_steps is None or runner.depth > 0 or not isinstance(runner.state, Running):
-        return False
-    return runner.iterations >= int(max_steps * BUDGET_WIND_DOWN_FRACTION)
+def budget_remaining(
+    iterations: int, max_steps: int | None, depth: int, running: bool
+) -> int | None:
+    if max_steps is None or depth > 0 or not running:
+        return None
+    if iterations < int(max_steps * BUDGET_WIND_DOWN_FRACTION):
+        return None
+    return max_steps - iterations
 
 
 def budget_step(runner: LoopRunner) -> StepOutcome:
-    if not budget_nearly_spent(runner):
+    remaining = budget_remaining(
+        runner.iterations, runner.config.max_steps, runner.depth, isinstance(runner.state, Running)
+    )
+    if remaining is None:
         return "continue"
-    assert runner.config.max_steps is not None
-    remaining = runner.config.max_steps - runner.iterations
     runner.emit(
         Nudge(
             f"the generation budget is nearly spent — {remaining} generations remain. "
@@ -67,36 +73,33 @@ def budget_step(runner: LoopRunner) -> StepOutcome:
     return "continue"
 
 
-def undecided(runner: LoopRunner) -> bool:
-    if not isinstance(runner.state, Running):
-        return False
-    current = plan(runner.session)
+def undecided(session: Session) -> bool:
+    current = plan(session)
     return current is None or all(step.done for step in current.steps)
 
 
-def pressure(runner: LoopRunner) -> str | None:
-    if transcript_units(runner.session.messages()) > RECENT_UNITS:
+def pressure(units: int, remaining: int | None) -> str | None:
+    if units > RECENT_UNITS:
         return CONTEXT_PRESSURE_CAUSE
-    if budget_nearly_spent(runner):
-        assert runner.config.max_steps is not None
-        remaining = runner.config.max_steps - runner.iterations
+    if remaining is not None:
         return f"only {remaining} generations remain of your budget"
     return None
 
 
-def observe(runner: LoopRunner) -> Observations:
+def decision_step(runner: LoopRunner) -> StepOutcome:
     narrated = runner.generation.narration_pressure
     runner.generation.narration_pressure = False
-    return Observations(
-        undecided=undecided(runner),
+    running = isinstance(runner.state, Running)
+    remaining = budget_remaining(runner.iterations, runner.config.max_steps, runner.depth, running)
+    seen = Observations(
+        undecided=running and undecided(runner.session),
         iterations=runner.iterations,
-        pressure=NARRATION_PRESSURE if narrated else pressure(runner),
+        pressure=NARRATION_PRESSURE
+        if narrated
+        else pressure(transcript_units(runner.session.messages()), remaining),
         narration=runner.generation.last_narration,
     )
-
-
-def decision_step(runner: LoopRunner) -> StepOutcome:
-    runner.decision, command = advance(runner.decision, observe(runner))
+    runner.decision, command = advance(runner.decision, seen)
     match command:
         case Ask(nudge=nudge):
             runner.emit(Nudge(nudge))
@@ -125,18 +128,18 @@ def decision_step(runner: LoopRunner) -> StepOutcome:
     return "continue"
 
 
-def restriction(runner: LoopRunner, nudge: str | None) -> Restrict | None:
-    if isinstance(runner.state, LastWords):
+def restriction(state: RunState, decision: DecisionState, nudge: str | None) -> Restrict | None:
+    if isinstance(state, LastWords):
         return Restrict(
             allowed=LAST_WORDS_ACTIONS,
-            text=LAST_WORDS_NUDGE.format(cause=runner.state.cause),
+            text=LAST_WORDS_NUDGE.format(cause=state.cause),
             rejection="answer is the only tool left",
         )
-    if not isinstance(runner.decision, Crossroads):
+    if not isinstance(decision, Crossroads):
         return None
     crossroads = Restrict(
         allowed=CROSSROADS_ACTIONS,
-        text=DECISION_NUDGE.format(cause=runner.decision.cause),
+        text=DECISION_NUDGE.format(cause=decision.cause),
         rejection=(
             f"a decision is required first; the tools you have are {', '.join(CROSSROADS_ACTIONS)}"
         ),

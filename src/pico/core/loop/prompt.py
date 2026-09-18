@@ -8,12 +8,11 @@ from pico.core.context import (
     estimate_tokens,
     message_text,
     message_tokens,
-    prompt_budget,
 )
-from pico.core.events import BudgetExceeded
-from pico.core.loop.policy import restriction
-from pico.core.loop.runner import LoopRunner
+from pico.core.loop.signals import Restrict
+from pico.core.tools import ToolRegistry
 from pico.llm.types import Message, Role, ToolSpec
+from pico.session import Session
 
 MIN_CHARS_PER_TOKEN = 2.0
 MAX_CHARS_PER_TOKEN = 6.0
@@ -24,6 +23,7 @@ class Prompt:
     messages: list[Message]
     specs: list[ToolSpec]
     sent_chars: int
+    estimated_tokens: int
 
 
 def specs_text(specs: list[ToolSpec]) -> str:
@@ -36,43 +36,43 @@ def specs_text(specs: list[ToolSpec]) -> str:
     )
 
 
-def assemble(runner: LoopRunner) -> Prompt:
-    nudges = runner.take_nudges()
-    joined = "\n\n".join(nudge.text for nudge in nudges) if nudges else None
-    active = restriction(runner, joined)
-    runner.active_restriction = active
-
-    specs = vocabulary(runner.tools, runner.depth, None if active is None else active.allowed)
-    nudge = active.text if active is not None else joined
+def assemble(
+    session: Session,
+    tools: ToolRegistry,
+    depth: int,
+    context_size: int,
+    chars_per_token: float,
+    active: Restrict | None,
+    nudge: str | None,
+) -> Prompt:
+    specs = vocabulary(tools, depth, None if active is None else active.allowed)
+    text = active.text if active is not None else nudge
     preamble = [Message(role=Role.SYSTEM, content=SYSTEM_PROMPT)]
-    postamble = [] if nudge is None else [Message(role=Role.USER, content=nudge)]
+    postamble = [] if text is None else [Message(role=Role.USER, content=text)]
 
-    chars_per_token = runner.generation.chars_per_token
     overhead_text = specs_text(specs) + "".join(
         message_text(message) for message in [*preamble, *postamble]
     )
     overhead_tokens = estimate_tokens(overhead_text, chars_per_token)
     conversation = compile_context(
-        runner.session,
-        runner.context_size,
+        session,
+        context_size,
         overhead_tokens,
         chars_per_token,
-        runner.depth < MAX_DELEGATE_DEPTH,
+        depth < MAX_DELEGATE_DEPTH,
     )
     estimated = overhead_tokens + sum(
         message_tokens(message, chars_per_token) for message in conversation
     )
-    budget = prompt_budget(runner.context_size)
-    if estimated > budget:
-        runner.bus.publish(BudgetExceeded(estimated=estimated, budget=budget))
 
     return Prompt(
         messages=[*preamble, *conversation, *postamble],
         specs=specs,
         sent_chars=len(overhead_text) + sum(len(message_text(message)) for message in conversation),
+        estimated_tokens=estimated,
     )
 
 
-def reconcile(runner: LoopRunner, prompt: Prompt, prompt_tokens: int) -> None:
-    observed = prompt.sent_chars / prompt_tokens
-    runner.generation.chars_per_token = min(MAX_CHARS_PER_TOKEN, max(MIN_CHARS_PER_TOKEN, observed))
+def reconcile(sent_chars: int, prompt_tokens: int) -> float:
+    observed = sent_chars / prompt_tokens
+    return min(MAX_CHARS_PER_TOKEN, max(MIN_CHARS_PER_TOKEN, observed))

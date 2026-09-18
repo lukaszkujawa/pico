@@ -9,19 +9,24 @@ from pico.core.events import (
     RunFinished,
 )
 from pico.core.loop import DEFAULT_LOOP_CONFIG, DEFAULT_LOOP_STEPS
-from pico.core.loop.decision import CROSSROADS_ACTIONS, DECISION_GRACE
+from pico.core.loop.decision import CROSSROADS_ACTIONS, DECISION_GRACE, Crossroads, Quiet
 from pico.core.loop.dispatch import tool_call_step
 from pico.core.loop.generate import generation_step
 from pico.core.loop.policy import (
     BUDGET_WIND_DOWN_FRACTION,
     CONTEXT_PRESSURE_CAUSE,
+    LAST_WORDS_ACTIONS,
+    budget_remaining,
     budget_step,
     decision_step,
+    pressure,
+    restriction,
     stuckness_step,
+    undecided,
 )
 from pico.core.loop.runner import LoopConfig, LoopRunner
 from pico.core.loop.signals import Nudge
-from pico.core.loop.state import Answered, Failed, Running
+from pico.core.loop.state import Answered, Failed, LastWords, Running
 from pico.core.loop.subruns import (
     MAX_DELEGATE_STEPS,
 )
@@ -35,6 +40,8 @@ from pico.llm.types import (
     ToolCallReady,
 )
 from pico.session import (
+    PlanSet,
+    PlanStepCompleted,
     ToolCallRecorded,
     UserMessageRecorded,
 )
@@ -52,6 +59,47 @@ from tests.core.loop_fixtures import (
     set_plan_turn,
     text_turn,
 )
+
+
+def test_budget_remaining_counts_down_only_for_a_running_root_with_a_budget() -> None:
+    assert budget_remaining(1_000_000, None, 0, True) is None
+    assert budget_remaining(8, 10, 1, True) is None
+    assert budget_remaining(8, 10, 0, False) is None
+    assert budget_remaining(7, 10, 0, True) is None
+    assert budget_remaining(8, 10, 0, True) == 2
+
+
+def test_undecided_tracks_the_plan_in_the_session() -> None:
+    session = make_session()
+    assert undecided(session) is True
+    session.append(PlanSet(steps=("count the files",)))
+    assert undecided(session) is False
+    session.append(PlanStepCompleted(index=0))
+    assert undecided(session) is True
+
+
+def test_pressure_reports_context_before_budget() -> None:
+    assert pressure(RECENT_UNITS + 1, 2) == CONTEXT_PRESSURE_CAUSE
+    assert pressure(RECENT_UNITS, 2) == "only 2 generations remain of your budget"
+    assert pressure(0, None) is None
+
+
+def test_restriction_prefers_last_words_over_a_crossroads() -> None:
+    restrict = restriction(LastWords("the budget is spent"), Crossroads("why", 1), "a nudge")
+    assert restrict is not None
+    assert restrict.allowed == LAST_WORDS_ACTIONS
+    assert "the budget is spent" in restrict.text
+
+
+def test_restriction_at_a_crossroads_keeps_the_pending_nudge_text() -> None:
+    assert restriction(Running(), Quiet(), "a nudge") is None
+    restrict = restriction(Running(), Crossroads("why", 1), None)
+    assert restrict is not None
+    assert restrict.allowed == CROSSROADS_ACTIONS
+    assert "why" in restrict.text
+    nudged = restriction(Running(), Crossroads("why", 1), "a nudge")
+    assert nudged is not None
+    assert nudged.text == "a nudge"
 
 
 def test_nudge_below_stuck_threshold_is_appended_as_user_message_not_persisted() -> None:

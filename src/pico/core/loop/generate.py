@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from pico.core.context import prompt_budget, transcript_units
 from pico.core.events import (
     AssistantTextDelta,
     AssistantTextFinished,
@@ -7,15 +8,16 @@ from pico.core.events import (
     AssistantThinkingDelta,
     AssistantThinkingFinished,
     AssistantThinkingStarted,
+    BudgetExceeded,
     GenerationCompleted,
     ToolCallArgumentsDelta,
 )
 from pico.core.loop.decision import Crossroads
-from pico.core.loop.policy import pressure, undecided
+from pico.core.loop.policy import budget_remaining, pressure, restriction, undecided
 from pico.core.loop.prompt import Prompt, assemble, reconcile
 from pico.core.loop.runner import LoopRunner, StepOutcome
 from pico.core.loop.signals import Nudge
-from pico.core.loop.state import LastWords, WindingDown
+from pico.core.loop.state import LastWords, Running, WindingDown
 from pico.llm.types import (
     GenerationComplete,
     TextDelta,
@@ -41,7 +43,16 @@ class Generation:
     tool_calls: list[ToolCall]
 
 
-def stream(runner: LoopRunner, prompt: Prompt) -> Generation | None:
+@dataclass(frozen=True)
+class Recorded:
+    outcome: StepOutcome
+    actionless: int
+    pressed: bool = False
+    nudge: str | None = None
+    failure: str | None = None
+
+
+def stream(runner: LoopRunner, prompt: Prompt, pressured: bool) -> Generation | None:
     text = ""
     thinking = ""
     tool_calls: list[ToolCall] = []
@@ -85,12 +96,11 @@ def stream(runner: LoopRunner, prompt: Prompt) -> Generation | None:
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
                         iteration=runner.iterations,
-                        pressure=isinstance(runner.decision, Crossroads)
-                        or pressure(runner) is not None,
+                        pressure=pressured,
                     )
                 )
                 if prompt_tokens:
-                    reconcile(runner, prompt, prompt_tokens)
+                    runner.generation.chars_per_token = reconcile(prompt.sent_chars, prompt_tokens)
 
     if thinking_id is not None:
         runner.bus.publish(AssistantThinkingFinished(id=thinking_id))
@@ -102,39 +112,73 @@ def stream(runner: LoopRunner, prompt: Prompt) -> Generation | None:
     return Generation(text=text, thinking=thinking, tool_calls=tool_calls)
 
 
-def record(runner: LoopRunner, generation: Generation) -> StepOutcome:
-    text = generation.text
-    if text or generation.thinking:
-        runner.session.append(AssistantMessageRecorded(content=text, thinking=generation.thinking))
-    if text.strip():
-        runner.generation.last_narration = text
-
+def record(generation: Generation, dying: bool, undecided: bool, actionless: int) -> Recorded:
     if generation.tool_calls:
-        runner.generation.actionless_generations = 0
-        runner.pending_tool_calls = generation.tool_calls
-        return "continue"
-
-    if isinstance(runner.state, LastWords):
-        return "done"
-    if undecided(runner):
-        runner.generation.actionless_generations = 0
-        runner.generation.narration_pressure = True
-        return "continue"
-    runner.generation.actionless_generations += 1
-    if runner.generation.actionless_generations >= MAX_ACTIONLESS_GENERATIONS:
-        runner.fail(
-            f"run stopped: {MAX_ACTIONLESS_GENERATIONS} generations without a tool call "
-            "while the plan has unfinished steps"
+        return Recorded("continue", actionless=0)
+    if dying:
+        return Recorded("done", actionless=actionless)
+    if undecided:
+        return Recorded("continue", actionless=0, pressed=True)
+    attempts = actionless + 1
+    if attempts >= MAX_ACTIONLESS_GENERATIONS:
+        return Recorded(
+            "done",
+            actionless=attempts,
+            failure=(
+                f"run stopped: {MAX_ACTIONLESS_GENERATIONS} generations without a tool call "
+                "while the plan has unfinished steps"
+            ),
         )
-        return "done"
-    runner.emit(Nudge(NO_ACTION_NUDGE))
-    return "continue"
+    return Recorded("continue", actionless=attempts, nudge=NO_ACTION_NUDGE)
 
 
 def generation_step(runner: LoopRunner) -> StepOutcome:
     if isinstance(runner.state, WindingDown):
         runner.state = LastWords(runner.state.cause)
-    generation = stream(runner, assemble(runner))
+    nudges = runner.take_nudges()
+    joined = "\n\n".join(nudge.text for nudge in nudges) if nudges else None
+    active = restriction(runner.state, runner.decision, joined)
+    runner.active_restriction = active
+    prompt = assemble(
+        runner.session,
+        runner.tools,
+        runner.depth,
+        runner.context_size,
+        runner.generation.chars_per_token,
+        active,
+        joined,
+    )
+    budget = prompt_budget(runner.context_size)
+    if prompt.estimated_tokens > budget:
+        runner.bus.publish(BudgetExceeded(estimated=prompt.estimated_tokens, budget=budget))
+    running = isinstance(runner.state, Running)
+    remaining = budget_remaining(runner.iterations, runner.config.max_steps, runner.depth, running)
+    pressured = (
+        isinstance(runner.decision, Crossroads)
+        or pressure(transcript_units(runner.session.messages()), remaining) is not None
+    )
+    generation = stream(runner, prompt, pressured)
     if generation is None:
         return "cancelled"
-    return record(runner, generation)
+    if generation.text or generation.thinking:
+        runner.session.append(
+            AssistantMessageRecorded(content=generation.text, thinking=generation.thinking)
+        )
+    if generation.text.strip():
+        runner.generation.last_narration = generation.text
+    if generation.tool_calls:
+        runner.pending_tool_calls = generation.tool_calls
+    recorded = record(
+        generation,
+        isinstance(runner.state, LastWords),
+        isinstance(runner.state, Running) and undecided(runner.session),
+        runner.generation.actionless_generations,
+    )
+    runner.generation.actionless_generations = recorded.actionless
+    if recorded.pressed:
+        runner.generation.narration_pressure = True
+    if recorded.nudge is not None:
+        runner.emit(Nudge(recorded.nudge))
+    if recorded.failure is not None:
+        runner.fail(recorded.failure)
+    return recorded.outcome
