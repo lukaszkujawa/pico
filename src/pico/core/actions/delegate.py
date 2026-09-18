@@ -7,7 +7,7 @@ from pico.core.actions.context import ActionContext, ActionResult, RunnerAction
 from pico.core.actions.shape import ResultShape
 from pico.llm.types import ToolSpec
 
-MAX_DELEGATE_DEPTH = 3
+MAX_DELEGATE_DEPTH = 2
 
 DELEGATE_SPEC = ToolSpec(
     name="delegate",

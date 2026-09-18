@@ -4,7 +4,6 @@ from collections.abc import Iterator
 from pico.core.actions import MAX_DELEGATE_DEPTH, register_actions, vocabulary
 from pico.core.bus import Bus
 from pico.core.context import (
-    RECENT_UNITS,
     SYSTEM_PROMPT,
     compile_context,
     estimate_tokens,
@@ -625,13 +624,15 @@ def test_generation_step_sends_briefing_and_window_not_the_full_transcript() -> 
     session.append(PlanStepCompleted(index=0))
     session.append(UserMessageRecorded(content="start"))
     session.append(ToolCallRecorded(name="echo", arguments={}, result="noted", is_error=False))
-    for index in range(RECENT_UNITS + 4):
-        session.append(UserMessageRecorded(content=f"step {index}"))
-        session.append(AssistantMessageRecorded(content=f"done {index}", thinking=""))
+    for index in range(12):
+        session.append(UserMessageRecorded(content=f"step {index} " + "x" * 1_000))
+        session.append(
+            AssistantMessageRecorded(content=f"done {index} " + "x" * 1_000, thinking="")
+        )
     client = ScriptedClient([answer_turn()])
     transcript = session.messages()
 
-    LoopRunner(client, echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
+    LoopRunner(client, echo_registry(), Bus(), session, 2_048, DEFAULT_LOOP_CONFIG).execute()
 
     sent = client.seen_messages[0]
     assert sent[0].role is Role.SYSTEM
@@ -639,8 +640,8 @@ def test_generation_step_sends_briefing_and_window_not_the_full_transcript() -> 
     assert briefing.content.startswith("Your current plan:")
     assert "Facts gathered so far:" in briefing.content
     window = sent[2:-1]
-    assert len(window) < len(transcript)
-    assert window == [transcript[0], *transcript[-(RECENT_UNITS + 1) :]]
+    assert 0 < len(window) < len(transcript)
+    assert window == [transcript[0], *transcript[-(len(window) - 1) :]]
     assert sent[-1].content.startswith("decision required")
     assert sum("Your current plan:" in message.content for message in sent) == 1
 

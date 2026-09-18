@@ -5,7 +5,6 @@ from pico.core.bus import Bus
 from pico.core.context import (
     PLAN_INLINE_HINT,
     PLAN_ORCHESTRATED_HINT,
-    RECENT_UNITS,
     message_text,
 )
 from pico.core.ledger import facts
@@ -14,7 +13,6 @@ from pico.core.loop.decision import DECISION_GRACE, MAX_CROSSROADS
 from pico.core.loop.runner import LoopRunner
 from pico.core.loop.state import Answered, Failed
 from pico.core.loop.subruns import (
-    MAX_STEP_STEPS,
     root_task,
 )
 from pico.core.stuckness import STUCK_THRESHOLD
@@ -51,6 +49,14 @@ def _step_children(session: Session) -> list[Session]:
         (f"{session.session_id}/step/%", f"{session.session_id}/step/%/%"),
     ).fetchall()
     return [Session(session.connection, str(row[0])) for row in rows]
+
+
+def _shell_turn(index: int) -> list[StreamEvent]:
+    command = f"echo {'x' * 6_000}{index}"
+    return [
+        ToolCallReady(tool_call=ToolCall(id="c", name="shell", arguments={"command": command})),
+        GenerationComplete(finish_reason="tool_calls"),
+    ]
 
 
 def _step_session() -> tuple[Session, ToolRegistry]:
@@ -345,22 +351,12 @@ def test_a_step_child_that_ignores_two_crossroads_answers_partially() -> None:
     client = ScriptedClient(
         [
             set_plan_turn(["count the files"]),
-            *[
-                [
-                    ToolCallReady(
-                        tool_call=ToolCall(
-                            id="c", name="shell", arguments={"command": f"echo {index}"}
-                        )
-                    ),
-                    GenerationComplete(finish_reason="tool_calls"),
-                ]
-                for index in range(MAX_STEP_STEPS)
-            ],
+            *[_shell_turn(index) for index in range(18)],
             answer_turn("done"),
         ]
     )
 
-    runner = LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner = LoopRunner(client, registry, Bus(), session, 2_048, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
     recorded = next(
@@ -377,23 +373,13 @@ def test_a_step_child_answering_at_its_crossroads_settles_the_step() -> None:
     client = ScriptedClient(
         [
             set_plan_turn(["count the files"]),
-            *[
-                [
-                    ToolCallReady(
-                        tool_call=ToolCall(
-                            id="c", name="shell", arguments={"command": f"echo {index}"}
-                        )
-                    ),
-                    GenerationComplete(finish_reason="tool_calls"),
-                ]
-                for index in range(RECENT_UNITS + DECISION_GRACE + 2)
-            ],
+            *[_shell_turn(index) for index in range(DECISION_GRACE + 2)],
             answer_turn("I counted 7 files"),
             answer_turn("done"),
         ]
     )
 
-    runner = LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner = LoopRunner(client, registry, Bus(), session, 2_048, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
     recorded = next(

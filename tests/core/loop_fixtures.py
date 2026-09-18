@@ -172,11 +172,13 @@ def repeat_turns(count: int) -> list[list[StreamEvent]]:
     ]
 
 
-def note_turn(index: int) -> list[StreamEvent]:
+def note_turn(index: int, content: str | None = None) -> list[StreamEvent]:
     return [
         ToolCallReady(
             tool_call=ToolCall(
-                id=str(index), name="note", arguments={"content": f"finding {index}"}
+                id=str(index),
+                name="note",
+                arguments={"content": f"finding {index}" if content is None else content},
             )
         ),
         GenerationComplete(finish_reason="tool_calls"),

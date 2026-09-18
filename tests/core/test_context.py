@@ -2,7 +2,6 @@ import random
 from itertools import pairwise
 
 from pico.core.context import (
-    RECENT_UNITS,
     compile_context,
     estimate_tokens,
     fact_index,
@@ -306,23 +305,21 @@ def test_recency_window_returns_a_short_conversation_unchanged() -> None:
     assert recency_window(messages, budget=10_000) == messages
 
 
-def test_recency_window_cuts_to_recent_units_even_with_a_generous_budget() -> None:
+def test_recency_window_keeps_the_whole_transcript_when_the_budget_allows() -> None:
     messages: list[Message] = []
     for index in range(20):
         messages.append(Message(role=Role.USER, content=f"question {index}"))
         messages.append(Message(role=Role.ASSISTANT, content=f"answer {index}"))
 
-    window = recency_window(messages, budget=1_000_000)
-
-    assert window == [messages[0], *messages[-(RECENT_UNITS + 1) :]]
+    assert recency_window(messages, budget=1_000_000) == messages
 
 
 def test_recency_window_keeps_a_pair_straddling_the_cut_atomic() -> None:
     messages: list[Message] = [Message(role=Role.USER, content="the task")]
     for fact_id in range(10):
-        messages.extend(_tool_pair(fact_id, f"result {fact_id}"))
+        messages.extend(_tool_pair(fact_id, f"result {fact_id} " + "x" * 400))
 
-    window = recency_window(messages, budget=1_000_000)
+    window = recency_window(messages, budget=_tokens(messages) // 2)
 
     assert window[0].content == "the task"
     assert window[1].role is Role.ASSISTANT
@@ -584,18 +581,18 @@ def test_compile_context_fits_the_budget_after_overhead() -> None:
 def test_compile_context_keeps_dropped_facts_addressable_in_the_index() -> None:
     session = _session()
     session.append(UserMessageRecorded(content="start"))
-    for index in range(RECENT_UNITS + 4):
+    for index in range(12):
         session.append(
             ToolCallRecorded(
                 name="shell",
                 arguments={"command": str(index)},
-                result=f"result {index}",
+                result=f"result {index} " + "x" * 4_000,
                 is_error=False,
             )
         )
         session.append(UserMessageRecorded(content=f"next {index}"))
 
-    compiled = compile_context(session, context_size=100_000)
+    compiled = compile_context(session, context_size=8_192)
 
     briefing = compiled[0]
     window = compiled[1:]

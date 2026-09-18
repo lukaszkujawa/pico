@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from pico.core.context import prompt_budget, transcript_units
+from pico.core.context import prompt_budget, transcript_fullness
 from pico.core.events import (
     AssistantTextDelta,
     AssistantTextFinished,
@@ -155,7 +155,13 @@ def generation_step(runner: LoopRunner) -> StepOutcome:
     remaining = budget_remaining(runner.iterations, runner.config.max_steps, runner.depth, running)
     pressured = (
         isinstance(runner.decision, Crossroads)
-        or pressure(transcript_units(runner.session.messages()), remaining) is not None
+        or pressure(
+            transcript_fullness(
+                runner.session.messages(), runner.context_size, runner.generation.chars_per_token
+            ),
+            remaining,
+        )
+        is not None
     )
     generation = stream(runner, prompt, pressured)
     if generation is None:

@@ -108,18 +108,6 @@ def _unit_end(messages: list[Message], start: int) -> int:
     return end
 
 
-RECENT_UNITS = 8
-
-
-def _unit_starts(messages: list[Message]) -> list[int]:
-    starts: list[int] = []
-    position = 0
-    while position < len(messages):
-        starts.append(position)
-        position = _unit_end(messages, position)
-    return starts
-
-
 def _call_arguments(body: list[Message], index: int, tool_call_id: str) -> Mapping[str, object]:
     for call in body[index - 1].tool_calls:
         if call.id == tool_call_id:
@@ -152,10 +140,11 @@ def _pinned_positions(messages: list[Message]) -> list[int]:
     return sorted({users[0], users[-1]}) if users else []
 
 
-def transcript_units(messages: list[Message]) -> int:
-    pinned = set(_pinned_positions(messages))
-    body = [message for position, message in enumerate(messages) if position not in pinned]
-    return len(_unit_starts(body))
+def transcript_fullness(
+    messages: list[Message], context_size: int, chars_per_token: float = 4.0
+) -> float:
+    used = sum(message_tokens(message, chars_per_token) for message in messages)
+    return used / prompt_budget(context_size)
 
 
 def recency_window(
@@ -164,10 +153,6 @@ def recency_window(
     pinned = _pinned_positions(messages)
     positions = [position for position in range(len(messages)) if position not in pinned]
     body = [messages[position] for position in positions]
-    starts = _unit_starts(body)
-    if len(starts) > RECENT_UNITS:
-        keep = starts[-RECENT_UNITS]
-        positions, body = positions[keep:], body[keep:]
 
     total = sum(message_tokens(messages[position], chars_per_token) for position in pinned)
     total += sum(message_tokens(message, chars_per_token) for message in body)

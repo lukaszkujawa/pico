@@ -127,10 +127,13 @@ def test_model_recovers_a_truncated_fact_via_read_fact_and_cites_it() -> None:
     runner = LoopRunner(client, tools, bus, session, 2000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    handle = client.seen_messages[0][-1]
-    assert handle.tool_result is not None
-    assert "fact 1 shell() truncated" in handle.tool_result.content
-    assert "call read_fact(1) for the full content" in handle.tool_result.content
+    handle = next(
+        message.tool_result
+        for message in client.seen_messages[0]
+        if message.tool_result is not None
+    )
+    assert "fact 1 shell() truncated" in handle.content
+    assert "call read_fact(1) for the full content" in handle.content
 
     recalled = [
         event

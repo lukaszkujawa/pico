@@ -1,8 +1,5 @@
 from pico.core.actions import MAX_DELEGATE_DEPTH
 from pico.core.bus import Bus
-from pico.core.context import (
-    RECENT_UNITS,
-)
 from pico.core.events import (
     AnswerSettled,
     ErrorOccurred,
@@ -28,7 +25,7 @@ from pico.core.loop.runner import LoopConfig, LoopRunner
 from pico.core.loop.signals import Nudge
 from pico.core.loop.state import Answered, Failed, LastWords, Running
 from pico.core.loop.subruns import (
-    MAX_DELEGATE_STEPS,
+    CHILD_BUDGETS,
 )
 from pico.core.stuckness import NUDGE_THRESHOLD, STUCK_THRESHOLD
 from pico.llm.types import (
@@ -79,9 +76,9 @@ def test_undecided_tracks_the_plan_in_the_session() -> None:
 
 
 def test_pressure_reports_context_before_budget() -> None:
-    assert pressure(RECENT_UNITS + 1, 2) == CONTEXT_PRESSURE_CAUSE
-    assert pressure(RECENT_UNITS, 2) == "only 2 generations remain of your budget"
-    assert pressure(0, None) is None
+    assert pressure(0.9, 2) == CONTEXT_PRESSURE_CAUSE
+    assert pressure(0.5, 2) == "only 2 generations remain of your budget"
+    assert pressure(0.1, None) is None
 
 
 def test_restriction_prefers_last_words_over_a_crossroads() -> None:
@@ -186,10 +183,10 @@ def test_budget_step_is_noop_for_delegates_regardless_of_iterations() -> None:
         Bus(),
         make_session(),
         128_000,
-        LoopConfig(steps=(), max_steps=MAX_DELEGATE_STEPS),
+        LoopConfig(steps=(), max_steps=CHILD_BUDGETS[-1]),
         depth=1,
     )
-    runner.iterations = MAX_DELEGATE_STEPS
+    runner.iterations = CHILD_BUDGETS[-1]
     assert budget_step(runner) == "continue"
     assert runner.pending_nudges == []
     assert runner.state == Running()
@@ -464,11 +461,14 @@ def test_the_wind_down_nudge_still_fires_before_the_final_generation() -> None:
 def test_transcript_past_the_structural_bound_demands_a_decision_once() -> None:
     session, registry = decision_session()
     client = ScriptedClient(
-        [*[note_turn(index) for index in range(RECENT_UNITS + 3)], answer_turn()]
+        [
+            *[note_turn(index, f"finding {index} " + "x" * 4_000) for index in range(4)],
+            answer_turn(),
+        ]
     )
 
     runner = LoopRunner(
-        client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG, depth=MAX_DELEGATE_DEPTH
+        client, registry, Bus(), session, 2_048, DEFAULT_LOOP_CONFIG, depth=MAX_DELEGATE_DEPTH
     )
     runner.execute()
 
@@ -483,13 +483,13 @@ def test_a_node_with_an_active_plan_never_sees_the_demand() -> None:
     client = ScriptedClient(
         [
             set_plan_turn(["keep counting"]),
-            *[note_turn(index) for index in range(RECENT_UNITS + 3)],
+            *[note_turn(index, f"finding {index} " + "x" * 4_000) for index in range(4)],
             answer_turn(),
         ]
     )
 
     runner = LoopRunner(
-        client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG, depth=MAX_DELEGATE_DEPTH
+        client, registry, Bus(), session, 2_048, DEFAULT_LOOP_CONFIG, depth=MAX_DELEGATE_DEPTH
     )
     runner.execute()
 
@@ -609,11 +609,14 @@ def test_a_plan_set_at_the_crossroads_flows_into_step_orchestration() -> None:
 def test_heeding_the_demand_within_the_grace_window_avoids_the_crossroads() -> None:
     session, registry = decision_session()
     client = ScriptedClient(
-        [*[note_turn(index) for index in range(RECENT_UNITS + 3)], answer_turn()]
+        [
+            *[note_turn(index, f"finding {index} " + "x" * 4_000) for index in range(4)],
+            answer_turn(),
+        ]
     )
 
     runner = LoopRunner(
-        client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG, depth=MAX_DELEGATE_DEPTH
+        client, registry, Bus(), session, 2_048, DEFAULT_LOOP_CONFIG, depth=MAX_DELEGATE_DEPTH
     )
     runner.execute()
 

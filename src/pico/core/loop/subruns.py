@@ -16,8 +16,7 @@ from pico.core.tools import ToolRegistry
 from pico.llm.types import ToolCall
 from pico.session import PlanStepCompleted, Session, ToolCallRecorded, UserMessageRecorded
 
-MAX_DELEGATE_STEPS = 10
-MAX_STEP_STEPS = 30
+CHILD_BUDGETS = (30, 10)
 MAX_STEP_ATTEMPTS = 2
 
 
@@ -25,7 +24,6 @@ def run_child(
     runner: LoopRunner,
     suffix: str,
     prompt: str,
-    max_steps: int,
     shape: ResultShape | None = None,
 ) -> LoopRunner:
     child_session = runner.session.child(suffix)
@@ -38,7 +36,7 @@ def run_child(
         Bus(),
         child_session,
         runner.context_size,
-        LoopConfig(steps=runner.config.steps, max_steps=max_steps),
+        LoopConfig(steps=runner.config.steps, max_steps=CHILD_BUDGETS[runner.depth]),
         cancel=runner.cancel,
         result_shape=shape,
         depth=runner.depth + 1,
@@ -67,7 +65,6 @@ def spawn_delegate(runner: LoopRunner, delegate: Delegate) -> tuple[str, bool]:
         runner,
         f"delegate/{runner.session.next_seq()}",
         delegate.question + prompt,
-        MAX_DELEGATE_STEPS,
         delegate.shape,
     )
     result, is_error = conclude(child_runner)
@@ -136,7 +133,6 @@ def step_orchestration_step(runner: LoopRunner) -> StepOutcome:
         runner,
         f"step/{runner.session.next_seq()}",
         compose_handoff(runner.session, current, index),
-        MAX_STEP_STEPS,
     )
     if runner.cancel.is_set():
         return "cancelled"

@@ -1,6 +1,6 @@
 from dataclasses import replace
 
-from pico.core.context import RECENT_UNITS, transcript_units
+from pico.core.context import transcript_fullness
 from pico.core.events import AnswerSettled, ToolCallStarted
 from pico.core.ledger import plan
 from pico.core.loop.decision import (
@@ -22,6 +22,7 @@ from pico.core.stuckness import assess
 from pico.session import Session
 
 BUDGET_WIND_DOWN_FRACTION = 0.8
+CONTEXT_PRESSURE_FRACTION = 0.8
 
 LAST_WORDS_NUDGE = (
     "this run is ending now — {cause}. this is your final generation and answer is the "
@@ -29,8 +30,7 @@ LAST_WORDS_NUDGE = (
     "that support it, and say plainly what is still unresolved."
 )
 CONTEXT_PRESSURE_CAUSE = (
-    f"your context has passed {RECENT_UNITS} exchanges, so the earliest ones are now "
-    "falling out of it"
+    "your context is nearly full, so the earliest exchanges are falling out of it"
 )
 
 LAST_WORDS_ACTIONS = ("answer",)
@@ -78,8 +78,8 @@ def undecided(session: Session) -> bool:
     return current is None or all(step.done for step in current.steps)
 
 
-def pressure(units: int, remaining: int | None) -> str | None:
-    if units > RECENT_UNITS:
+def pressure(fullness: float, remaining: int | None) -> str | None:
+    if fullness >= CONTEXT_PRESSURE_FRACTION:
         return CONTEXT_PRESSURE_CAUSE
     if remaining is not None:
         return f"only {remaining} generations remain of your budget"
@@ -96,7 +96,12 @@ def decision_step(runner: LoopRunner) -> StepOutcome:
         iterations=runner.iterations,
         pressure=NARRATION_PRESSURE
         if narrated
-        else pressure(transcript_units(runner.session.messages()), remaining),
+        else pressure(
+            transcript_fullness(
+                runner.session.messages(), runner.context_size, runner.generation.chars_per_token
+            ),
+            remaining,
+        ),
         narration=runner.generation.last_narration,
     )
     runner.decision, command = advance(runner.decision, seen)
