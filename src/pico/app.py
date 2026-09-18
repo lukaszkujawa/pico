@@ -14,6 +14,7 @@ from pico.debug.log import LoggingLLMClient, RunLog
 from pico.llm.client import LLMClient
 from pico.llm.errors import LLMError
 from pico.llm.ollama import OllamaClient
+from pico.llm.openai import OpenAIClient
 from pico.session import Session, UserMessageRecorded, connect, new_session_id
 from pico.tui import PicoApp
 from pico.tui.commands import Options
@@ -103,9 +104,14 @@ class CancelHandle:
 
 
 def build_llm_client(config: Config, model: str | None = None) -> LLMClient:
-    if config.vendor != "ollama":
+    vendor_clients: dict[str, type[OllamaClient] | type[OpenAIClient]] = {
+        "ollama": OllamaClient,
+        "openai": OpenAIClient,
+    }
+    client_class = vendor_clients.get(config.vendor)
+    if client_class is None:
         raise UnsupportedVendorError(f"unsupported LLM vendor: {config.vendor}")
-    return OllamaClient(
+    return client_class(
         model=model or config.model,
         base_url=config.base_url,
         api_key=config.api_key,

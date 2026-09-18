@@ -14,7 +14,7 @@
 * `context_size` is a Pico-side packing budget here, not a request parameter — unlike Ollama's `num_ctx`, it is not sent.
 * `models()` reads `GET /v1/models` and returns sorted ids.
 
-## [ ] T001 OpenAI client
+## [X] T001 OpenAI client
 
 ### Description
 
@@ -29,7 +29,7 @@ Implement `OpenAIClient` in `src/pico/llm/openai.py`: message and tool-spec payl
 * Tests mirror `tests/llm/test_ollama.py`, driving an injected `httpx` transport with no network access.
 * `make check` passes.
 
-## [ ] T002 Vendor dispatch
+## [X] T002 Vendor dispatch
 
 ### Description
 
