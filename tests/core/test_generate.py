@@ -38,6 +38,7 @@ from pico.core.loop.generate import (
     generation_step,
     record,
 )
+from pico.core.loop.policy import snapshot_step
 from pico.core.loop.prompt import MAX_CHARS_PER_TOKEN, MIN_CHARS_PER_TOKEN, reconcile, specs_text
 from pico.core.loop.runner import LoopConfig, LoopRunner
 from pico.core.loop.state import DEFAULT_CHARS_PER_TOKEN, Answered, Failed, Running
@@ -498,6 +499,7 @@ def test_generation_publishes_pressure_once_the_budget_winds_down() -> None:
         LoopConfig(steps=(generation_step,), max_steps=10),
     )
     runner.iterations = 8
+    snapshot_step(runner)
 
     generation_step(runner)
 

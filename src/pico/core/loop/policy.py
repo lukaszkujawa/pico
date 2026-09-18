@@ -12,7 +12,7 @@ from pico.core.loop.decision import (
     Crossroads,
     DecisionState,
     EndDegraded,
-    Observations,
+    IterationView,
     advance,
 )
 from pico.core.loop.runner import LoopRunner, StepOutcome
@@ -57,22 +57,6 @@ def budget_remaining(
     return max_steps - iterations
 
 
-def budget_step(runner: LoopRunner) -> StepOutcome:
-    remaining = budget_remaining(
-        runner.iterations, runner.config.max_steps, runner.depth, isinstance(runner.state, Running)
-    )
-    if remaining is None:
-        return "continue"
-    runner.emit(
-        Nudge(
-            f"the generation budget is nearly spent — {remaining} generations remain. "
-            "stop exploring, complete or prune the plan, and finish with answer using "
-            "the facts you have gathered"
-        )
-    )
-    return "continue"
-
-
 def undecided(session: Session) -> bool:
     current = plan(session)
     return current is None or all(step.done for step in current.steps)
@@ -86,25 +70,45 @@ def pressure(fullness: float, remaining: int | None) -> str | None:
     return None
 
 
-def decision_step(runner: LoopRunner) -> StepOutcome:
+def observe(runner: LoopRunner) -> IterationView:
+    running = isinstance(runner.state, Running)
     narrated = runner.generation.narration_pressure
     runner.generation.narration_pressure = False
-    running = isinstance(runner.state, Running)
     remaining = budget_remaining(runner.iterations, runner.config.max_steps, runner.depth, running)
-    seen = Observations(
-        undecided=running and undecided(runner.session),
-        iterations=runner.iterations,
-        pressure=NARRATION_PRESSURE
-        if narrated
-        else pressure(
-            transcript_fullness(
-                runner.session.messages(), runner.context_size, runner.generation.chars_per_token
-            ),
-            remaining,
-        ),
-        narration=runner.generation.last_narration,
+    fullness = transcript_fullness(
+        runner.session.messages(), runner.context_size, runner.generation.chars_per_token
     )
-    runner.decision, command = advance(runner.decision, seen)
+    return IterationView(
+        iterations=runner.iterations,
+        remaining=remaining,
+        fullness=fullness,
+        undecided=running and undecided(runner.session),
+        narration=runner.generation.last_narration,
+        pressure=NARRATION_PRESSURE if narrated else pressure(fullness, remaining),
+    )
+
+
+def snapshot_step(runner: LoopRunner) -> StepOutcome:
+    runner.view = observe(runner)
+    return "continue"
+
+
+def budget_step(runner: LoopRunner) -> StepOutcome:
+    remaining = runner.view.remaining
+    if remaining is None:
+        return "continue"
+    runner.emit(
+        Nudge(
+            f"the generation budget is nearly spent — {remaining} generations remain. "
+            "stop exploring, complete or prune the plan, and finish with answer using "
+            "the facts you have gathered"
+        )
+    )
+    return "continue"
+
+
+def decision_step(runner: LoopRunner) -> StepOutcome:
+    runner.decision, command = advance(runner.decision, runner.view)
     match command:
         case Ask(nudge=nudge):
             runner.emit(Nudge(nudge))

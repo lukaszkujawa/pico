@@ -34,11 +34,17 @@ DecisionState = Quiet | Demanded | Crossroads
 
 
 @dataclass(frozen=True)
-class Observations:
-    undecided: bool
-    iterations: int
-    pressure: str | None
-    narration: str | None
+class IterationView:
+    iterations: int = 0
+    remaining: int | None = None
+    fullness: float = 0.0
+    undecided: bool = False
+    narration: str | None = None
+    pressure: str | None = None
+
+    @property
+    def pressed(self) -> bool:
+        return self.pressure is not None
 
 
 @dataclass(frozen=True)
@@ -54,7 +60,7 @@ class EndDegraded:
 Command = Ask | EndDegraded
 
 
-def advance(state: DecisionState, seen: Observations) -> tuple[DecisionState, Command | None]:
+def advance(state: DecisionState, seen: IterationView) -> tuple[DecisionState, Command | None]:
     if not seen.undecided:
         return Quiet(), None
     match state:

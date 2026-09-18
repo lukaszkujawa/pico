@@ -7,7 +7,7 @@ from typing import Literal
 from pico.core.actions import ResultShape
 from pico.core.bus import Bus
 from pico.core.events import ErrorOccurred, RunCancelled, RunFinished, RunStarted
-from pico.core.loop.decision import DecisionState, Quiet
+from pico.core.loop.decision import DecisionState, IterationView, Quiet
 from pico.core.loop.signals import Nudge, Restrict
 from pico.core.loop.state import (
     Cancelled,
@@ -67,6 +67,7 @@ class LoopRunner:
         self.tool_call_pane_ids: dict[str, str] = {}
         self.active_restriction: Restrict | None = None
         self.decision: DecisionState = Quiet()
+        self.view = IterationView()
         self.generation = GenerationState()
         self.dispatch = DispatchState()
         self.steps = StepState()

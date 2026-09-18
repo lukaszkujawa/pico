@@ -11,7 +11,7 @@ from pico.core.loop.decision import (
     DecisionState,
     Demanded,
     EndDegraded,
-    Observations,
+    IterationView,
     Quiet,
     advance,
 )
@@ -24,13 +24,13 @@ def seen(
     iterations: int = 1,
     pressure: str | None = None,
     narration: str | None = None,
-) -> Observations:
-    return Observations(
+) -> IterationView:
+    return IterationView(
         undecided=undecided, iterations=iterations, pressure=pressure, narration=narration
     )
 
 
-TRANSITIONS: list[tuple[DecisionState, Observations, DecisionState, Command | None]] = [
+TRANSITIONS: list[tuple[DecisionState, IterationView, DecisionState, Command | None]] = [
     (Quiet(), seen(), Quiet(), None),
     (Quiet(), seen(undecided=False, pressure=CAUSE), Quiet(), None),
     (
@@ -71,14 +71,14 @@ TRANSITIONS: list[tuple[DecisionState, Observations, DecisionState, Command | No
 ]
 
 
-@pytest.mark.parametrize(("state", "observations", "next_state", "command"), TRANSITIONS)
+@pytest.mark.parametrize(("state", "view", "next_state", "command"), TRANSITIONS)
 def test_each_transition_yields_its_next_state_and_command(
     state: DecisionState,
-    observations: Observations,
+    view: IterationView,
     next_state: DecisionState,
     command: Command | None,
 ) -> None:
-    assert advance(state, observations) == (next_state, command)
+    assert advance(state, view) == (next_state, command)
 
 
 def test_an_ignored_context_demand_expires_its_grace_then_degrades() -> None:

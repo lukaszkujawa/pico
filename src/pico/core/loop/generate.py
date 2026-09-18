@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from pico.core.context import prompt_budget, transcript_fullness
+from pico.core.context import prompt_budget
 from pico.core.events import (
     AssistantTextDelta,
     AssistantTextFinished,
@@ -13,11 +13,11 @@ from pico.core.events import (
     ToolCallArgumentsDelta,
 )
 from pico.core.loop.decision import Crossroads
-from pico.core.loop.policy import budget_remaining, pressure, restriction, undecided
+from pico.core.loop.policy import restriction
 from pico.core.loop.prompt import Prompt, assemble, reconcile
 from pico.core.loop.runner import LoopRunner, StepOutcome
 from pico.core.loop.signals import Nudge
-from pico.core.loop.state import LastWords, Running, WindingDown
+from pico.core.loop.state import LastWords, WindingDown
 from pico.llm.types import (
     GenerationComplete,
     TextDelta,
@@ -151,18 +151,7 @@ def generation_step(runner: LoopRunner) -> StepOutcome:
     budget = prompt_budget(runner.context_size)
     if prompt.estimated_tokens > budget:
         runner.bus.publish(BudgetExceeded(estimated=prompt.estimated_tokens, budget=budget))
-    running = isinstance(runner.state, Running)
-    remaining = budget_remaining(runner.iterations, runner.config.max_steps, runner.depth, running)
-    pressured = (
-        isinstance(runner.decision, Crossroads)
-        or pressure(
-            transcript_fullness(
-                runner.session.messages(), runner.context_size, runner.generation.chars_per_token
-            ),
-            remaining,
-        )
-        is not None
-    )
+    pressured = isinstance(runner.decision, Crossroads) or runner.view.pressed
     generation = stream(runner, prompt, pressured)
     if generation is None:
         return "cancelled"
@@ -177,7 +166,7 @@ def generation_step(runner: LoopRunner) -> StepOutcome:
     recorded = record(
         generation,
         isinstance(runner.state, LastWords),
-        isinstance(runner.state, Running) and undecided(runner.session),
+        runner.view.undecided,
         runner.generation.actionless_generations,
     )
     runner.generation.actionless_generations = recorded.actionless

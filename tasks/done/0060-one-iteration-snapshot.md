@@ -11,7 +11,7 @@ Pressure is derived three times per generation, in three files, from the same in
 * **Behaviour-preserving.** Thresholds (`BUDGET_WIND_DOWN_FRACTION`, `CONTEXT_PRESSURE_FRACTION`, `MAX_CROSSROADS`), nudge wording, and the `NARRATION_PRESSURE` special case are unchanged. `narration_pressure` still flows from the previous generation into this iteration's view; the transition timing is identical.
 * **The snapshot is read-only.** Steps still mutate runner state (emit nudges, set `RunState`), but they never recompute what the view already holds. Exactly one writer of the view per iteration.
 
-## [ ] T001 Build the view once
+## [X] T001 Build the view once
 
 ### Description
 
@@ -24,7 +24,7 @@ Define `IterationView` and compute it once per iteration (a `snapshot_step` firs
 * `advance` takes the view (or a projection); no second observations struct exists.
 * `make check` passes.
 
-## [ ] T002 Read the view everywhere
+## [X] T002 Read the view everywhere
 
 ### Description
 
