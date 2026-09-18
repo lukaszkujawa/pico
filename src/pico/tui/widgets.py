@@ -384,30 +384,20 @@ class RequestCounter(Static):
         return Text(f"{self.requests}/{self._budget} req", style=self._theme.muted_text)
 
 
-class StatsStrip(Horizontal):
+class ActivityStrip(Horizontal):
     def __init__(
-        self,
-        context_size: int,
-        max_steps: int | None = None,
-        theme: Theme = PICO_THEME,
-        clock: Callable[[], float] = time.monotonic,
-    ):
-        super().__init__(id="stats-strip")
-        self._context_size = context_size
-        self._max_steps = max_steps
-        self._clock = clock
+        self, theme: Theme = PICO_THEME, clock: Callable[[], float] = time.monotonic
+    ) -> None:
+        super().__init__(id="activity-strip")
         self._theme = theme
+        self._clock = clock
+        self.display = False
 
     def compose(self) -> ComposeResult:
-        yield Static("ctx", classes="stats-label")
-        yield ContextMeter(self._context_size, self._theme)
-        yield Static(f" {SEPARATOR_GLYPH} ", classes="stats-separator")
-        yield RequestCounter(self._theme, self._max_steps)
-        yield Static(f" {SEPARATOR_GLYPH} ", classes="stats-separator")
         yield WaitingIndicator(self._theme)
-        yield Static(f" {SEPARATOR_GLYPH} ", classes="stats-separator")
-        yield TokenCounter(self._theme)
         yield Static(" ", classes="stats-separator")
+        yield TokenCounter(self._theme)
+        yield Static(f" {SEPARATOR_GLYPH} ", classes="stats-separator")
         yield ElapsedTimer(self._theme, self._clock)
 
     @property
@@ -422,15 +412,8 @@ class StatsStrip(Horizontal):
     def counter(self) -> TokenCounter:
         return self.query_one(TokenCounter)
 
-    @property
-    def meter(self) -> ContextMeter:
-        return self.query_one(ContextMeter)
-
-    @property
-    def requests(self) -> RequestCounter:
-        return self.query_one(RequestCounter)
-
     def start(self) -> None:
+        self.display = True
         self.indicator.start()
         self.timer.start()
         self.counter.reset()
@@ -443,6 +426,36 @@ class StatsStrip(Horizontal):
         self.stop()
         self.timer.elapsed = 0
         self.counter.reset()
+        self.display = False
+
+
+class StatsStrip(Horizontal):
+    def __init__(
+        self,
+        context_size: int,
+        max_steps: int | None = None,
+        theme: Theme = PICO_THEME,
+    ):
+        super().__init__(id="stats-strip")
+        self._context_size = context_size
+        self._max_steps = max_steps
+        self._theme = theme
+
+    def compose(self) -> ComposeResult:
+        yield Static("ctx", classes="stats-label")
+        yield ContextMeter(self._context_size, self._theme)
+        yield Static(f" {SEPARATOR_GLYPH} ", classes="stats-separator")
+        yield RequestCounter(self._theme, self._max_steps)
+
+    @property
+    def meter(self) -> ContextMeter:
+        return self.query_one(ContextMeter)
+
+    @property
+    def requests(self) -> RequestCounter:
+        return self.query_one(RequestCounter)
+
+    def reset(self) -> None:
         self.meter.reset()
         self.requests.reset()
 

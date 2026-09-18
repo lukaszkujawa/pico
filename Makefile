@@ -29,7 +29,15 @@ code:
 	bin/code.sh
 
 code_attach:
-	tmux attach -t claude-pico
+	@if [ -n "$(TASK)" ]; then \
+		tmux attach -t "claude-pico-$(TASK)"; \
+	else \
+		sessions="$$(tmux list-sessions -F '#S' 2>/dev/null | grep '^claude-pico-')"; \
+		count="$$(printf '%s\n' "$$sessions" | grep -c . )"; \
+		if [ "$$count" -eq 0 ]; then echo "no agent sessions running"; exit 1; \
+		elif [ "$$count" -eq 1 ]; then tmux attach -t "$$sessions"; \
+		else printf '%s\n' "$$sessions"; echo "attach with: make code_attach TASK=<name>"; fi \
+	fi
 
 run:
 	uv run python -m pico

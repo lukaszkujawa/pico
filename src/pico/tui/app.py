@@ -38,6 +38,7 @@ from pico.tui.messages import (
 )
 from pico.tui.theme import PICO_THEME, Theme
 from pico.tui.widgets import (
+    ActivityStrip,
     AnswerPane,
     AssistantPane,
     CommandMenu,
@@ -198,6 +199,7 @@ class PicoApp(App[None]):
     def compose(self) -> ComposeResult:
         with Conversation(id="conversation"):
             yield Splash(self._session_id(), self._local_directory())
+            yield ActivityStrip()
         yield Rule()
         with Vertical(id="footer"):
             yield CommandMenu()
@@ -232,8 +234,11 @@ class PicoApp(App[None]):
     def _stats(self) -> StatsStrip:
         return self.query_one(StatsStrip)
 
+    def _activity(self) -> ActivityStrip:
+        return self.query_one(ActivityStrip)
+
     def _stop_status(self) -> None:
-        self._stats().stop()
+        self._activity().stop()
 
     def _conversation(self) -> Conversation:
         return self.query_one("#conversation", Conversation)
@@ -241,7 +246,7 @@ class PicoApp(App[None]):
     async def _mount_at_bottom(self, pane: Static) -> None:
         conversation = self._conversation()
         pinned = conversation.pinned
-        await conversation.mount(pane)
+        await conversation.mount(pane, before=self._activity())
         if pinned:
             conversation.scroll_end(animate=False)
 
@@ -252,7 +257,7 @@ class PicoApp(App[None]):
         try:
             conversation = self._conversation()
             if self._pending_token_text:
-                self._stats().counter.estimate(self._pending_token_text)
+                self._activity().counter.estimate(self._pending_token_text)
                 self._pending_token_text = ""
             if conversation.pinned:
                 conversation.scroll_end(animate=False, immediate=True)
@@ -349,7 +354,7 @@ class PicoApp(App[None]):
     def on_run_started_message(self, message: RunStartedMessage) -> None:
         self._run_in_flight = True
         self._error_shown_this_run = False
-        self._stats().start()
+        self._activity().start()
         if self._queued_user_panes:
             self._queued_user_panes[0].queued = False
 
@@ -371,7 +376,7 @@ class PicoApp(App[None]):
             and message.iteration is not None
             and message.iteration > self._max_steps
         )
-        counter = stats.counter
+        counter = self._activity().counter
         if message.completion_tokens is None:
             if self._pending_token_text:
                 counter.estimate(self._pending_token_text)
@@ -416,10 +421,12 @@ class PicoApp(App[None]):
         self._queued_user_panes.clear()
         conversation = self._conversation()
         self._stats().reset()
+        activity = self._activity()
+        activity.reset()
         splash = self.query_one(Splash)
         splash.session_id = self._session_id()
         for child in list(conversation.children):
-            if child is not splash:
+            if child is not splash and child is not activity:
                 child.remove()
         conversation.pinned = True
 
@@ -493,5 +500,5 @@ class PicoApp(App[None]):
             pane.queued = True
         self._queued_user_panes.append(pane)
         await self._mount_at_bottom(pane)
-        self._stats().start()
+        self._activity().start()
         self._input_queue.put(text)

@@ -7,15 +7,16 @@ TASKS_DIR="$ROOT_DIR/tasks"
 TODO_DIR="$TASKS_DIR/todo"
 STOP_FILE="$ROOT_DIR/.stop_code"
 MAX_STEPS="${MAX_STEPS:-50}"
-SESSION="claude-pico"
 FORMAT_FILTER="$ROOT_DIR/bin/format_stream.jq"
-WORKTREE_DIR="$ROOT_DIR/agent-worktree"
+WORKTREES_DIR="$ROOT_DIR/agent-worktree"
+MASTER_LOCK="$ROOT_DIR/.master-lock"
 LOG_DIR="$ROOT_DIR/logs-code"
-RUN_ID="$(date +%Y%m%d-%H%M%S)"
+RUN_ID="$(date +%Y%m%d-%H%M%S)-$$"
 RUN_DIR="$LOG_DIR/$RUN_ID"
 RUNS_LOG="$LOG_DIR/runs.log"
 
-mkdir -p "$RUN_DIR"
+mkdir -p "$RUN_DIR" "$WORKTREES_DIR"
+rm -f "$STOP_FILE"
 
 export UV_PROJECT_ENVIRONMENT="$ROOT_DIR/.venv"
 source "$ROOT_DIR/.venv/bin/activate"
@@ -42,16 +43,87 @@ box_border() {
   printf "%s${RESET}\n" "$corner_right"
 }
 
-next_task() {
-  find "$TODO_DIR" -maxdepth 1 -type f -name '*.md' | sort | head -n 1
+todo_files() {
+  find "$TODO_DIR" -maxdepth 1 -type f -name '*.md' | sort
 }
 
 todo_count() {
-  find "$TODO_DIR" -maxdepth 1 -type f -name '*.md' | wc -l | tr -d ' '
+  todo_files | wc -l | tr -d ' '
 }
 
 log_event() {
-  printf '%s  %s\n' "$(date +%Y-%m-%dT%H:%M:%S)" "$*" >> "$RUNS_LOG"
+  printf '%s  [%s]  %s\n' "$(date +%Y-%m-%dT%H:%M:%S)" "$RUN_ID" "$*" >> "$RUNS_LOG"
+}
+
+with_master_lock() {
+  local waited=0
+  until mkdir "$MASTER_LOCK" 2>/dev/null; do
+    sleep 1
+    if (( ++waited > 600 )); then
+      echo -e "\033[31mTimed out waiting for $MASTER_LOCK; remove it if no other run is alive.${RESET}" >&2
+      return 1
+    fi
+  done
+  "$@"
+  local status=$?
+  rmdir "$MASTER_LOCK"
+  return "$status"
+}
+
+branch_exists() {
+  git -C "$ROOT_DIR" show-ref --verify --quiet "refs/heads/$1"
+}
+
+ensure_task_committed() {
+  local task_file="$1" task_name="$2"
+  [[ -z "$(git -C "$ROOT_DIR" status --porcelain -- "$task_file")" ]] && return 0
+  log_event "committing $task_name to master"
+  git -C "$ROOT_DIR" add -- "$task_file" &&
+    git -C "$ROOT_DIR" commit --quiet -m "Add milestone ${task_name%.md}" -- "$task_file"
+}
+
+claim_worktree() {
+  local branch="$1" dir="$WORKTREES_DIR/$1"
+  [[ -d "$dir" ]] && return 1
+  if branch_exists "$branch"; then
+    if git -C "$ROOT_DIR" merge-base --is-ancestor "$branch" master; then
+      git -C "$ROOT_DIR" branch -D "$branch" >/dev/null 2>&1
+      git -C "$ROOT_DIR" worktree add -b "$branch" "$dir" master >/dev/null 2>&1
+    else
+      log_event "resuming existing branch $branch"
+      git -C "$ROOT_DIR" worktree add "$dir" "$branch" >/dev/null 2>&1
+    fi
+  else
+    git -C "$ROOT_DIR" worktree add -b "$branch" "$dir" master >/dev/null 2>&1
+  fi
+}
+
+claim_next_task() {
+  local task branch
+  while read -r task; do
+    branch="$(basename "${task%.md}")"
+    [[ -d "$WORKTREES_DIR/$branch" ]] && continue
+    with_master_lock ensure_task_committed "$task" "$(basename "$task")" || continue
+    if claim_worktree "$branch"; then
+      printf '%s\n' "$task"
+      return 0
+    fi
+  done < <(todo_files)
+  return 1
+}
+
+remove_worktree() {
+  local dir="$1"
+  git -C "$ROOT_DIR" worktree remove --force "$dir" 2>/dev/null || rm -rf "$dir"
+}
+
+merge_task() {
+  local branch="$1" dir="$2"
+  if ! git -C "$dir" rebase master >/dev/null 2>&1; then
+    git -C "$dir" rebase --abort 2>/dev/null
+    return 1
+  fi
+  git -C "$ROOT_DIR" merge --ff-only "$branch" >/dev/null
 }
 
 write_step_summary() {
@@ -80,14 +152,14 @@ write_step_summary() {
 }
 
 run_claude_in_tmux() {
-  local work_dir="$1" prompt_file="$2" step_dir="$3"
+  local session="$1" work_dir="$2" prompt_file="$3" step_dir="$4"
   local exit_file done_channel
   exit_file="$(mktemp)"
-  done_channel="${SESSION}_done_$$_${RANDOM}"
+  done_channel="${session}_done_$$_${RANDOM}"
 
-  tmux kill-session -t "$SESSION" 2>/dev/null || true
+  tmux kill-session -t "$session" 2>/dev/null || true
 
-  tmux new-session -d -s "$SESSION" -c "$work_dir" -x 220 -y 50 bash -c \
+  tmux new-session -d -s "$session" -c "$work_dir" -x 220 -y 50 bash -c \
     "claude -p \"\$(cat '$prompt_file')\" --dangerously-skip-permissions --disallowedTools AskUserQuestion --verbose --output-format stream-json | tee '$step_dir/stream.jsonl' | jq -r -f '$FORMAT_FILTER' | tee '$step_dir/console.log'; echo \${PIPESTATUS[0]} > '$exit_file'; tmux wait-for -S '$done_channel'"
 
   tmux wait-for "$done_channel"
@@ -97,7 +169,7 @@ run_claude_in_tmux() {
 
   rm -f "$exit_file"
 
-  tmux has-session -t "$SESSION" 2>/dev/null && tmux kill-session -t "$SESSION"
+  tmux has-session -t "$session" 2>/dev/null && tmux kill-session -t "$session"
 
   if [[ ! "$exit_code" =~ ^[0-9]+$ ]]; then
     exit_code=1
@@ -106,59 +178,18 @@ run_claude_in_tmux() {
   return "$exit_code"
 }
 
-remove_worktree() {
-  git -C "$ROOT_DIR" worktree remove --force "$WORKTREE_DIR" 2>/dev/null || rm -rf "$WORKTREE_DIR"
-}
-
-branch_exists() {
-  git -C "$ROOT_DIR" show-ref --verify --quiet "refs/heads/$1"
-}
-
-ensure_task_committed() {
-  local task_file="$1" task_name="$2"
-  if [[ -n "$(git -C "$ROOT_DIR" status --porcelain -- "$task_file")" ]]; then
-    echo -e "${DIM}Committing $task_name to master so the merge can retire it.${RESET}"
-    git -C "$ROOT_DIR" add -- "$task_file" &&
-      git -C "$ROOT_DIR" commit --quiet -m "Add milestone ${task_name%.md}" -- "$task_file"
-  fi
-}
-
-prepare_worktree() {
-  local branch_name="$1"
-
-  if [[ -d "$WORKTREE_DIR" ]]; then
-    local current_branch
-    current_branch="$(git -C "$WORKTREE_DIR" branch --show-current 2>/dev/null)"
-    if [[ "$current_branch" == "$branch_name" ]]; then
-      echo -e "${DIM}Resuming existing worktree on $branch_name.${RESET}"
-      return 0
-    fi
-    if [[ -n "$(git -C "$WORKTREE_DIR" status --porcelain 2>/dev/null)" ]]; then
-      echo -e "\033[31mWorktree at $WORKTREE_DIR is on '$current_branch' with uncommitted changes; refusing to remove it.${RESET}"
-      return 1
-    fi
-  fi
-
-  remove_worktree
-
-  if branch_exists "$branch_name"; then
-    if git -C "$ROOT_DIR" merge-base --is-ancestor "$branch_name" master; then
-      git -C "$ROOT_DIR" branch -D "$branch_name" >/dev/null &&
-        git -C "$ROOT_DIR" worktree add -b "$branch_name" "$WORKTREE_DIR" master >/dev/null
-    else
-      echo -e "${DIM}Resuming existing branch $branch_name.${RESET}"
-      git -C "$ROOT_DIR" worktree add "$WORKTREE_DIR" "$branch_name" >/dev/null
-    fi
-  else
-    git -C "$ROOT_DIR" worktree add -b "$branch_name" "$WORKTREE_DIR" master >/dev/null
-  fi
-}
-
 cd "$ROOT_DIR"
 
-log_event "run start  id=$RUN_ID  max_steps=$MAX_STEPS  todo=$(todo_count)"
+log_event "run start  max_steps=$MAX_STEPS  todo=$(todo_count)"
 
 for ((step = 1; step <= MAX_STEPS; step++)); do
+  if [[ -f "$STOP_FILE" ]]; then
+    echo
+    echo -e "${YELLOW}Stop requested via .stop_code.${RESET}"
+    log_event "run end    stopped via .stop_code"
+    exit 0
+  fi
+
   before_count=$(todo_count)
 
   if (( before_count == 0 )); then
@@ -168,81 +199,68 @@ for ((step = 1; step <= MAX_STEPS; step++)); do
     exit 0
   fi
 
-  before_task=$(next_task)
-  task_name="$(basename "$before_task")"
-  step_line="STEP $step/$MAX_STEPS  ·  $before_count task(s) remaining"
-  next_line="next: $task_name"
-  attach_line="watch live: make code_attach"
+  before_task="$(claim_next_task)"
+  if [[ -z "$before_task" ]]; then
+    echo
+    echo -e "${BOLD}$before_count task(s) remain, all claimed by other agents.${RESET}"
+    log_event "run end    remaining tasks claimed elsewhere"
+    exit 0
+  fi
 
+  task_name="$(basename "$before_task")"
   branch_name="${task_name%.md}"
+  worktree_dir="$WORKTREES_DIR/$branch_name"
+  session="claude-pico-$branch_name"
   step_dir="$RUN_DIR/$(printf '%02d' "$step")-$branch_name"
   mkdir -p "$step_dir"
 
   echo
   box_border "┌" "┐"
-  box_line "$step_line" "${BOLD}STEP $step/$MAX_STEPS${RESET}  ${DIM}·${RESET}  ${before_count} task(s) remaining"
-  box_line "$next_line" "${DIM}next:${RESET} ${YELLOW}$task_name${RESET}"
-  box_line "$attach_line" "${DIM}watch live:${RESET} ${BOLD}make code_attach${RESET}"
+  box_line "STEP $step/$MAX_STEPS  ·  $before_count task(s) remaining" \
+    "${BOLD}STEP $step/$MAX_STEPS${RESET}  ${DIM}·${RESET}  ${before_count} task(s) remaining"
+  box_line "next: $task_name" "${DIM}next:${RESET} ${YELLOW}$task_name${RESET}"
+  box_line "watch live: make code_attach TASK=$branch_name" \
+    "${DIM}watch live:${RESET} ${BOLD}make code_attach TASK=$branch_name${RESET}"
   box_border "└" "┘"
   echo
 
   log_event "step $step  task=$task_name  branch=$branch_name  log=${step_dir#$LOG_DIR/}"
 
-  if ! ensure_task_committed "$before_task" "$task_name"; then
-    echo
-    echo -e "\033[31mFailed to commit $task_name to master.${RESET}"
-    log_event "step $step  FAILED committing $task_name"
-    exit 1
-  fi
+  ln -sf "$ROOT_DIR/.env" "$worktree_dir/.env"
 
-  if ! prepare_worktree "$branch_name"; then
-    echo
-    echo -e "\033[31mFailed to create worktree for $branch_name.${RESET}"
-    log_event "step $step  FAILED worktree creation"
-    exit 1
-  fi
-
-  ln -sf "$ROOT_DIR/.env" "$WORKTREE_DIR/.env"
-
-  if [[ ! -f "$WORKTREE_DIR/tasks/todo/$task_name" ]]; then
+  if [[ ! -f "$worktree_dir/tasks/todo/$task_name" ]]; then
     echo
     echo -e "\033[31m$task_name is missing from the worktree despite being committed.${RESET}"
     log_event "step $step  FAILED task missing from worktree"
     exit 1
   fi
 
+  {
+    cat "$worktree_dir/tasks/PROMPT.md"
+    printf '\nYour assigned milestone is `tasks/todo/%s`.\n' "$task_name"
+  } > "$step_dir/prompt.md"
+
   started_at=$SECONDS
-  run_claude_in_tmux "$WORKTREE_DIR" "$WORKTREE_DIR/tasks/PROMPT.md" "$step_dir"
+  run_claude_in_tmux "$session" "$worktree_dir" "$step_dir/prompt.md" "$step_dir"
   claude_exit=$?
   write_step_summary "$step_dir" "$task_name" "$branch_name" "$claude_exit" "$(( SECONDS - started_at ))"
 
-  if [[ -f "$STOP_FILE" ]]; then
-    rm -f "$STOP_FILE"
-    echo
-    echo -e "${YELLOW}Stop requested via .stop_code.${RESET} Stopping after current step."
-    log_event "run end    stopped via .stop_code"
-    exit 0
-  fi
-
   if (( claude_exit != 0 )); then
     echo
-    echo -e "\033[31mClaude exited with status $claude_exit.${RESET} Worktree left at $WORKTREE_DIR for inspection."
+    echo -e "\033[31mClaude exited with status $claude_exit.${RESET} Worktree left at $worktree_dir for inspection."
     log_event "step $step  FAILED claude exit=$claude_exit"
     exit 1
   fi
 
-  worktree_done_file="$WORKTREE_DIR/tasks/done/$task_name"
-  worktree_todo_file="$WORKTREE_DIR/tasks/todo/$task_name"
-
-  if [[ -f "$worktree_done_file" ]] && [[ ! -f "$worktree_todo_file" ]]; then
-    if ! git -C "$ROOT_DIR" merge --ff-only "$branch_name" >/dev/null; then
+  if [[ -f "$worktree_dir/tasks/done/$task_name" ]] && [[ ! -f "$worktree_dir/tasks/todo/$task_name" ]]; then
+    if ! with_master_lock merge_task "$branch_name" "$worktree_dir"; then
       echo
-      echo -e "\033[31mFailed to fast-forward master to $branch_name.${RESET} Worktree left at $WORKTREE_DIR for inspection."
-      log_event "step $step  FAILED fast-forward merge of $branch_name"
+      echo -e "\033[31mFailed to merge $branch_name into master.${RESET} Worktree left at $worktree_dir for inspection."
+      log_event "step $step  FAILED merge of $branch_name"
       exit 1
     fi
 
-    remove_worktree
+    remove_worktree "$worktree_dir"
 
     if [[ -f "$before_task" ]]; then
       echo
@@ -269,8 +287,8 @@ for ((step = 1; step <= MAX_STEPS; step++)); do
 
   echo
   echo -e "\033[31mNo progress on $task_name this run.${RESET}"
-  echo "Worktree left at $WORKTREE_DIR for inspection. Branch: $branch_name"
-  log_event "step $step  NO PROGRESS $task_name  worktree kept at $WORKTREE_DIR"
+  echo "Worktree left at $worktree_dir for inspection. Branch: $branch_name"
+  log_event "step $step  NO PROGRESS $task_name  worktree kept at $worktree_dir"
   exit 1
 done
 

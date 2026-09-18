@@ -30,6 +30,7 @@ from pico.tui.messages import UserInputSubmitted
 from pico.tui.widgets import (
     CURRENT_GLYPH,
     SUCCESS_GLYPH,
+    ActivityStrip,
     AnswerPane,
     AssistantPane,
     CommandMenu,
@@ -1057,12 +1058,13 @@ async def test_submitting_input_starts_spinner_elapsed_and_tokens_together() -> 
     app = PicoApp(bus, queue.Queue())
     async with app.run_test() as pilot:
         await pilot.pause()
-        strip = app.query_one(StatsStrip)
-        assert strip.display is True
+        activity = app.query_one(ActivityStrip)
+        assert activity.display is False
         assert app.query_one(WaitingIndicator).running is False
 
         await _submit(app, pilot)
 
+        assert activity.display is True
         assert app.query_one(WaitingIndicator).running is True
         assert app.query_one(ElapsedTimer).running is True
         assert app.query_one(ElapsedTimer).elapsed == 0
@@ -1097,7 +1099,7 @@ async def test_run_ending_freezes_elapsed_and_tokens_while_stopping_spinner(
         )
 
         assert app.query_one(ElapsedTimer).running is False
-        assert app.query_one(StatsStrip).display is True
+        assert app.query_one(ActivityStrip).display is True
         assert app.query_one(TokenCounter).render().plain == "37 tokens"
 
 
@@ -1301,14 +1303,14 @@ async def test_stats_strip_sits_under_the_input_inside_the_footer() -> None:
         assert len(app.query_one("#conversation", VerticalScroll).query(StatsStrip)) == 0
 
 
-async def test_stats_strip_places_the_spinner_between_requests_and_tokens() -> None:
+async def test_activity_strip_holds_spinner_tokens_and_timer_inside_the_conversation() -> None:
     bus = Bus()
     app = PicoApp(bus, queue.Queue())
     async with app.run_test() as pilot:
         await pilot.pause()
 
         strip = app.query_one(StatsStrip)
-        readouts = [
+        footer_readouts = [
             type(child)
             for child in strip.children
             if isinstance(
@@ -1316,13 +1318,33 @@ async def test_stats_strip_places_the_spinner_between_requests_and_tokens() -> N
                 ContextMeter | RequestCounter | WaitingIndicator | TokenCounter | ElapsedTimer,
             )
         ]
-        assert readouts == [
-            ContextMeter,
-            RequestCounter,
-            WaitingIndicator,
-            TokenCounter,
-            ElapsedTimer,
+        assert footer_readouts == [ContextMeter, RequestCounter]
+
+        activity = app.query_one(ActivityStrip)
+        conversation = app.query_one("#conversation", VerticalScroll)
+        assert activity.parent is conversation
+        activity_readouts = [
+            type(child)
+            for child in activity.children
+            if isinstance(child, WaitingIndicator | TokenCounter | ElapsedTimer)
         ]
+        assert activity_readouts == [WaitingIndicator, TokenCounter, ElapsedTimer]
+
+
+async def test_activity_strip_stays_under_the_most_recent_pane() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _submit(app, pilot)
+
+        bus.publish(RunStarted())
+        bus.publish(AssistantTextStarted(id="0"))
+        await settle(pilot, lambda: len(app.query(AssistantPane)) == 1, "the pane mounts")
+
+        conversation = app.query_one("#conversation", VerticalScroll)
+        assert isinstance(conversation.children[-1], ActivityStrip)
+        assert conversation.children[-2] is app.query_one(AssistantPane)
 
 
 async def test_spinner_keeps_running_through_thinking_text_and_tool_call_panes() -> None:
@@ -1353,7 +1375,7 @@ async def test_spinner_keeps_running_through_thinking_text_and_tool_call_panes()
         bus.publish(ToolCallFinished(id="2", tool_call=tool_call, result="ok", is_error=False))
         await settle(pilot, lambda: app.query_one(ToolCallPane).finished, "the tool call finishes")
         assert app.query_one(WaitingIndicator).running is True
-        assert app.query_one(StatsStrip).display is True
+        assert app.query_one(ActivityStrip).display is True
 
 
 async def test_spinner_stops_on_run_cancelled_after_panes() -> None:
@@ -1501,11 +1523,12 @@ async def test_new_session_resets_every_stat() -> None:
         await settle(pilot, lambda: strip.meter.used == 0, "the meter empties")
 
         assert strip.requests.requests == 0
-        assert strip.counter.render().plain == "~0 tokens"
-        assert strip.timer.elapsed == 0
-        assert strip.timer.running is False
-        assert strip.indicator.running is False
-        assert strip.display is True
+        activity = app.query_one(ActivityStrip)
+        assert activity.counter.render().plain == "~0 tokens"
+        assert activity.timer.elapsed == 0
+        assert activity.timer.running is False
+        assert activity.indicator.running is False
+        assert activity.display is False
 
 
 async def test_stats_strip_uses_the_configured_context_size() -> None:

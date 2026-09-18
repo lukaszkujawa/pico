@@ -4,7 +4,7 @@ You are working unattended on the Pico project.
 
 Milestones live in `tasks/todo/`, one markdown file per milestone, named `NNNN-description.md`. The numeric prefix defines execution order.
 
-1. Pick the file in `tasks/todo/` with the lowest `NNNN`. Work only on that milestone.
+1. Your assigned milestone is named at the end of this prompt. Work only on that milestone, even if lower-numbered files exist in `tasks/todo/`.
 2. Read the entire milestone before making changes.
 3. Complete its tasks in order, top to bottom.
 4. After completing each task, run `make check` and fix all failures before moving to the next task. This is the only command you need to verify your work — do not run `uv run pytest`, `uv run ruff`, `uv run pyright`, or any other check individually; `make check` already runs all of them. Never run `make evals`: it needs a live model and long wall-clock time and is run by a human separately. If a milestone tells you to run it, skip that instruction and note in the completion notes that evals were left to a manual run.

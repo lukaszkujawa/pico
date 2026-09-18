@@ -12,6 +12,15 @@
 #input-bar {
     height: auto;
 }
+#activity-strip {
+    height: 1;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+#activity-strip Static {
+    width: auto;
+    height: 1;
+}
 #stats-strip {
     height: 2;
     padding: 0 1 1 1;
