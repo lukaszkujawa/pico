@@ -30,6 +30,7 @@ from pico.core.events import (
     ToolCallStarted,
 )
 from pico.core.loop import DEFAULT_LOOP_CONFIG
+from pico.core.loop.decision import NARRATION_PRESSURE, Crossroads
 from pico.core.loop.generate import MAX_ACTIONLESS_GENERATIONS, generation_step
 from pico.core.loop.prompt import MAX_CHARS_PER_TOKEN, MIN_CHARS_PER_TOKEN, specs_text
 from pico.core.loop.runner import LoopConfig, LoopRunner
@@ -507,7 +508,7 @@ def test_generation_publishes_pressure_at_a_decision_crossroads() -> None:
         client, echo_registry(), bus, session, 128_000, LoopConfig(steps=(generation_step,))
     )
     runner.iterations = 2
-    runner.decision.crossroads = True
+    runner.decision = Crossroads(NARRATION_PRESSURE, 1)
 
     generation_step(runner)
 

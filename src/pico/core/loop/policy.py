@@ -1,32 +1,36 @@
-from dataclasses import dataclass, replace
+from dataclasses import replace
 
 from pico.core.context import RECENT_UNITS, transcript_units
 from pico.core.events import AnswerSettled, ToolCallStarted
 from pico.core.ledger import plan
+from pico.core.loop.decision import (
+    CROSSROADS_ACTIONS,
+    DECISION_NUDGE,
+    MAX_CROSSROADS,
+    NARRATION_PRESSURE,
+    Ask,
+    Crossroads,
+    EndDegraded,
+    Observations,
+    advance,
+)
 from pico.core.loop.runner import LoopRunner, StepOutcome
 from pico.core.loop.signals import Nudge, Restrict
 from pico.core.loop.state import Answered, LastWords, Running, WindingDown
 from pico.core.stuckness import assess
 
 BUDGET_WIND_DOWN_FRACTION = 0.8
-DECISION_GRACE = 3
-MAX_CROSSROADS = 2
 
 LAST_WORDS_NUDGE = (
     "this run is ending now — {cause}. this is your final generation and answer is the "
     "only tool you have left. answer with what you have found so far, citing the facts "
     "that support it, and say plainly what is still unresolved."
 )
-DECISION_NUDGE = (
-    "decision required — {cause}. either set_plan to hand the remaining work to fresh "
-    "agents, or finish with answer. say which one and why, then do it."
-)
 CONTEXT_PRESSURE_CAUSE = (
     f"your context has passed {RECENT_UNITS} exchanges, so the earliest ones are now "
     "falling out of it"
 )
 
-CROSSROADS_ACTIONS = ("set_plan", "answer", "note")
 LAST_WORDS_ACTIONS = ("answer",)
 
 
@@ -70,72 +74,55 @@ def undecided(runner: LoopRunner) -> bool:
     return current is None or all(step.done for step in current.steps)
 
 
-@dataclass(frozen=True)
-class Pressure:
-    name: str
-    cause: str
-
-
-NARRATION_PRESSURE = Pressure(
-    "narration", "you wrote text but took no action, and you have no plan running"
-)
-
-
-def pressure(runner: LoopRunner) -> Pressure | None:
+def pressure(runner: LoopRunner) -> str | None:
     if transcript_units(runner.session.messages()) > RECENT_UNITS:
-        return Pressure("context", CONTEXT_PRESSURE_CAUSE)
+        return CONTEXT_PRESSURE_CAUSE
     if budget_nearly_spent(runner):
         assert runner.config.max_steps is not None
         remaining = runner.config.max_steps - runner.iterations
-        return Pressure("budget", f"only {remaining} generations remain of your budget")
+        return f"only {remaining} generations remain of your budget"
     return None
 
 
-def decision_step(runner: LoopRunner) -> StepOutcome:
-    decision = runner.decision
-    if decision.crossroads:
-        decision.crossroads = False
-        decision.crossroads_generations += 1
-    if not undecided(runner):
-        decision.demanded.clear()
-        decision.demanded_at = None
-        decision.crossroads_generations = 0
-        return "continue"
-    if decision.crossroads_generations >= MAX_CROSSROADS:
-        return _degraded_ending(runner)
-    if decision.demanded_at is not None:
-        ignored_for = runner.iterations - decision.demanded_at
-        decision.crossroads = decision.crossroads_generations > 0 or ignored_for > DECISION_GRACE
-        return "continue"
-    found = pressure(runner)
-    if found is not None:
-        demand(runner, found)
-    return "continue"
-
-
-def record_narration(runner: LoopRunner, text: str) -> None:
-    runner.decision.last_narration = text
-
-
-def demand(runner: LoopRunner, found: Pressure) -> None:
-    decision = runner.decision
-    if found.name in decision.demanded:
-        return
-    decision.demanded.add(found.name)
-    decision.demanded_at = runner.iterations
-    runner.emit(Nudge(DECISION_NUDGE.format(cause=found.cause)))
-
-
-def _crossroads_signal(runner: LoopRunner) -> Restrict:
-    found = pressure(runner)
-    cause = CONTEXT_PRESSURE_CAUSE if found is None else found.cause
-    return Restrict(
-        allowed=CROSSROADS_ACTIONS,
-        text=DECISION_NUDGE.format(cause=cause),
-        rejection=(
-            f"a decision is required first; the tools you have are {', '.join(CROSSROADS_ACTIONS)}"
-        ),
+def observe(runner: LoopRunner) -> Observations:
+    narrated = runner.generation.narration_pressure
+    runner.generation.narration_pressure = False
+    return Observations(
+        undecided=undecided(runner),
+        iterations=runner.iterations,
+        pressure=NARRATION_PRESSURE if narrated else pressure(runner),
+        narration=runner.generation.last_narration,
     )
+
+
+def decision_step(runner: LoopRunner) -> StepOutcome:
+    runner.decision, command = advance(runner.decision, observe(runner))
+    match command:
+        case Ask(nudge=nudge):
+            runner.emit(Nudge(nudge))
+        case EndDegraded(narration=narration):
+            if narration is None:
+                runner.state = WindingDown(
+                    f"{MAX_CROSSROADS} decision points passed with neither a plan nor an answer"
+                )
+                return "continue"
+            runner.state = Answered(narration)
+            pane_id = runner.new_id()
+            runner.bus.publish(ToolCallStarted(id=pane_id, name="answer", arguments={}))
+            runner.bus.publish(
+                AnswerSettled(
+                    id=pane_id,
+                    content=narration,
+                    accepted=True,
+                    reason=None,
+                    verify=None,
+                    complete=False,
+                )
+            )
+            return "done"
+        case None:
+            pass
+    return "continue"
 
 
 def restriction(runner: LoopRunner, nudge: str | None) -> Restrict | None:
@@ -145,32 +132,15 @@ def restriction(runner: LoopRunner, nudge: str | None) -> Restrict | None:
             text=LAST_WORDS_NUDGE.format(cause=runner.state.cause),
             rejection="answer is the only tool left",
         )
-    if not runner.decision.crossroads:
+    if not isinstance(runner.decision, Crossroads):
         return None
-    crossroads = _crossroads_signal(runner)
+    crossroads = Restrict(
+        allowed=CROSSROADS_ACTIONS,
+        text=DECISION_NUDGE.format(cause=runner.decision.cause),
+        rejection=(
+            f"a decision is required first; the tools you have are {', '.join(CROSSROADS_ACTIONS)}"
+        ),
+    )
     if nudge is not None:
         return replace(crossroads, text=nudge)
     return crossroads
-
-
-def _degraded_ending(runner: LoopRunner) -> StepOutcome:
-    narration = runner.decision.last_narration
-    if narration is None:
-        runner.state = WindingDown(
-            f"{MAX_CROSSROADS} decision points passed with neither a plan nor an answer"
-        )
-        return "continue"
-    runner.state = Answered(narration)
-    pane_id = runner.new_id()
-    runner.bus.publish(ToolCallStarted(id=pane_id, name="answer", arguments={}))
-    runner.bus.publish(
-        AnswerSettled(
-            id=pane_id,
-            content=narration,
-            accepted=True,
-            reason=None,
-            verify=None,
-            complete=False,
-        )
-    )
-    return "done"

@@ -38,18 +38,11 @@ RunState = Running | WindingDown | LastWords | Answered | Failed | Cancelled
 
 
 @dataclass
-class DecisionState:
-    demanded: set[str] = field(default_factory=set[str])
-    demanded_at: int | None = None
-    crossroads: bool = False
-    crossroads_generations: int = 0
-    last_narration: str | None = None
-
-
-@dataclass
 class GenerationState:
     actionless_generations: int = 0
     chars_per_token: float = DEFAULT_CHARS_PER_TOKEN
+    last_narration: str | None = None
+    narration_pressure: bool = False
 
 
 @dataclass

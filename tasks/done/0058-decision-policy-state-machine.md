@@ -11,7 +11,7 @@
 * **`generate.record` stops mutating decision state directly.** Narration pressure becomes an observation (`NARRATION_PRESSURE` flows in via the snapshot), so the machine has exactly one driver.
 * Transition tests are table-driven over `(state, observations) -> (state, command)` with no runner, bus, or session fakes.
 
-## [ ] T001 States, observations, and transitions
+## [X] T001 States, observations, and transitions
 
 ### Description
 
@@ -23,7 +23,7 @@ Define the state union, the observations snapshot, the command union, and `advan
 * `DECISION_GRACE` and `MAX_CROSSROADS` behaviour is bit-for-bit identical to today, demonstrated by tests mirroring the current sequences.
 * `make check` passes.
 
-## [ ] T002 Drive the machine from the step
+## [X] T002 Drive the machine from the step
 
 ### Description
 

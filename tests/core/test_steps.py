@@ -10,10 +10,7 @@ from pico.core.context import (
 )
 from pico.core.ledger import facts
 from pico.core.loop import DEFAULT_LOOP_CONFIG
-from pico.core.loop.policy import (
-    DECISION_GRACE,
-    MAX_CROSSROADS,
-)
+from pico.core.loop.decision import DECISION_GRACE, MAX_CROSSROADS
 from pico.core.loop.runner import LoopRunner
 from pico.core.loop.state import Answered, Failed
 from pico.core.loop.subruns import (

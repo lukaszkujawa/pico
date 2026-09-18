@@ -9,13 +9,12 @@ from pico.core.events import (
     RunFinished,
 )
 from pico.core.loop import DEFAULT_LOOP_CONFIG, DEFAULT_LOOP_STEPS
+from pico.core.loop.decision import CROSSROADS_ACTIONS, DECISION_GRACE
 from pico.core.loop.dispatch import tool_call_step
 from pico.core.loop.generate import generation_step
 from pico.core.loop.policy import (
     BUDGET_WIND_DOWN_FRACTION,
     CONTEXT_PRESSURE_CAUSE,
-    CROSSROADS_ACTIONS,
-    DECISION_GRACE,
     budget_step,
     decision_step,
     stuckness_step,

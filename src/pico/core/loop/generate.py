@@ -10,13 +10,8 @@ from pico.core.events import (
     GenerationCompleted,
     ToolCallArgumentsDelta,
 )
-from pico.core.loop.policy import (
-    NARRATION_PRESSURE,
-    demand,
-    pressure,
-    record_narration,
-    undecided,
-)
+from pico.core.loop.decision import Crossroads
+from pico.core.loop.policy import pressure, undecided
 from pico.core.loop.prompt import Prompt, assemble, reconcile
 from pico.core.loop.runner import LoopRunner, StepOutcome
 from pico.core.loop.signals import Nudge
@@ -90,7 +85,8 @@ def stream(runner: LoopRunner, prompt: Prompt) -> Generation | None:
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
                         iteration=runner.iterations,
-                        pressure=runner.decision.crossroads or pressure(runner) is not None,
+                        pressure=isinstance(runner.decision, Crossroads)
+                        or pressure(runner) is not None,
                     )
                 )
                 if prompt_tokens:
@@ -111,7 +107,7 @@ def record(runner: LoopRunner, generation: Generation) -> StepOutcome:
     if text or generation.thinking:
         runner.session.append(AssistantMessageRecorded(content=text, thinking=generation.thinking))
     if text.strip():
-        record_narration(runner, text)
+        runner.generation.last_narration = text
 
     if generation.tool_calls:
         runner.generation.actionless_generations = 0
@@ -122,7 +118,7 @@ def record(runner: LoopRunner, generation: Generation) -> StepOutcome:
         return "done"
     if undecided(runner):
         runner.generation.actionless_generations = 0
-        demand(runner, NARRATION_PRESSURE)
+        runner.generation.narration_pressure = True
         return "continue"
     runner.generation.actionless_generations += 1
     if runner.generation.actionless_generations >= MAX_ACTIONLESS_GENERATIONS:
