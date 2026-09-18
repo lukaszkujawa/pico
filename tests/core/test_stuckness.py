@@ -208,6 +208,17 @@ def test_assess_windowed_repeat_nudge_names_existing_fact_id() -> None:
     assert result.stuck is False
 
 
+def test_assess_windowed_repeat_with_missing_fact_yields_no_nudge_and_no_failure() -> None:
+    session = _session()
+    session.append(_call(name="read_file", arguments={"path": "a"}))
+    session.append(_call(name="read_file", arguments={"path": "b"}))
+    session.append(_call(name="read_file", arguments={"path": "a"}))
+    session.connection.execute("UPDATE events SET fact_id = NULL")
+    result = assess(session)
+    assert result.nudge is None
+    assert result.stuck is False
+
+
 def test_windowed_repeat_ignores_errored_calls() -> None:
     session = _session()
     session.append(_call(name="read_file", arguments={"path": "a"}, is_error=True))

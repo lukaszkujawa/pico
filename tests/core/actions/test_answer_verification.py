@@ -9,6 +9,7 @@ from pico.core.events import (
 )
 from pico.core.loop import DEFAULT_LOOP_CONFIG
 from pico.core.loop.runner import LoopRunner
+from pico.core.loop.state import Answered, Failed
 from pico.core.stuckness import STUCK_THRESHOLD
 from pico.llm.types import (
     GenerationComplete,
@@ -44,7 +45,7 @@ def test_answer_with_passing_verification_ends_run() -> None:
     runner = LoopRunner(client, echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    assert runner.final_answer == "done"
+    assert runner.state == Answered("done")
     recorded = [event for event in session.events() if isinstance(event, ToolCallRecorded)][-1]
     assert recorded.is_error is False
     assert recorded.result == "done\n\nverified: true"
@@ -89,7 +90,7 @@ def test_answer_with_failing_verification_is_rejected_and_run_continues() -> Non
     runner = LoopRunner(client, echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    assert runner.final_answer is None
+    assert not isinstance(runner.state, Answered)
     recorded = [event for event in session.events() if isinstance(event, ToolCallRecorded)][-1]
     assert recorded.is_error is True
     assert "verification failed (exit 3)" in recorded.result
@@ -133,7 +134,7 @@ def test_answer_verification_sees_the_working_directory(tmp_path: Path) -> None:
     runner = LoopRunner(client, echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    assert runner.final_answer is None
+    assert not isinstance(runner.state, Answered)
 
     target.write_text("hello")
     session = make_session("s2")
@@ -144,7 +145,7 @@ def test_answer_verification_sees_the_working_directory(tmp_path: Path) -> None:
     runner = LoopRunner(client, echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    assert runner.final_answer == "wrote it"
+    assert runner.state == Answered("wrote it")
 
 
 def test_answer_without_verification_result_is_the_content_alone() -> None:
@@ -158,7 +159,7 @@ def test_answer_without_verification_result_is_the_content_alone() -> None:
     runner = LoopRunner(client, echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    assert runner.final_answer == "done"
+    assert runner.state == Answered("done")
     recorded = [event for event in session.events() if isinstance(event, ToolCallRecorded)][-1]
     assert recorded.result == "done"
     assert recorded.is_error is False
@@ -185,12 +186,11 @@ def test_repeated_failing_verification_hits_stuckness_not_invalid_action_cap() -
     runner = LoopRunner(client, echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    assert runner.final_answer is None
     recorded = [event for event in session.events() if isinstance(event, ToolCallRecorded)]
     assert len(recorded) == STUCK_THRESHOLD + 1
     assert all(event.is_error for event in recorded)
-    assert runner.error is not None
-    assert "stuck" in runner.error
+    assert isinstance(runner.state, Failed)
+    assert "stuck" in runner.state.reason
 
 
 def test_answer_verification_timeout_is_a_tool_error_not_an_invalid_action() -> None:
@@ -212,7 +212,7 @@ def test_answer_verification_timeout_is_a_tool_error_not_an_invalid_action() -> 
     ):
         runner.execute()
 
-    assert runner.final_answer is None
+    assert not isinstance(runner.state, Answered)
     assert runner.dispatch.invalid_action_attempts == 0
     recorded = [event for event in session.events() if isinstance(event, ToolCallRecorded)][-1]
     assert recorded.is_error is True

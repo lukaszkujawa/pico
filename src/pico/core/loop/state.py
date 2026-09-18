@@ -3,6 +3,40 @@ from dataclasses import dataclass, field
 DEFAULT_CHARS_PER_TOKEN = 4.0
 
 
+@dataclass(frozen=True)
+class Running:
+    pass
+
+
+@dataclass(frozen=True)
+class WindingDown:
+    cause: str
+
+
+@dataclass(frozen=True)
+class LastWords:
+    cause: str
+
+
+@dataclass(frozen=True)
+class Answered:
+    content: str
+    cause: str | None = None
+
+
+@dataclass(frozen=True)
+class Failed:
+    reason: str
+
+
+@dataclass(frozen=True)
+class Cancelled:
+    pass
+
+
+RunState = Running | WindingDown | LastWords | Answered | Failed | Cancelled
+
+
 @dataclass
 class DecisionState:
     demanded: set[str] = field(default_factory=set[str])

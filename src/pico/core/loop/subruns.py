@@ -11,6 +11,7 @@ from pico.core.bus import Bus
 from pico.core.events import ToolCallFinished, ToolCallStarted
 from pico.core.ledger import Plan, facts, plan, render_plan
 from pico.core.loop.runner import LoopConfig, LoopRunner, StepOutcome
+from pico.core.loop.state import Answered, Failed, Running, WindingDown
 from pico.core.tools import ToolRegistry
 from pico.llm.types import ToolCall
 from pico.session import PlanStepCompleted, Session, ToolCallRecorded, UserMessageRecorded
@@ -46,7 +47,19 @@ def run_child(
     return child_runner
 
 
-def run_delegate(runner: LoopRunner, delegate: Delegate) -> tuple[str, bool]:
+def conclude(child: LoopRunner) -> tuple[str, bool]:
+    match child.state:
+        case Answered(content, None):
+            return content, False
+        case Answered(content, cause):
+            return f"partial — {cause}:\n{content}", False
+        case Failed(reason):
+            return reason, True
+        case _:
+            return f"no answer within {child.config.max_steps} steps", True
+
+
+def spawn_delegate(runner: LoopRunner, delegate: Delegate) -> tuple[str, bool]:
     if runner.depth >= MAX_DELEGATE_DEPTH:
         raise InvalidActionError("delegate is not available at this depth")
     prompt = "" if delegate.shape is None else delegate.shape.prompt()
@@ -57,15 +70,10 @@ def run_delegate(runner: LoopRunner, delegate: Delegate) -> tuple[str, bool]:
         MAX_DELEGATE_STEPS,
         delegate.shape,
     )
-    if child_runner.final_answer is not None:
-        return child_runner.final_answer, False
-    if child_runner.error is not None:
-        return f"delegate failed: {child_runner.error}", True
-    return (
-        f"delegate did not answer question within {MAX_DELEGATE_STEPS} steps: "
-        f"{delegate.question!r}",
-        True,
-    )
+    result, is_error = conclude(child_runner)
+    if is_error:
+        return f"delegate failed: {result}", True
+    return result, False
 
 
 def root_task(session: Session) -> str:
@@ -105,17 +113,8 @@ def _first_unfinished(current: Plan | None) -> int | None:
     return next((index for index, step in enumerate(current.steps) if not step.done), None)
 
 
-def _step_result(child: LoopRunner, index: int, text: str) -> tuple[str, bool]:
-    if child.final_answer is not None:
-        if not child.last_words:
-            return child.final_answer, False
-        return f"partial — {child.dying_of}:\n{child.final_answer}", False
-    reason = child.error if child.error is not None else f"no answer within {MAX_STEP_STEPS} steps"
-    return f'step {index} failed — {reason}\nstep was: "{text}"', True
-
-
 def step_orchestration_step(runner: LoopRunner) -> StepOutcome:
-    if runner.depth >= MAX_DELEGATE_DEPTH or runner.dying_of is not None:
+    if runner.depth >= MAX_DELEGATE_DEPTH or not isinstance(runner.state, Running):
         return "continue"
     current = plan(runner.session)
     index = _first_unfinished(current)
@@ -125,7 +124,7 @@ def step_orchestration_step(runner: LoopRunner) -> StepOutcome:
     signature = (tuple(step.text for step in current.steps), index)
     attempts = runner.steps.attempts.get(signature, 0)
     if attempts >= MAX_STEP_ATTEMPTS:
-        runner.dying_of = f'step {index} failed twice: "{current.steps[index].text}"'
+        runner.state = WindingDown(f'step {index} failed twice: "{current.steps[index].text}"')
         return "continue"
     runner.steps.attempts[signature] = attempts + 1
 
@@ -141,7 +140,9 @@ def step_orchestration_step(runner: LoopRunner) -> StepOutcome:
     )
     if runner.cancel.is_set():
         return "cancelled"
-    result, is_error = _step_result(child, index, text)
+    result, is_error = conclude(child)
+    if is_error:
+        result = f'step {index} failed — {result}\nstep was: "{text}"'
     runner.session.append(
         ToolCallRecorded(name="step", arguments=arguments, result=result, is_error=is_error)
     )

@@ -15,6 +15,7 @@ from pico.core.loop.policy import (
     MAX_CROSSROADS,
 )
 from pico.core.loop.runner import LoopRunner
+from pico.core.loop.state import Answered, Failed
 from pico.core.loop.subruns import (
     MAX_STEP_STEPS,
     root_task,
@@ -78,7 +79,7 @@ def test_each_plan_step_runs_in_its_own_child_session() -> None:
     runner = LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    assert runner.final_answer == "12 files, loop.py is largest"
+    assert runner.state == Answered("12 files, loop.py is largest")
     first, second = _step_children(session)
     assert first.session_id != second.session_id
     assert list(first.events()) != list(second.events())
@@ -210,8 +211,8 @@ def test_failed_step_is_retried_once_then_fails_the_node() -> None:
     ]
     assert len(steps) == 2
     assert all(event.is_error for event in steps)
-    assert runner.error is not None
-    assert "count the files" in runner.error
+    assert isinstance(runner.state, Failed)
+    assert "count the files" in runner.state.reason
     assert not any(isinstance(event, PlanStepCompleted) for event in session.events())
 
 
@@ -256,7 +257,7 @@ def test_a_step_child_may_plan_and_recurse_into_its_own_children() -> None:
     [child] = _step_children(session)
     [grandchild] = _step_children(child)
     assert "read loop.py" in root_task(grandchild)
-    assert runner.final_answer == "all done"
+    assert runner.state == Answered("all done")
 
 
 def test_plan_at_max_depth_runs_inline_with_no_child_spawned() -> None:
@@ -279,7 +280,7 @@ def test_plan_at_max_depth_runs_inline_with_no_child_spawned() -> None:
     )
     runner.execute()
 
-    assert runner.final_answer == "done"
+    assert runner.state == Answered("done")
     assert PlanStepCompleted(index=0) in list(session.events())
     assert not any(
         isinstance(event, ToolCallRecorded) and event.name == "step" for event in session.events()
@@ -293,7 +294,7 @@ def test_a_run_without_a_plan_spawns_no_step_children() -> None:
     runner = LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    assert runner.final_answer == "nothing to plan"
+    assert runner.state == Answered("nothing to plan")
     assert not any(
         isinstance(event, ToolCallRecorded) and event.name == "step" for event in session.events()
     )
@@ -339,7 +340,7 @@ def test_a_step_child_that_dies_returns_a_partial_answer_marked_partial() -> Non
     assert recorded.result.startswith("partial — you are stuck")
     assert "I counted 7 before running out" in recorded.result
     assert PlanStepCompleted(index=0) in list(session.events())
-    assert runner.final_answer == "done"
+    assert runner.state == Answered("done")
 
 
 def test_a_step_child_that_ignores_two_crossroads_answers_partially() -> None:
@@ -405,4 +406,4 @@ def test_a_step_child_answering_at_its_crossroads_settles_the_step() -> None:
     )
     assert recorded.is_error is False
     assert recorded.result == "I counted 7 files"
-    assert runner.final_answer == "done"
+    assert runner.state == Answered("done")

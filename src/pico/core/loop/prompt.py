@@ -13,7 +13,6 @@ from pico.core.context import (
 from pico.core.events import BudgetExceeded
 from pico.core.loop.policy import restriction
 from pico.core.loop.runner import LoopRunner
-from pico.core.loop.signals import Nudge, Signal
 from pico.llm.types import Message, Role, ToolSpec
 
 MIN_CHARS_PER_TOKEN = 2.0
@@ -37,18 +36,14 @@ def specs_text(specs: list[ToolSpec]) -> str:
     )
 
 
-def _nudge_text(signal: Signal | None) -> str | None:
-    return signal.text if isinstance(signal, Nudge) else None
-
-
 def assemble(runner: LoopRunner) -> Prompt:
-    signal = runner.take_signal()
-    active = restriction(runner, signal)
+    nudges = runner.take_nudges()
+    joined = "\n\n".join(nudge.text for nudge in nudges) if nudges else None
+    active = restriction(runner, joined)
     runner.active_restriction = active
-    runner.last_words = runner.dying_of is not None
 
     specs = vocabulary(runner.tools, runner.depth, None if active is None else active.allowed)
-    nudge = active.text if active is not None else _nudge_text(signal)
+    nudge = active.text if active is not None else joined
     preamble = [Message(role=Role.SYSTEM, content=SYSTEM_PROMPT)]
     postamble = [] if nudge is None else [Message(role=Role.USER, content=nudge)]
 

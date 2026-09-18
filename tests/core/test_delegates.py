@@ -17,6 +17,7 @@ from pico.core.ledger import facts
 from pico.core.loop import DEFAULT_LOOP_CONFIG
 from pico.core.loop.dispatch import MAX_INVALID_ACTION_ATTEMPTS
 from pico.core.loop.runner import LoopRunner
+from pico.core.loop.state import Answered
 from pico.core.loop.subruns import (
     MAX_DELEGATE_STEPS,
 )
@@ -112,6 +113,41 @@ def test_delegate_call_exhausting_budget_without_answer_is_error() -> None:
     tool_events = [event for event in session.events() if isinstance(event, ToolCallRecorded)]
     assert tool_events[-1].name == "delegate"
     assert tool_events[-1].is_error is True
+
+
+def test_delegate_that_dies_of_budget_returns_a_partial_answer() -> None:
+    session = make_session()
+    session.append(UserMessageRecorded(content="hi"))
+    delegate_call = ToolCall(id="1", name="delegate", arguments={"question": "what is x?"})
+    turns: list[list[StreamEvent]] = [
+        [ToolCallReady(tool_call=delegate_call), GenerationComplete(finish_reason="tool_calls")],
+    ]
+    turns.extend(
+        [
+            ToolCallReady(
+                tool_call=ToolCall(id=str(i), name="note", arguments={"content": f"looking {i}"})
+            ),
+            GenerationComplete(finish_reason="tool_calls"),
+        ]
+        for i in range(MAX_DELEGATE_STEPS)
+    )
+    turns.append(answer_turn("x is probably 1"))
+    turns.append(answer_turn("done"))
+    client = ScriptedClient(turns)
+
+    runner = LoopRunner(client, echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    delegated = next(
+        event
+        for event in session.events()
+        if isinstance(event, ToolCallRecorded) and event.name == "delegate"
+    )
+    assert delegated.is_error is False
+    assert delegated.result == (
+        f"partial — the generation budget of {MAX_DELEGATE_STEPS} is spent:\nx is probably 1"
+    )
+    assert runner.state == Answered("done")
 
 
 def test_delegate_can_run_shell_and_answer_with_verify(tmp_path: Path) -> None:
@@ -732,7 +768,7 @@ def test_delegate_that_only_narrates_returns_its_last_narration_marked_unverifie
     delegated = _parent_delegate_result(session)
     assert delegated.is_error is False
     assert delegated.result == "thinking 5"
-    assert runner.final_answer == "done"
+    assert runner.state == Answered("done")
 
 
 def test_parent_can_read_and_cite_a_fact_minted_inside_a_delegate() -> None:
@@ -789,7 +825,7 @@ def test_parent_can_read_and_cite_a_fact_minted_inside_a_delegate() -> None:
     )
     assert recalled.result == "the port is 8421"
     assert recalled.is_error is False
-    assert runner.final_answer == "8421"
+    assert runner.state == Answered("8421")
 
 
 def test_child_sees_parent_facts_in_its_briefing_index() -> None:

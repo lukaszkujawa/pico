@@ -33,7 +33,7 @@ from pico.core.loop import DEFAULT_LOOP_CONFIG
 from pico.core.loop.generate import MAX_ACTIONLESS_GENERATIONS, generation_step
 from pico.core.loop.prompt import MAX_CHARS_PER_TOKEN, MIN_CHARS_PER_TOKEN, specs_text
 from pico.core.loop.runner import LoopConfig, LoopRunner
-from pico.core.loop.state import DEFAULT_CHARS_PER_TOKEN
+from pico.core.loop.state import DEFAULT_CHARS_PER_TOKEN, Answered, Failed, Running
 from pico.core.stuckness import NUDGE_THRESHOLD
 from pico.core.tools import ToolRegistry
 from pico.llm.types import (
@@ -97,7 +97,7 @@ def test_plain_text_run() -> None:
         GenerationCompleted(iteration=1),
         AssistantTextFinished(id="0"),
     ]
-    assert runner.final_answer == "hello world"
+    assert runner.state == Answered("hello world")
     assert list(session.events())[:2] == [
         UserMessageRecorded(content="hi"),
         AssistantMessageRecorded(content="hello world", thinking=""),
@@ -145,7 +145,7 @@ def test_thinking_then_text_published_in_order_with_shared_ids_across_two_turns(
         AssistantTextFinished(id="1"),
     ]
 
-    runner.final_answer = None
+    runner.state = Running()
     runner.execute()
 
     second_events = [next(subscriber) for _ in range(12)]
@@ -645,7 +645,10 @@ def _sent_overhead(client: RecordingClient, index: int) -> int:
         if message.role is Role.SYSTEM
         or (
             message.role is Role.USER
-            and message.content.startswith(("Your current plan:", "you've repeated"))
+            and (
+                message.content.startswith("Your current plan:")
+                or "you've repeated" in message.content
+            )
         )
     ]
     text = specs_text(client.seen_specs[index]) + "".join(
@@ -897,8 +900,7 @@ def test_narration_without_a_plan_demands_a_decision_instead_of_ending_the_run()
     runner = LoopRunner(client, echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    assert runner.error is None
-    assert runner.final_answer == "here it is"
+    assert runner.state == Answered("here it is")
     demand = client.seen_messages[1][-1]
     assert demand.role is Role.USER
     assert demand.content.startswith("decision required")
@@ -925,8 +927,7 @@ def test_narration_with_unfinished_plan_is_nudged_and_run_continues() -> None:
     )
     runner.execute()
 
-    assert runner.final_answer == "all reviewed"
-    assert runner.error is None
+    assert runner.state == Answered("all reviewed")
     nudge = client.seen_messages[2][-1]
     assert nudge.role is Role.USER
     assert "took no action" in nudge.content
@@ -950,10 +951,9 @@ def test_repeated_narration_with_unfinished_plan_stops_the_run_with_an_error() -
     )
     runner.execute()
 
-    assert runner.final_answer is None
-    assert runner.error is not None
-    assert "without a tool call" in runner.error
-    assert drain_until_run_finished(subscriber)[-1] == RunFinished(error=runner.error)
+    assert isinstance(runner.state, Failed)
+    assert "without a tool call" in runner.state.reason
+    assert drain_until_run_finished(subscriber)[-1] == RunFinished(error=runner.state.reason)
 
 
 def test_long_single_prompt_run_keeps_the_prompt_bounded() -> None:

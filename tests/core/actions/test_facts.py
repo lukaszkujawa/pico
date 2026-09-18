@@ -17,6 +17,7 @@ from pico.core.events import (
 from pico.core.ledger import facts
 from pico.core.loop import DEFAULT_LOOP_CONFIG
 from pico.core.loop.runner import LoopRunner
+from pico.core.loop.state import Answered, Failed
 from pico.core.tools import ToolRegistry
 from pico.llm.errors import LLMError
 from pico.llm.types import (
@@ -138,7 +139,7 @@ def test_model_recovers_a_truncated_fact_via_read_fact_and_cites_it() -> None:
     ]
     assert recalled[0].result == content
     assert recalled[0].is_error is False
-    assert runner.final_answer == "it is needles"
+    assert runner.state == Answered("it is needles")
 
 
 def test_read_fact_with_unknown_id_is_recorded_as_error() -> None:
@@ -356,7 +357,7 @@ def test_llm_error_mid_search_records_a_failed_call_and_the_run_continues() -> N
     )
     assert recorded.is_error is True
     assert "search failed" in recorded.result
-    assert runner.error is None
+    assert not isinstance(runner.state, Failed)
     assert runner.iterations == 2
 
 

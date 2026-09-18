@@ -12,6 +12,7 @@ from pico.core.events import (
     ToolCallFinished,
 )
 from pico.core.loop import DEFAULT_LOOP_CONFIG, LoopRunner
+from pico.core.loop.state import Answered
 from pico.core.tools import ToolRegistry
 from pico.llm.client import LLMClient
 from pico.session import Session, UserMessageRecorded
@@ -61,7 +62,7 @@ def run_turn(llm: LLMClient, session: Session, context_size: int, prompt: str) -
                 pass
 
     return TurnResult(
-        answer=runner.final_answer,
+        answer=runner.state.content if isinstance(runner.state, Answered) else None,
         iterations=runner.iterations,
         tool_calls=tool_calls,
         prompt_tokens=prompt_tokens,

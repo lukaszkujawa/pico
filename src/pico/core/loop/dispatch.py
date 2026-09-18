@@ -9,7 +9,8 @@ from pico.core.errors import ToolError, UnknownToolError
 from pico.core.events import AnswerSettled, ToolCallFinished, ToolCallStarted
 from pico.core.ledger import BOOKKEEPING_TOOLS, facts
 from pico.core.loop.runner import LoopRunner, StepOutcome
-from pico.core.loop.subruns import run_delegate
+from pico.core.loop.state import Answered, LastWords
+from pico.core.loop.subruns import spawn_delegate
 from pico.core.search import SearchCancelled
 from pico.llm.errors import LLMError
 from pico.llm.types import ToolCall
@@ -28,7 +29,7 @@ def _context(runner: LoopRunner, pane_id: str) -> ActionContext:
         context_size=runner.context_size,
         chars_per_token=runner.chars_per_token,
         result_shape=runner.result_shape,
-        spawn=lambda delegate: run_delegate(runner, delegate),
+        spawn=lambda delegate: spawn_delegate(runner, delegate),
     )
 
 
@@ -42,7 +43,8 @@ def _dispatch(runner: LoopRunner, pane_id: str, call: ToolCall) -> ActionResult:
     context = _context(runner, pane_id)
     result = action.execute(context, call.arguments)
     if context.final_answer is not None:
-        runner.final_answer = context.final_answer
+        cause = runner.state.cause if isinstance(runner.state, LastWords) else None
+        runner.state = Answered(context.final_answer, cause)
     return result
 
 
@@ -119,6 +121,6 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
                 outcome = "done"
         else:
             runner.dispatch.invalid_action_attempts = 0
-            if not is_error and runner.final_answer is not None:
+            if not is_error and isinstance(runner.state, Answered):
                 outcome = "done"
-    return "done" if runner.last_words else outcome
+    return "done" if isinstance(runner.state, LastWords) else outcome

@@ -16,6 +16,7 @@ from pico.core.ledger import facts
 from pico.core.loop import DEFAULT_LOOP_CONFIG
 from pico.core.loop.dispatch import MAX_INVALID_ACTION_ATTEMPTS
 from pico.core.loop.runner import LoopRunner
+from pico.core.loop.state import Failed
 from pico.core.stuckness import STUCK_THRESHOLD
 from pico.core.tools import Tool, ToolRegistry
 from pico.llm.types import (
@@ -368,7 +369,7 @@ def test_unexpected_tool_exception_finishes_run_with_error() -> None:
     runner.execute()
 
     events = [next(subscriber) for _ in range(5)]
-    assert runner.error == "wired wrong"
+    assert runner.state == Failed("wired wrong")
     assert events[-2] == ErrorOccurred(message="wired wrong")
     assert events[-1] == RunFinished(error="wired wrong")
 

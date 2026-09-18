@@ -4,7 +4,8 @@ from pico.core.context import RECENT_UNITS, transcript_units
 from pico.core.events import AnswerSettled, ToolCallStarted
 from pico.core.ledger import plan
 from pico.core.loop.runner import LoopRunner, StepOutcome
-from pico.core.loop.signals import Nudge, Restrict, Signal
+from pico.core.loop.signals import Nudge, Restrict
+from pico.core.loop.state import Answered, LastWords, Running, WindingDown
 from pico.core.stuckness import assess
 
 BUDGET_WIND_DOWN_FRACTION = 0.8
@@ -30,25 +31,25 @@ LAST_WORDS_ACTIONS = ("answer",)
 
 
 def stuckness_step(runner: LoopRunner) -> StepOutcome:
-    if runner.dying_of is not None:
+    if not isinstance(runner.state, Running):
         return "continue"
     result = assess(runner.session)
     if result.stuck:
-        runner.dying_of = f"you are stuck: {result.reason}"
+        runner.state = WindingDown(f"you are stuck: {result.reason}")
     elif result.nudge is not None:
         runner.emit(Nudge(result.nudge))
     return "continue"
 
 
-def winding_down(runner: LoopRunner) -> bool:
+def budget_nearly_spent(runner: LoopRunner) -> bool:
     max_steps = runner.config.max_steps
-    if max_steps is None or runner.depth > 0 or runner.dying_of is not None:
+    if max_steps is None or runner.depth > 0 or not isinstance(runner.state, Running):
         return False
     return runner.iterations >= int(max_steps * BUDGET_WIND_DOWN_FRACTION)
 
 
 def budget_step(runner: LoopRunner) -> StepOutcome:
-    if not winding_down(runner):
+    if not budget_nearly_spent(runner):
         return "continue"
     assert runner.config.max_steps is not None
     remaining = runner.config.max_steps - runner.iterations
@@ -63,7 +64,7 @@ def budget_step(runner: LoopRunner) -> StepOutcome:
 
 
 def undecided(runner: LoopRunner) -> bool:
-    if runner.dying_of is not None or runner.final_answer is not None:
+    if not isinstance(runner.state, Running):
         return False
     current = plan(runner.session)
     return current is None or all(step.done for step in current.steps)
@@ -83,7 +84,7 @@ NARRATION_PRESSURE = Pressure(
 def pressure(runner: LoopRunner) -> Pressure | None:
     if transcript_units(runner.session.messages()) > RECENT_UNITS:
         return Pressure("context", CONTEXT_PRESSURE_CAUSE)
-    if winding_down(runner):
+    if budget_nearly_spent(runner):
         assert runner.config.max_steps is not None
         remaining = runner.config.max_steps - runner.iterations
         return Pressure("budget", f"only {remaining} generations remain of your budget")
@@ -137,35 +138,35 @@ def _crossroads_signal(runner: LoopRunner) -> Restrict:
     )
 
 
-def restriction(runner: LoopRunner, signal: Signal | None) -> Restrict | None:
-    if runner.dying_of is not None:
+def restriction(runner: LoopRunner, nudge: str | None) -> Restrict | None:
+    if isinstance(runner.state, LastWords):
         return Restrict(
             allowed=LAST_WORDS_ACTIONS,
-            text=LAST_WORDS_NUDGE.format(cause=runner.dying_of),
+            text=LAST_WORDS_NUDGE.format(cause=runner.state.cause),
             rejection="answer is the only tool left",
         )
     if not runner.decision.crossroads:
         return None
     crossroads = _crossroads_signal(runner)
-    if isinstance(signal, Nudge):
-        return replace(crossroads, text=signal.text)
+    if nudge is not None:
+        return replace(crossroads, text=nudge)
     return crossroads
 
 
 def _degraded_ending(runner: LoopRunner) -> StepOutcome:
     narration = runner.decision.last_narration
     if narration is None:
-        runner.dying_of = (
+        runner.state = WindingDown(
             f"{MAX_CROSSROADS} decision points passed with neither a plan nor an answer"
         )
         return "continue"
-    runner.final_answer = narration
+    runner.state = Answered(narration)
     pane_id = runner.new_id()
     runner.bus.publish(ToolCallStarted(id=pane_id, name="answer", arguments={}))
     runner.bus.publish(
         AnswerSettled(
             id=pane_id,
-            content=runner.final_answer,
+            content=narration,
             accepted=True,
             reason=None,
             verify=None,

@@ -76,11 +76,14 @@ def windowed_repeat(session: Session) -> _WindowedRepeat | None:
     return _WindowedRepeat(call=call, count=count)
 
 
-def _existing_fact_id(session: Session, call: ToolCallRecorded) -> int:
+def _existing_fact_id(session: Session, call: ToolCallRecorded) -> int | None:
     return next(
-        fact.id
-        for fact in facts(session)
-        if fact.source == call.name and fact.arguments == call.arguments
+        (
+            fact.id
+            for fact in facts(session)
+            if fact.source == call.name and fact.arguments == call.arguments
+        ),
+        None,
     )
 
 
@@ -135,9 +138,11 @@ def tool_failure_streak(session: Session) -> int:
     return streak
 
 
-def _windowed_nudge(session: Session, repeat: _WindowedRepeat) -> str:
-    signature = render_call(repeat.call.name, repeat.call.arguments)
+def _windowed_nudge(session: Session, repeat: _WindowedRepeat) -> str | None:
     fact_id = _existing_fact_id(session, repeat.call)
+    if fact_id is None:
+        return None
+    signature = render_call(repeat.call.name, repeat.call.arguments)
     return (
         f"you already ran {signature} — its result is fact {fact_id}; "
         f"use read_fact({fact_id}) or do something new"
@@ -168,7 +173,7 @@ def assess(session: Session) -> Stuckness:
         )
     elif repeat is not None and repeat.count >= NUDGE_THRESHOLD:
         nudge = _windowed_nudge(session, repeat)
-    else:
+    if nudge is None:
         nudge = plan_stall_nudge(session)
 
     return Stuckness(

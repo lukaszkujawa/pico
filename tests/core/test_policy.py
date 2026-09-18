@@ -22,6 +22,7 @@ from pico.core.loop.policy import (
 )
 from pico.core.loop.runner import LoopConfig, LoopRunner
 from pico.core.loop.signals import Nudge
+from pico.core.loop.state import Answered, Failed, Running
 from pico.core.loop.subruns import (
     MAX_DELEGATE_STEPS,
 )
@@ -114,11 +115,11 @@ def test_stuck_run_carries_its_reason_on_run_finished() -> None:
     )
     runner.execute()
 
-    assert runner.error is not None
-    assert "stuck" in runner.error
+    assert isinstance(runner.state, Failed)
+    assert "stuck" in runner.state.reason
     events = drain_until_run_finished(subscriber)
-    assert ErrorOccurred(message=runner.error) in events
-    assert events[-1] == RunFinished(error=runner.error)
+    assert ErrorOccurred(message=runner.state.reason) in events
+    assert events[-1] == RunFinished(error=runner.state.reason)
 
 
 def test_budget_step_is_noop_when_max_steps_is_none() -> None:
@@ -127,8 +128,8 @@ def test_budget_step_is_noop_when_max_steps_is_none() -> None:
     )
     runner.iterations = 1_000_000
     assert budget_step(runner) == "continue"
-    assert runner.pending_signal is None
-    assert runner.error is None
+    assert runner.pending_nudges == []
+    assert runner.state == Running()
 
 
 def test_budget_step_is_noop_for_delegates_regardless_of_iterations() -> None:
@@ -143,8 +144,8 @@ def test_budget_step_is_noop_for_delegates_regardless_of_iterations() -> None:
     )
     runner.iterations = MAX_DELEGATE_STEPS
     assert budget_step(runner) == "continue"
-    assert runner.pending_signal is None
-    assert runner.error is None
+    assert runner.pending_nudges == []
+    assert runner.state == Running()
 
 
 def test_budget_step_below_wind_down_threshold_sets_no_nudge() -> None:
@@ -159,7 +160,7 @@ def test_budget_step_below_wind_down_threshold_sets_no_nudge() -> None:
     )
     runner.iterations = int(max_steps * BUDGET_WIND_DOWN_FRACTION) - 1
     assert budget_step(runner) == "continue"
-    assert runner.pending_signal is None
+    assert runner.pending_nudges == []
 
 
 def test_budget_step_at_wind_down_threshold_sets_nudge_with_remaining_count() -> None:
@@ -176,12 +177,12 @@ def test_budget_step_at_wind_down_threshold_sets_nudge_with_remaining_count() ->
     outcome = budget_step(runner)
     remaining = max_steps - runner.iterations
     assert outcome == "continue"
-    assert isinstance(runner.pending_signal, Nudge)
-    assert str(remaining) in runner.pending_signal.text
-    assert "answer" in runner.pending_signal.text
+    [nudge] = runner.pending_nudges
+    assert str(remaining) in nudge.text
+    assert "answer" in nudge.text
 
 
-def test_the_last_policy_step_to_emit_wins_the_signal_slot() -> None:
+def test_policy_steps_accumulate_their_nudges() -> None:
     max_steps = 10
     session = make_session()
     session.append(UserMessageRecorded(content="task"))
@@ -196,23 +197,22 @@ def test_the_last_policy_step_to_emit_wins_the_signal_slot() -> None:
     runner.iterations = int(max_steps * BUDGET_WIND_DOWN_FRACTION)
 
     assert budget_step(runner) == "continue"
-    assert isinstance(runner.pending_signal, Nudge)
-    assert "the generation budget is nearly spent" in runner.pending_signal.text
-
     assert decision_step(runner) == "continue"
-    assert isinstance(runner.pending_signal, Nudge)
-    assert runner.pending_signal.text.startswith("decision required")
+
+    first, second = runner.pending_nudges
+    assert "the generation budget is nearly spent" in first.text
+    assert second.text.startswith("decision required")
 
 
-def test_taking_the_signal_clears_the_slot() -> None:
+def test_taking_the_nudges_clears_the_list() -> None:
     runner = LoopRunner(
         FailingClient(), echo_registry(), Bus(), make_session(), 128_000, LoopConfig(steps=())
     )
     runner.emit(Nudge("first"))
     runner.emit(Nudge("second"))
 
-    assert runner.take_signal() == Nudge("second")
-    assert runner.take_signal() is None
+    assert runner.take_nudges() == [Nudge("first"), Nudge("second")]
+    assert runner.take_nudges() == []
 
 
 def test_budget_step_leaves_the_kill_to_the_last_words_generation() -> None:
@@ -228,7 +228,7 @@ def test_budget_step_leaves_the_kill_to_the_last_words_generation() -> None:
     runner.iterations = max_steps
 
     assert budget_step(runner) == "continue"
-    assert runner.error is None
+    assert runner.state == Running()
 
 
 def test_run_reaching_soft_threshold_gets_wind_down_nudge_then_answers_normally() -> None:
@@ -265,8 +265,7 @@ def test_run_reaching_soft_threshold_gets_wind_down_nudge_then_answers_normally(
     last_messages = client.seen_messages[-1]
     nudges = [m for m in last_messages if m.role is Role.USER and "generation budget" in m.content]
     assert len(nudges) == 1
-    assert runner.final_answer == "done"
-    assert runner.error is None
+    assert runner.state == Answered("done")
 
 
 def test_run_exhausting_budget_fails_explicitly_and_stays_resumable() -> None:
@@ -292,7 +291,7 @@ def test_run_exhausting_budget_fails_explicitly_and_stays_resumable() -> None:
     runner.execute()
 
     expected = f"run stopped: the generation budget of {max_steps} is spent"
-    assert runner.error == expected
+    assert runner.state == Failed(expected)
     last_event = next(subscriber)
     while not isinstance(last_event, RunFinished):
         last_event = next(subscriber)
@@ -308,8 +307,7 @@ def test_run_exhausting_budget_fails_explicitly_and_stays_resumable() -> None:
     followup_runner = LoopRunner(followup_client, echo_registry(), Bus(), session, 128_000, config)
     followup_runner.execute()
 
-    assert followup_runner.error is None
-    assert followup_runner.final_answer == "picked up"
+    assert followup_runner.state == Answered("picked up")
     echoes = [
         event
         for event in session.events()
@@ -329,8 +327,9 @@ def test_budget_exhaustion_forces_a_final_answer_that_becomes_the_result() -> No
     runner = LoopRunner(client, echo_registry(), Bus(), session, 128_000, config)
     runner.execute()
 
-    assert runner.final_answer == "what I found so far"
-    assert runner.error is None
+    assert runner.state == Answered(
+        "what I found so far", f"the generation budget of {max_steps} is spent"
+    )
     nudge = client.seen_messages[-1][-1]
     assert nudge.role is Role.USER
     assert "final generation" in nudge.content
@@ -360,8 +359,10 @@ def test_a_stuck_node_answers_before_the_stuck_failure() -> None:
     )
     runner.execute()
 
-    assert runner.final_answer == "partial findings"
-    assert runner.error is None
+    assert isinstance(runner.state, Answered)
+    assert runner.state.content == "partial findings"
+    assert runner.state.cause is not None
+    assert "stuck" in runner.state.cause
 
 
 def test_a_non_answer_call_in_the_final_generation_keeps_the_original_failure() -> None:
@@ -375,8 +376,7 @@ def test_a_non_answer_call_in_the_final_generation_keeps_the_original_failure() 
     runner = LoopRunner(client, echo_registry(), Bus(), session, 128_000, config)
     runner.execute()
 
-    assert runner.final_answer is None
-    assert runner.error == f"run stopped: the generation budget of {max_steps} is spent"
+    assert runner.state == Failed(f"run stopped: the generation budget of {max_steps} is spent")
     rejected = [event for event in session.events() if isinstance(event, ToolCallRecorded)][-1]
     assert rejected.is_error is True
     assert "answer is the only tool left" in rejected.result
@@ -392,8 +392,7 @@ def test_silence_in_the_final_generation_fails_with_the_original_error() -> None
     runner = LoopRunner(client, echo_registry(), Bus(), session, 128_000, config)
     runner.execute()
 
-    assert runner.final_answer is None
-    assert runner.error == f"run stopped: the generation budget of {max_steps} is spent"
+    assert runner.state == Failed(f"run stopped: the generation budget of {max_steps} is spent")
 
 
 def test_the_wind_down_nudge_still_fires_before_the_final_generation() -> None:
@@ -450,7 +449,7 @@ def test_a_node_with_an_active_plan_never_sees_the_demand() -> None:
     assert decision_demands(client) == []
 
 
-def test_the_root_at_wind_down_with_no_plan_gets_the_demand_not_the_wind_down_nudge() -> None:
+def test_the_root_at_wind_down_with_no_plan_gets_the_demand_and_the_wind_down_nudge() -> None:
     session, registry = decision_session()
     max_steps = 5
     threshold = int(max_steps * BUDGET_WIND_DOWN_FRACTION)
@@ -462,6 +461,7 @@ def test_the_root_at_wind_down_with_no_plan_gets_the_demand_not_the_wind_down_nu
     demands = decision_demands(client)
     assert len(demands) == 1
     assert "generations remain of your budget" in demands[0]
+    assert "the generation budget is nearly spent" in demands[0]
 
 
 def test_the_root_at_wind_down_with_unfinished_steps_keeps_the_wind_down_wording() -> None:
@@ -532,7 +532,7 @@ def test_a_shell_call_at_the_crossroads_is_rejected_as_an_invalid_action() -> No
     )
     assert rejected.is_error is True
     assert "a decision is required first" in rejected.result
-    assert runner.final_answer == "done"
+    assert runner.state == Answered("done")
 
 
 def test_a_plan_set_at_the_crossroads_flows_into_step_orchestration() -> None:
@@ -556,7 +556,7 @@ def test_a_plan_set_at_the_crossroads_flows_into_step_orchestration() -> None:
     )
     assert recorded.is_error is False
     assert recorded.result == "counted"
-    assert runner.final_answer == "all done"
+    assert runner.state == Answered("all done")
 
 
 def test_heeding_the_demand_within_the_grace_window_avoids_the_crossroads() -> None:
@@ -572,7 +572,7 @@ def test_heeding_the_demand_within_the_grace_window_avoids_the_crossroads() -> N
 
     offered = [{spec.name for spec in specs} for specs in client.seen_tools]
     assert all(names != set(CROSSROADS_ACTIONS) for names in offered)
-    assert runner.final_answer == "done"
+    assert runner.state == Answered("done")
 
 
 def test_two_ignored_crossroads_end_the_run_with_the_last_narration_unverified() -> None:
@@ -586,13 +586,11 @@ def test_two_ignored_crossroads_end_the_run_with_the_last_narration_unverified()
     )
     runner.execute()
 
-    assert runner.error is None
-    assert runner.final_answer is not None
-    assert runner.final_answer == "musing 5"
+    assert runner.state == Answered("musing 5")
     settled = next(
         event for event in drain_until_run_finished(subscriber) if isinstance(event, AnswerSettled)
     )
-    assert settled.content == runner.final_answer
+    assert settled.content == "musing 5"
     assert settled.accepted is True
     assert settled.verify is None
 
@@ -608,4 +606,4 @@ def test_the_last_words_path_still_offers_answer_alone() -> None:
 
     assert {spec.name for spec in client.seen_tools[-1]} == {"answer"}
     assert client.seen_messages[-1][-1].content.startswith("this run is ending now")
-    assert runner.final_answer == "wrapping up"
+    assert runner.state == Answered("wrapping up", f"the generation budget of {max_steps} is spent")

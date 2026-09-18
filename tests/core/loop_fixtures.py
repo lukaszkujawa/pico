@@ -195,5 +195,5 @@ def decision_demands(client: ScriptedClient) -> list[str]:
     return [
         messages[-1].content
         for messages in client.seen_messages
-        if messages[-1].role is Role.USER and messages[-1].content.startswith("decision required")
+        if messages[-1].role is Role.USER and "decision required" in messages[-1].content
     ]

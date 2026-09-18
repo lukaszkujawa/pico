@@ -20,6 +20,7 @@ from pico.core.loop.policy import (
 from pico.core.loop.prompt import Prompt, assemble, reconcile
 from pico.core.loop.runner import LoopRunner, StepOutcome
 from pico.core.loop.signals import Nudge
+from pico.core.loop.state import LastWords, WindingDown
 from pico.llm.types import (
     GenerationComplete,
     TextDelta,
@@ -117,7 +118,7 @@ def record(runner: LoopRunner, generation: Generation) -> StepOutcome:
         runner.pending_tool_calls = generation.tool_calls
         return "continue"
 
-    if runner.last_words:
+    if isinstance(runner.state, LastWords):
         return "done"
     if undecided(runner):
         runner.generation.actionless_generations = 0
@@ -135,6 +136,8 @@ def record(runner: LoopRunner, generation: Generation) -> StepOutcome:
 
 
 def generation_step(runner: LoopRunner) -> StepOutcome:
+    if isinstance(runner.state, WindingDown):
+        runner.state = LastWords(runner.state.cause)
     generation = stream(runner, assemble(runner))
     if generation is None:
         return "cancelled"

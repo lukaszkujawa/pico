@@ -11,7 +11,7 @@ The run's life is smeared across four mutable runner fields — `error`, `final_
 * **Nudges never kill runs.** `_existing_fact_id` takes a default and the windowed nudge is skipped when the fact is missing, instead of StopIteration falling into `execute`'s blanket except.
 * **Thresholds, wording, and public surface unchanged** apart from the delegate partial fix. Mechanical elsewhere.
 
-## [ ] T001 RunState union
+## [X] T001 RunState union
 
 ### Description
 
@@ -24,7 +24,7 @@ Define `RunState` and replace `error`, `final_answer`, `dying_of`, `last_words` 
 * Every terminal outcome — answered, budget-spent, stuck, degraded, failed, cancelled — is a named state, demonstrated by tests driving the loop with a scripted LLM.
 * `make check` passes.
 
-## [ ] T002 One child conclusion
+## [X] T002 One child conclusion
 
 ### Description
 
@@ -36,7 +36,7 @@ Extract `conclude(child)` shared by step orchestration and delegate spawning, ma
 * No two public functions in the package share a name.
 * `make check` passes.
 
-## [ ] T003 Signal list and nudge hardening
+## [X] T003 Signal list and nudge hardening
 
 ### Description
 

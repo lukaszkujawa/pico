@@ -20,6 +20,7 @@ from pico.core.ledger import facts
 from pico.core.loop import DEFAULT_LOOP_CONFIG
 from pico.core.loop.dispatch import MAX_INVALID_ACTION_ATTEMPTS
 from pico.core.loop.runner import LoopRunner
+from pico.core.loop.state import Answered
 from pico.llm.types import (
     GenerationComplete,
     StreamEvent,
@@ -109,7 +110,7 @@ def test_valid_answer_call_ends_run_and_records_result() -> None:
         AnswerSettled(id="0", content="the answer", accepted=True, reason=None, verify=None),
         RunFinished(),
     ]
-    assert runner.final_answer == "the answer"
+    assert runner.state == Answered("the answer")
     assert list(session.events())[-1] == ToolCallRecorded(
         name="answer",
         arguments={"content": "the answer", "citations": []},
@@ -137,7 +138,7 @@ def test_answer_citing_a_bookkeeping_call_seq_is_rejected() -> None:
     runner = LoopRunner(client, echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    assert runner.final_answer is None
+    assert not isinstance(runner.state, Answered)
     last_tool_event = [event for event in session.events() if isinstance(event, ToolCallRecorded)][
         -1
     ]
@@ -171,7 +172,7 @@ def test_invalid_answer_call_continues_run_instead_of_ending() -> None:
     assert isinstance(settled, AnswerSettled)
     assert settled.accepted is False
     assert settled.reason == "missing required field 'content'"
-    assert runner.final_answer is None
+    assert not isinstance(runner.state, Answered)
 
 
 def test_answer_citing_known_fact_ends_run() -> None:
@@ -192,7 +193,7 @@ def test_answer_citing_known_fact_ends_run() -> None:
     runner = LoopRunner(client, echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    assert runner.final_answer == "the answer"
+    assert runner.state == Answered("the answer")
 
 
 def test_answer_citing_unknown_fact_continues_run() -> None:
@@ -211,7 +212,7 @@ def test_answer_citing_unknown_fact_continues_run() -> None:
     runner = LoopRunner(client, echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    assert runner.final_answer is None
+    assert not isinstance(runner.state, Answered)
     last_tool_event = [event for event in session.events() if isinstance(event, ToolCallRecorded)][
         -1
     ]
@@ -246,7 +247,7 @@ def test_answer_citing_seq_of_error_call_continues_run() -> None:
     runner = LoopRunner(client, echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    assert runner.final_answer is None
+    assert not isinstance(runner.state, Answered)
     last_tool_event = [event for event in session.events() if isinstance(event, ToolCallRecorded)][
         -1
     ]
@@ -325,7 +326,7 @@ def test_repaired_answer_citing_a_listed_id_is_accepted() -> None:
     runner = LoopRunner(client, echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    assert runner.final_answer == "the answer"
+    assert runner.state == Answered("the answer")
 
 
 def test_unknown_citation_rejection_names_search_facts_for_a_large_ledger() -> None:
@@ -361,7 +362,7 @@ def test_missing_citations_field_is_rejected_with_the_teaching_message() -> None
     result = _last_result(session)
     assert "citations" in result
     assert "fix only the citations" in result
-    assert runner.final_answer is None
+    assert not isinstance(runner.state, Answered)
 
 
 def test_malformed_citations_field_is_rejected_with_the_teaching_message() -> None:

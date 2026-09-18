@@ -18,6 +18,7 @@ from pico.core.loop.policy import (
     stuckness_step,
 )
 from pico.core.loop.runner import MAX_RUN_STEPS, LoopConfig, LoopRunner, StepOutcome
+from pico.core.loop.state import Cancelled
 from pico.core.loop.subruns import (
     step_orchestration_step,
 )
@@ -121,6 +122,7 @@ def test_cancelled_outcome_publishes_cancelled_not_finished() -> None:
 
     assert next(subscriber) == RunStarted()
     assert next(subscriber) == RunCancelled()
+    assert runner.state == Cancelled()
 
 
 def test_step_raising_llm_error_surfaces_as_error_occurred() -> None:

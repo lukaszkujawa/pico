@@ -11,6 +11,3 @@ class Restrict:
     allowed: tuple[str, ...]
     text: str
     rejection: str
-
-
-Signal = Nudge | Restrict
