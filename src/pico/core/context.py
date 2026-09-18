@@ -3,13 +3,11 @@ from collections.abc import Mapping
 from typing import Literal
 
 from pico.core.ledger import BOOKKEEPING_TOOLS, Fact, facts, plan, render_call, render_plan
+from pico.llm.budget import completion_reserve
 from pico.llm.types import Message, Role, ToolCall, ToolResult
 from pico.session import Session
 
 RenderLevel = Literal["full", "handle"]
-
-COMPLETION_RESERVE_FRACTION = 0.25
-COMPLETION_RESERVE_CAP = 4096
 
 SYSTEM_PROMPT = (
     "You are Pico, a tiny agent solving big problems. "
@@ -79,8 +77,7 @@ def render_tool_result(
 
 
 def prompt_budget(context_size: int) -> int:
-    reserve = min(int(context_size * COMPLETION_RESERVE_FRACTION), COMPLETION_RESERVE_CAP)
-    return context_size - reserve
+    return context_size - completion_reserve(context_size)
 
 
 def tool_call_text(call: ToolCall) -> str:

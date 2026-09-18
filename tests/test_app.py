@@ -25,6 +25,7 @@ from pico.core.context import SYSTEM_PROMPT
 from pico.core.events import RunCancelled, RunFinished, RunStarted
 from pico.core.loop import DEFAULT_LOOP_CONFIG
 from pico.debug.log import LoggingLLMClient, RunLog
+from pico.llm.anthropic import AnthropicClient
 from pico.llm.errors import LLMError
 from pico.llm.ollama import OllamaClient
 from pico.llm.openai import OpenAIClient
@@ -135,6 +136,7 @@ def _spy_on_app_init(monkeypatch: pytest.MonkeyPatch) -> AppSpy:
 def test_build_llm_client_builds_the_vendor_client(tmp_path: Path) -> None:
     assert isinstance(build_llm_client(_config(tmp_path)), OllamaClient)
     assert isinstance(build_llm_client(_config(tmp_path, vendor="openai")), OpenAIClient)
+    assert isinstance(build_llm_client(_config(tmp_path, vendor="anthropic")), AnthropicClient)
 
 
 def test_build_llm_client_rejects_unknown_vendors(tmp_path: Path) -> None:

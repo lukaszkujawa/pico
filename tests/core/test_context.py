@@ -2,8 +2,6 @@ import random
 from itertools import pairwise
 
 from pico.core.context import (
-    COMPLETION_RESERVE_CAP,
-    COMPLETION_RESERVE_FRACTION,
     RECENT_UNITS,
     compile_context,
     estimate_tokens,
@@ -15,6 +13,7 @@ from pico.core.context import (
     render_tool_result,
 )
 from pico.core.ledger import Fact, facts
+from pico.llm.budget import COMPLETION_RESERVE_CAP, COMPLETION_RESERVE_FRACTION
 from pico.llm.types import Message, Role, ToolCall, ToolResult
 from pico.session import (
     AssistantMessageRecorded,

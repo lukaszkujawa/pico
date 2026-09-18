@@ -11,6 +11,7 @@ from pico.core.bus import Bus
 from pico.core.loop import DEFAULT_LOOP_CONFIG, LoopRunner
 from pico.core.tools import ToolRegistry
 from pico.debug.log import LoggingLLMClient, RunLog
+from pico.llm.anthropic import AnthropicClient
 from pico.llm.client import LLMClient
 from pico.llm.errors import LLMError
 from pico.llm.ollama import OllamaClient
@@ -104,9 +105,10 @@ class CancelHandle:
 
 
 def build_llm_client(config: Config, model: str | None = None) -> LLMClient:
-    vendor_clients: dict[str, type[OllamaClient] | type[OpenAIClient]] = {
+    vendor_clients: dict[str, type[OllamaClient] | type[OpenAIClient] | type[AnthropicClient]] = {
         "ollama": OllamaClient,
         "openai": OpenAIClient,
+        "anthropic": AnthropicClient,
     }
     client_class = vendor_clients.get(config.vendor)
     if client_class is None:

@@ -16,7 +16,7 @@ Complete frontier coverage with a Claude client behind the same `LLMClient` prot
 * **Usage** is split: `message_start` carries `input_tokens`, `message_delta` carries `output_tokens`. Both are held and emitted together on the final `GenerationComplete`.
 * **models()** reads `GET /v1/models`, returning sorted ids.
 
-## [ ] T001 Anthropic client
+## [X] T001 Anthropic client
 
 ### Description
 
@@ -32,7 +32,7 @@ Implement `AnthropicClient`: system-message lift, tool-result content blocks, `i
 * Tests drive an injected `httpx` transport over recorded SSE event sequences, with no network access.
 * `make check` passes.
 
-## [ ] T002 Register the vendor
+## [X] T002 Register the vendor
 
 ### Description
 

@@ -1,3 +1,4 @@
+from pico.llm.anthropic import AnthropicClient
 from pico.llm.client import LLMClient
 from pico.llm.errors import LLMError
 from pico.llm.ollama import OllamaClient
@@ -16,6 +17,7 @@ from pico.llm.types import (
 )
 
 __all__ = [
+    "AnthropicClient",
     "GenerationComplete",
     "LLMClient",
     "LLMError",
