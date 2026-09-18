@@ -33,8 +33,10 @@ from pico.tui.widgets import (
     AnswerPane,
     AssistantPane,
     CommandMenu,
+    ContextMeter,
     ElapsedTimer,
     ErrorPane,
+    RequestCounter,
     Splash,
     StatsStrip,
     SystemPane,
@@ -1297,6 +1299,30 @@ async def test_stats_strip_sits_under_the_input_inside_the_footer() -> None:
         assert strip.parent is footer
         assert footer.children.index(input_bar) < footer.children.index(strip)
         assert len(app.query_one("#conversation", VerticalScroll).query(StatsStrip)) == 0
+
+
+async def test_stats_strip_places_the_spinner_between_requests_and_tokens() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        strip = app.query_one(StatsStrip)
+        readouts = [
+            type(child)
+            for child in strip.children
+            if isinstance(
+                child,
+                ContextMeter | RequestCounter | WaitingIndicator | TokenCounter | ElapsedTimer,
+            )
+        ]
+        assert readouts == [
+            ContextMeter,
+            RequestCounter,
+            WaitingIndicator,
+            TokenCounter,
+            ElapsedTimer,
+        ]
 
 
 async def test_spinner_keeps_running_through_thinking_text_and_tool_call_panes() -> None:

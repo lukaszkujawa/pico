@@ -13,8 +13,8 @@
     height: auto;
 }
 #stats-strip {
-    height: 1;
-    padding: 0 1;
+    height: 2;
+    padding: 0 1 1 1;
 }
 #stats-strip Static {
     width: auto;

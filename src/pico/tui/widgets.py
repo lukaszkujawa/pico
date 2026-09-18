@@ -389,9 +389,9 @@ class StatsStrip(Horizontal):
         yield Static(f" {SEPARATOR_GLYPH} ", classes="stats-separator")
         yield RequestCounter(self._theme)
         yield Static(f" {SEPARATOR_GLYPH} ", classes="stats-separator")
-        yield TokenCounter(self._theme)
-        yield Static(f" {SEPARATOR_GLYPH} ", classes="stats-separator")
         yield WaitingIndicator(self._theme)
+        yield Static(f" {SEPARATOR_GLYPH} ", classes="stats-separator")
+        yield TokenCounter(self._theme)
         yield Static(" ", classes="stats-separator")
         yield ElapsedTimer(self._theme, self._clock)
 

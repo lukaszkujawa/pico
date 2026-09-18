@@ -9,7 +9,7 @@ The strip reads `ctx · req · tokens · spinner · elapsed`, so the spinner sit
 * Separator glyphs stay as they are; only the compose order in `StatsStrip.compose` changes.
 * No new widgets, no bus protocol change.
 
-## [ ] T001 Reorder the strip and add bottom spacing
+## [X] T001 Reorder the strip and add bottom spacing
 
 ### Description
 
