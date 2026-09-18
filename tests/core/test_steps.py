@@ -8,12 +8,14 @@ from pico.core.context import (
     PLAN_ORCHESTRATED_HINT,
     message_text,
 )
-from pico.core.ledger import facts
+from pico.core.ledger import Plan, PlanStep, facts
 from pico.core.loop import DEFAULT_LOOP_CONFIG
 from pico.core.loop.decision import DECISION_GRACE, MAX_CROSSROADS
 from pico.core.loop.runner import LoopRunner
-from pico.core.loop.state import Answered, Cancelled, Failed
+from pico.core.loop.state import Answered, Cancelled, Failed, StepState
 from pico.core.loop.subruns import (
+    MAX_STEP_ATTEMPTS,
+    claim_step_attempt,
     root_task,
 )
 from pico.core.stuckness import STUCK_THRESHOLD
@@ -66,6 +68,31 @@ def _step_session() -> tuple[Session, ToolRegistry]:
     registry = ToolRegistry()
     register_actions(registry, session)
     return session, registry
+
+
+def test_a_step_gets_max_step_attempts_against_an_unchanged_plan() -> None:
+    steps = StepState()
+    current = Plan(steps=(PlanStep(text="count the files", done=False),))
+
+    for _ in range(MAX_STEP_ATTEMPTS):
+        assert claim_step_attempt(steps, current, 0)
+    assert not claim_step_attempt(steps, current, 0)
+
+
+def test_revising_the_plan_restores_the_step_attempt_budget() -> None:
+    steps = StepState()
+    current = Plan(steps=(PlanStep(text="count the files", done=False),))
+    for _ in range(MAX_STEP_ATTEMPTS):
+        claim_step_attempt(steps, current, 0)
+    revised = Plan(
+        steps=(
+            PlanStep(text="count the files", done=False),
+            PlanStep(text="name the largest", done=False),
+        )
+    )
+
+    assert not claim_step_attempt(steps, current, 0)
+    assert claim_step_attempt(steps, revised, 0)
 
 
 def test_each_plan_step_runs_in_its_own_child_session() -> None:

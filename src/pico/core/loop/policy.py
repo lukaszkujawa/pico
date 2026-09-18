@@ -107,31 +107,34 @@ def budget_step(runner: LoopRunner) -> StepOutcome:
     return "continue"
 
 
+def _publish_degraded_answer(runner: LoopRunner, narration: str) -> None:
+    pane_id = runner.new_id()
+    runner.bus.publish(ToolCallStarted(id=pane_id, name="answer", arguments={}))
+    runner.bus.publish(
+        AnswerSettled(
+            id=pane_id,
+            content=narration,
+            accepted=True,
+            reason=None,
+            verify=None,
+            complete=False,
+        )
+    )
+
+
 def decision_step(runner: LoopRunner) -> StepOutcome:
     runner.decision, command = advance(runner.decision, runner.view)
     match command:
         case Ask(nudge=nudge):
             runner.emit(Nudge(nudge))
-        case EndDegraded(narration=narration):
-            if narration is None:
-                runner.state = WindingDown(
-                    f"{MAX_CROSSROADS} decision points passed with neither a plan nor an answer"
-                )
-                return "continue"
+        case EndDegraded(narration=str(narration)):
             runner.state = Answered(narration)
-            pane_id = runner.new_id()
-            runner.bus.publish(ToolCallStarted(id=pane_id, name="answer", arguments={}))
-            runner.bus.publish(
-                AnswerSettled(
-                    id=pane_id,
-                    content=narration,
-                    accepted=True,
-                    reason=None,
-                    verify=None,
-                    complete=False,
-                )
-            )
+            _publish_degraded_answer(runner, narration)
             return "done"
+        case EndDegraded():
+            runner.state = WindingDown(
+                f"{MAX_CROSSROADS} decision points passed with neither a plan nor an answer"
+            )
         case None:
             pass
     return "continue"

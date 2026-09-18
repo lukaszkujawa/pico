@@ -8,10 +8,11 @@ from pico.core.actions import (
     register_actions,
 )
 from pico.core.bus import Bus
-from pico.core.events import ToolCallFinished, ToolCallStarted
-from pico.core.ledger import Plan, facts, plan, render_plan
+from pico.core.events import ToolCallStarted
+from pico.core.ledger import Plan, plan, render_plan
+from pico.core.loop.record import finish_tool_call
 from pico.core.loop.runner import LoopConfig, LoopRunner, StepOutcome
-from pico.core.loop.state import Answered, Failed, Running, WindingDown
+from pico.core.loop.state import Answered, Failed, Running, StepState, WindingDown
 from pico.core.tools import ToolRegistry
 from pico.llm.types import ToolCall
 from pico.session import PlanStepCompleted, Session, ToolCallRecorded, UserMessageRecorded
@@ -130,21 +131,30 @@ def spawn_step(runner: LoopRunner, current: Plan, index: int) -> tuple[str, bool
     return result, False
 
 
+def claim_step_attempt(steps: StepState, current: Plan, index: int) -> bool:
+    signature = (tuple(step.text for step in current.steps), index)
+    attempts = steps.attempts.get(signature, 0)
+    if attempts >= MAX_STEP_ATTEMPTS:
+        return False
+    steps.attempts[signature] = attempts + 1
+    return True
+
+
 def step_orchestration_step(runner: LoopRunner) -> StepOutcome:
     if runner.depth >= MAX_DELEGATE_DEPTH or not isinstance(runner.state, Running):
         return "continue"
     current = plan(runner.session)
     index = _first_unfinished(current)
     if current is None or index is None:
-        runner.steps.attempts = {}
+        runner.steps = StepState()
         return "continue"
-    signature = (tuple(step.text for step in current.steps), index)
-    attempts = runner.steps.attempts.get(signature, 0)
-    if attempts >= MAX_STEP_ATTEMPTS:
+    if not claim_step_attempt(runner.steps, current, index):
         runner.state = WindingDown(f'step {index} failed twice: "{current.steps[index].text}"')
         return "continue"
-    runner.steps.attempts[signature] = attempts + 1
+    return _run_and_record_step(runner, current, index)
 
+
+def _run_and_record_step(runner: LoopRunner, current: Plan, index: int) -> StepOutcome:
     pane_id = runner.new_id()
     arguments: Mapping[str, object] = {"step": current.steps[index].text}
     runner.bus.publish(ToolCallStarted(id=pane_id, name="step", arguments=arguments))
@@ -152,19 +162,14 @@ def step_orchestration_step(runner: LoopRunner) -> StepOutcome:
     if concluded is None:
         return "cancelled"
     result, is_error = concluded
-    runner.session.append(
-        ToolCallRecorded(name="step", arguments=arguments, result=result, is_error=is_error)
+    finish_tool_call(
+        runner.session,
+        runner.bus,
+        pane_id,
+        ToolCall(id=pane_id, name="step", arguments=arguments),
+        result,
+        is_error,
     )
     if not is_error:
         runner.session.append(PlanStepCompleted(index=index))
-    fact_id = facts(runner.session)[-1].id if not is_error else None
-    runner.bus.publish(
-        ToolCallFinished(
-            id=pane_id,
-            tool_call=ToolCall(id=pane_id, name="step", arguments=arguments),
-            result=result,
-            is_error=is_error,
-            fact_id=fact_id,
-        )
-    )
     return "continue"

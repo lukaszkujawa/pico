@@ -12,7 +12,7 @@ The problem is not the return count — the early guards in these functions are 
 * **A step function's body is its decision sequence.** After extraction, `step_orchestration_step` reads: guards → retry budget → run the step and record it. `tool_call_step` reads: for each call → execute → record → apply failure policy. The helpers hold the how; the step holds the what.
 * **Behaviour-preserving.** No event is added, removed, or reordered; `MAX_STEP_ATTEMPTS`, `MAX_INVALID_ACTION_ATTEMPTS`, and every published payload are unchanged. Scope excludes `stream` and the TUI's `translate` — long `match` dispatchers over event types are a different, acceptable shape.
 
-## [ ] T001 Shared tool-call ceremony
+## [X] T001 Shared tool-call ceremony
 
 ### Description
 
@@ -24,7 +24,7 @@ Extract the append-record-then-publish-finished sequence (including the fact-id 
 * Both call sites publish byte-identical events to before, shown by existing loop tests passing without payload changes.
 * `make check` passes.
 
-## [ ] T002 Step orchestration reads as its decision sequence
+## [X] T002 Step orchestration reads as its decision sequence
 
 ### Description
 
@@ -36,7 +36,7 @@ Split `step_orchestration_step` so the retry-signature policy and the run-and-re
 * The retry rule is covered by a test that exercises the same-plan/changed-plan signature behaviour through the helper.
 * `make check` passes.
 
-## [ ] T003 Tool-call step separates dispatch from policy
+## [X] T003 Tool-call step separates dispatch from policy
 
 ### Description
 
@@ -49,7 +49,7 @@ Extract the execute-one-call body of `tool_call_step` (context construction, dis
 * Loop tests pass with mechanical updates only.
 * `make check` passes.
 
-## [ ] T004 Decision step delegates its ceremony
+## [X] T004 Decision step delegates its ceremony
 
 ### Description
 

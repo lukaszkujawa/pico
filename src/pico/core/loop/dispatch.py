@@ -6,8 +6,8 @@ from pico.core.actions import (
     InvalidActionError,
 )
 from pico.core.errors import ToolError, UnknownToolError
-from pico.core.events import AnswerSettled, ToolCallFinished, ToolCallStarted
-from pico.core.ledger import BOOKKEEPING_TOOLS, facts
+from pico.core.events import AnswerSettled, ToolCallStarted
+from pico.core.loop.record import finish_tool_call
 from pico.core.loop.runner import LoopRunner, StepOutcome
 from pico.core.loop.signals import Restrict
 from pico.core.loop.state import Answered, LastWords
@@ -44,32 +44,66 @@ def _record(
     context: ActionContext, call: ToolCall, result: AnswerOutcome | tuple[str, bool]
 ) -> bool:
     if isinstance(result, AnswerOutcome):
-        answer, output, is_error = result, result.result, result.is_error
-    else:
-        answer, (output, is_error) = None, result
-    context.session.append(
-        ToolCallRecorded(name=call.name, arguments=call.arguments, result=output, is_error=is_error)
-    )
-    if answer is not None:
+        context.session.append(
+            ToolCallRecorded(
+                name=call.name,
+                arguments=call.arguments,
+                result=result.result,
+                is_error=result.is_error,
+            )
+        )
         context.bus.publish(
             AnswerSettled(
                 id=context.pane_id,
-                content=answer.content,
-                accepted=answer.accepted,
-                reason=answer.reason,
-                verify=answer.verify,
+                content=result.content,
+                accepted=result.accepted,
+                reason=result.reason,
+                verify=result.verify,
             )
         )
-        return is_error
-    fact_id = None
-    if not is_error and call.name not in ("answer", "delegate", *BOOKKEEPING_TOOLS):
-        fact_id = facts(context.session)[-1].id
-    context.bus.publish(
-        ToolCallFinished(
-            id=context.pane_id, tool_call=call, result=output, is_error=is_error, fact_id=fact_id
-        )
-    )
+        return result.is_error
+    output, is_error = result
+    finish_tool_call(context.session, context.bus, context.pane_id, call, output, is_error)
     return is_error
+
+
+def _action_context(runner: LoopRunner, pane_id: str) -> ActionContext:
+    return ActionContext(
+        session=runner.session,
+        llm=runner.llm,
+        bus=runner.bus,
+        pane_id=pane_id,
+        cancel=runner.cancel,
+        context_size=runner.context_size,
+        chars_per_token=runner.chars_per_token,
+        result_shape=runner.result_shape,
+        spawn=lambda delegate: spawn_delegate(runner, delegate),
+    )
+
+
+def _execute(
+    runner: LoopRunner, context: ActionContext, call: ToolCall
+) -> tuple[ActionResult, bool]:
+    try:
+        return _dispatch(context, runner.tools, runner.active_restriction, call), False
+    except SearchCancelled:
+        return None, False
+    except (InvalidActionError, UnknownToolError) as error:
+        return _failed(call, str(error)), True
+    except (ToolError, LLMError) as error:
+        return _failed(call, str(error)), False
+
+
+def _too_many_invalid_actions(runner: LoopRunner, invalid: bool) -> bool:
+    if not invalid:
+        runner.dispatch.invalid_action_attempts = 0
+        return False
+    runner.dispatch.invalid_action_attempts += 1
+    attempts = runner.dispatch.invalid_action_attempts
+    if attempts < MAX_INVALID_ACTION_ATTEMPTS:
+        return False
+    runner.fail(f"run stopped: {attempts} invalid actions in a row")
+    return True
 
 
 def tool_call_step(runner: LoopRunner) -> StepOutcome:
@@ -83,42 +117,15 @@ def tool_call_step(runner: LoopRunner) -> StepOutcome:
         if pane_id is None:
             pane_id = runner.new_id()
         runner.bus.publish(ToolCallStarted(id=pane_id, name=call.name, arguments=call.arguments))
-        context = ActionContext(
-            session=runner.session,
-            llm=runner.llm,
-            bus=runner.bus,
-            pane_id=pane_id,
-            cancel=runner.cancel,
-            context_size=runner.context_size,
-            chars_per_token=runner.chars_per_token,
-            result_shape=runner.result_shape,
-            spawn=lambda delegate: spawn_delegate(runner, delegate),
-        )
-        invalid = False
-        result: ActionResult
-        try:
-            result = _dispatch(context, runner.tools, runner.active_restriction, call)
-            if context.final_answer is not None:
-                cause = runner.state.cause if isinstance(runner.state, LastWords) else None
-                runner.state = Answered(context.final_answer, cause)
-        except SearchCancelled:
-            return "cancelled"
-        except (InvalidActionError, UnknownToolError) as error:
-            result = _failed(call, str(error))
-            invalid = True
-        except (ToolError, LLMError) as error:
-            result = _failed(call, str(error))
+        context = _action_context(runner, pane_id)
+        result, invalid = _execute(runner, context, call)
+        if context.final_answer is not None:
+            cause = runner.state.cause if isinstance(runner.state, LastWords) else None
+            runner.state = Answered(context.final_answer, cause)
         if result is None:
             return "cancelled"
         is_error = _record(context, call, result)
-        if invalid:
-            runner.dispatch.invalid_action_attempts += 1
-            attempts = runner.dispatch.invalid_action_attempts
-            if attempts >= MAX_INVALID_ACTION_ATTEMPTS:
-                runner.fail(f"run stopped: {attempts} invalid actions in a row")
-                outcome = "done"
-        else:
-            runner.dispatch.invalid_action_attempts = 0
-            if not is_error and isinstance(runner.state, Answered):
-                outcome = "done"
+        stopped = _too_many_invalid_actions(runner, invalid)
+        if stopped or (not is_error and isinstance(runner.state, Answered)):
+            outcome = "done"
     return "done" if isinstance(runner.state, LastWords) else outcome
