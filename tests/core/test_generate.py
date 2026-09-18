@@ -1,4 +1,5 @@
 import threading
+from collections.abc import Iterator
 
 from pico.core.actions import MAX_DELEGATE_DEPTH, register_actions, vocabulary
 from pico.core.bus import Bus
@@ -29,9 +30,9 @@ from pico.core.events import (
     ToolCallStarted,
 )
 from pico.core.loop import DEFAULT_LOOP_CONFIG
-from pico.core.loop.generate import MAX_ACTIONLESS_GENERATIONS
+from pico.core.loop.generate import MAX_ACTIONLESS_GENERATIONS, generation_step
 from pico.core.loop.prompt import MAX_CHARS_PER_TOKEN, MIN_CHARS_PER_TOKEN, specs_text
-from pico.core.loop.runner import LoopRunner
+from pico.core.loop.runner import LoopConfig, LoopRunner
 from pico.core.loop.state import DEFAULT_CHARS_PER_TOKEN
 from pico.core.stuckness import NUDGE_THRESHOLD
 from pico.core.tools import ToolRegistry
@@ -93,7 +94,7 @@ def test_plain_text_run() -> None:
         AssistantTextStarted(id="0"),
         AssistantTextDelta(id="0", text="hello "),
         AssistantTextDelta(id="0", text="world"),
-        GenerationCompleted(),
+        GenerationCompleted(iteration=1),
         AssistantTextFinished(id="0"),
     ]
     assert runner.final_answer == "hello world"
@@ -139,7 +140,7 @@ def test_thinking_then_text_published_in_order_with_shared_ids_across_two_turns(
         AssistantTextStarted(id="1"),
         AssistantTextDelta(id="1", text="hello "),
         AssistantTextDelta(id="1", text="world"),
-        GenerationCompleted(),
+        GenerationCompleted(iteration=1),
         AssistantThinkingFinished(id="0"),
         AssistantTextFinished(id="1"),
     ]
@@ -181,12 +182,12 @@ def test_single_tool_call_round_trip() -> None:
     events = [next(subscriber) for _ in range(8)]
     assert events == [
         RunStarted(),
-        GenerationCompleted(),
+        GenerationCompleted(iteration=1),
         ToolCallStarted(id="0", name="echo", arguments={"text": "hi"}),
         ToolCallFinished(id="0", tool_call=call, result="hi", is_error=False, fact_id=1),
         AssistantTextStarted(id="1"),
         AssistantTextDelta(id="1", text="done"),
-        GenerationCompleted(),
+        GenerationCompleted(iteration=2),
         AssistantTextFinished(id="1"),
     ]
     assert list(session.events())[:3] == [
@@ -320,10 +321,10 @@ def test_tool_call_delta_from_llm_is_forwarded_with_the_calls_pane_id() -> None:
     assert events == [
         RunStarted(),
         ToolCallArgumentsDelta(id="0", name="echo", text='{"text":'),
-        GenerationCompleted(),
+        GenerationCompleted(iteration=1),
         ToolCallStarted(id="0", name="echo", arguments={"text": "hi"}),
         ToolCallFinished(id="0", tool_call=call, result="hi", is_error=False, fact_id=1),
-        GenerationCompleted(),
+        GenerationCompleted(iteration=2),
     ]
 
 
@@ -463,9 +464,54 @@ def test_each_llm_call_publishes_its_own_token_counts() -> None:
     events = [next(subscriber) for _ in range(9)]
     completions = [event for event in events if isinstance(event, GenerationCompleted)]
     assert completions == [
-        GenerationCompleted(prompt_tokens=120, completion_tokens=17),
-        GenerationCompleted(prompt_tokens=160, completion_tokens=4),
+        GenerationCompleted(prompt_tokens=120, completion_tokens=17, iteration=1),
+        GenerationCompleted(prompt_tokens=160, completion_tokens=4, iteration=2),
     ]
+
+
+def _published_completion(subscriber: Iterator[BusEvent]) -> GenerationCompleted:
+    while True:
+        event = next(subscriber)
+        if isinstance(event, GenerationCompleted):
+            return event
+
+
+def test_generation_publishes_pressure_once_the_budget_winds_down() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+    session = make_session()
+    session.append(UserMessageRecorded(content="hi"))
+    client = ScriptedClient([text_turn("nearly done")])
+    runner = LoopRunner(
+        client,
+        echo_registry(),
+        bus,
+        session,
+        128_000,
+        LoopConfig(steps=(generation_step,), max_steps=10),
+    )
+    runner.iterations = 8
+
+    generation_step(runner)
+
+    assert _published_completion(subscriber) == GenerationCompleted(iteration=8, pressure=True)
+
+
+def test_generation_publishes_pressure_at_a_decision_crossroads() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+    session = make_session()
+    session.append(UserMessageRecorded(content="hi"))
+    client = ScriptedClient([text_turn("mulling it over")])
+    runner = LoopRunner(
+        client, echo_registry(), bus, session, 128_000, LoopConfig(steps=(generation_step,))
+    )
+    runner.iterations = 2
+    runner.decision.crossroads = True
+
+    generation_step(runner)
+
+    assert _published_completion(subscriber) == GenerationCompleted(iteration=2, pressure=True)
 
 
 def _plan_messages(messages: list[Message]) -> list[Message]:

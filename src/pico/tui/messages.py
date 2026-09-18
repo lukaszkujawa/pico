@@ -138,9 +138,17 @@ class AnswerPaneSettle(Message):
 
 
 class GenerationCompletedMessage(Message):
-    def __init__(self, prompt_tokens: int | None, completion_tokens: int | None) -> None:
+    def __init__(
+        self,
+        prompt_tokens: int | None,
+        completion_tokens: int | None,
+        iteration: int | None = None,
+        pressure: bool = False,
+    ) -> None:
         self.prompt_tokens = prompt_tokens
         self.completion_tokens = completion_tokens
+        self.iteration = iteration
+        self.pressure = pressure
         super().__init__()
 
 
@@ -257,9 +265,17 @@ def translate(event: BusEvent) -> TuiMessage | None:
                 is_error=is_error,
                 fact_id=fact_id,
             )
-        case GenerationCompleted(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens):
+        case GenerationCompleted(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            iteration=iteration,
+            pressure=pressure,
+        ):
             return GenerationCompletedMessage(
-                prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                iteration=iteration,
+                pressure=pressure,
             )
         case ErrorOccurred(message=message):
             return ErrorMessage(message=message)

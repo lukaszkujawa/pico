@@ -102,7 +102,7 @@ def test_valid_answer_call_ends_run_and_records_result() -> None:
     events = [next(subscriber) for _ in range(5)]
     assert events == [
         RunStarted(),
-        GenerationCompleted(),
+        GenerationCompleted(iteration=1),
         ToolCallStarted(
             id="0", name="answer", arguments={"content": "the answer", "citations": []}
         ),
@@ -164,7 +164,7 @@ def test_invalid_answer_call_continues_run_instead_of_ending() -> None:
     events = [next(subscriber) for _ in range(4)]
     assert events[:3] == [
         RunStarted(),
-        GenerationCompleted(),
+        GenerationCompleted(iteration=1),
         ToolCallStarted(id="0", name="answer", arguments={}),
     ]
     settled = events[3]

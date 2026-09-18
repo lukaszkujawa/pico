@@ -1517,6 +1517,54 @@ async def test_stats_strip_uses_the_configured_context_size() -> None:
         assert "0/32k" in app.query_one(StatsStrip).meter.render().plain
 
 
+async def test_request_counter_shows_progress_against_a_known_generation_budget() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue(), context_size=1000, max_steps=50)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        strip = app.query_one(StatsStrip)
+        assert strip.requests.render().plain == "0/50 req"
+
+        bus.publish(RunStarted())
+        bus.publish(GenerationCompleted(prompt_tokens=100, completion_tokens=5, iteration=3))
+        await settle(pilot, lambda: strip.requests.requests == 3, "the counter follows the run")
+
+        assert strip.requests.render().plain == "3/50 req"
+
+
+async def test_request_counter_without_a_budget_keeps_the_plain_readout() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue(), context_size=1000)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        strip = app.query_one(StatsStrip)
+
+        bus.publish(RunStarted())
+        bus.publish(GenerationCompleted(prompt_tokens=100, completion_tokens=5, iteration=3))
+        await settle(pilot, lambda: strip.requests.requests == 3, "the counter follows the run")
+
+        assert strip.requests.render().plain == "3 req"
+
+
+async def test_meter_band_follows_pressure_and_dying_across_generations() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue(), context_size=1000, max_steps=3)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        meter = app.query_one(StatsStrip).meter
+
+        bus.publish(RunStarted())
+        bus.publish(GenerationCompleted(prompt_tokens=100, iteration=2, pressure=True))
+        await settle(pilot, lambda: meter.pressure, "the warning band raises under pressure")
+        assert meter.dying is False
+
+        bus.publish(GenerationCompleted(prompt_tokens=100, iteration=4))
+        await settle(pilot, lambda: meter.dying, "the last-words generation raises the error band")
+        assert meter.pressure is False
+
+        bus.publish(RunFinished())
+
+
 class FakeSwitch:
     def __init__(
         self, names: tuple[str, ...] = ("qwen3:8b", "gemma3:27b"), error: str | None = None

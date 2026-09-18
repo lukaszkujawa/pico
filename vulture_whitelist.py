@@ -26,6 +26,7 @@ _.on_command_accepted
 _.on_unmount
 _.padding
 _.display
+_.color
 _.running
 _.row_factory
 _.finish_reason

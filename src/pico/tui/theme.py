@@ -25,6 +25,7 @@ class Theme:
     thinking: str
     waiting: str
     meter: str
+    meter_warning: str
     meter_empty: str
 
     def to_textual(self) -> TextualTheme:
@@ -62,5 +63,6 @@ PICO_THEME = Theme(
     thinking="#8a8a8a",
     waiting="#4fd6a8",
     meter="#d6d6d6",
+    meter_warning="#f2f2f2",
     meter_empty="#3a3a3a",
 )

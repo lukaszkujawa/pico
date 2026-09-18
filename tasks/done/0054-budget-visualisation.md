@@ -14,7 +14,7 @@ The context meter shows prompt tokens against `context_size` and nothing else. T
 * **Wiring**: `PicoApp` receives `max_steps` alongside `context_size`. Crossroads and dying state reach the TUI as fields on an existing event rather than a new one — extend `GenerationCompleted` with the current iteration count and a pressure flag, defaulting to `None`/`False` so headless and eval paths are unaffected.
 * Colours come from `tui/theme.py` as named steps; no hues beyond the existing accent and error.
 
-## [ ] T001 Surface budget state to the TUI
+## [X] T001 Surface budget state to the TUI
 
 ### Description
 
@@ -27,7 +27,7 @@ Pass `max_steps` into `PicoApp` from `app.py`. Extend `GenerationCompleted` with
 * Headless and eval runs are unaffected.
 * `make check` passes.
 
-## [ ] T002 Colour-banded meter and generation counter
+## [X] T002 Colour-banded meter and generation counter
 
 ### Description
 

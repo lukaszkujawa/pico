@@ -328,6 +328,8 @@ def format_thousands(value: int) -> str:
 
 class ContextMeter(Static):
     used: reactive[int] = reactive(0, layout=True)
+    pressure: reactive[bool] = reactive(False, repaint=True)
+    dying: reactive[bool] = reactive(False, repaint=True)
 
     def __init__(self, context_size: int, theme: Theme = PICO_THEME) -> None:
         super().__init__(id="context-meter")
@@ -336,6 +338,8 @@ class ContextMeter(Static):
 
     def reset(self) -> None:
         self.used = 0
+        self.pressure = False
+        self.dying = False
 
     @property
     def ratio(self) -> float:
@@ -343,11 +347,17 @@ class ContextMeter(Static):
             return 0.0
         return min(self.used / self._context_size, 1.0)
 
+    def _band(self) -> str:
+        if self.dying or self.ratio >= OVER_BUDGET_RATIO:
+            return self._theme.error
+        if self.pressure:
+            return self._theme.meter_warning
+        return self._theme.meter
+
     def render(self) -> Text:
         ratio = self.ratio
         filled = round(ratio * METER_WIDTH)
-        color = self._theme.error if ratio >= OVER_BUDGET_RATIO else self._theme.meter
-        bar = Text(METER_FILLED * filled, style=color)
+        bar = Text(METER_FILLED * filled, style=self._band())
         bar.append(METER_EMPTY * (METER_WIDTH - filled), style=self._theme.meter_empty)
         numbers = f" {format_thousands(self.used)}/{format_thousands(self._context_size)}"
         bar.append(numbers, style=self._theme.muted_text)
@@ -357,9 +367,10 @@ class ContextMeter(Static):
 class RequestCounter(Static):
     requests: reactive[int] = reactive(0, layout=True)
 
-    def __init__(self, theme: Theme = PICO_THEME) -> None:
+    def __init__(self, theme: Theme = PICO_THEME, budget: int | None = None) -> None:
         super().__init__(id="request-counter")
         self._theme = theme
+        self._budget = budget
 
     def reset(self) -> None:
         self.requests = 0
@@ -368,18 +379,22 @@ class RequestCounter(Static):
         self.requests += 1
 
     def render(self) -> Text:
-        return Text(f"{self.requests} req", style=self._theme.muted_text)
+        if self._budget is None:
+            return Text(f"{self.requests} req", style=self._theme.muted_text)
+        return Text(f"{self.requests}/{self._budget} req", style=self._theme.muted_text)
 
 
 class StatsStrip(Horizontal):
     def __init__(
         self,
         context_size: int,
+        max_steps: int | None = None,
         theme: Theme = PICO_THEME,
         clock: Callable[[], float] = time.monotonic,
     ):
         super().__init__(id="stats-strip")
         self._context_size = context_size
+        self._max_steps = max_steps
         self._clock = clock
         self._theme = theme
 
@@ -387,7 +402,7 @@ class StatsStrip(Horizontal):
         yield Static("ctx", classes="stats-label")
         yield ContextMeter(self._context_size, self._theme)
         yield Static(f" {SEPARATOR_GLYPH} ", classes="stats-separator")
-        yield RequestCounter(self._theme)
+        yield RequestCounter(self._theme, self._max_steps)
         yield Static(f" {SEPARATOR_GLYPH} ", classes="stats-separator")
         yield WaitingIndicator(self._theme)
         yield Static(f" {SEPARATOR_GLYPH} ", classes="stats-separator")

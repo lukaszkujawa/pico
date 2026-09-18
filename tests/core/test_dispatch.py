@@ -60,10 +60,10 @@ def test_unknown_tool_call_surfaced_as_tool_error() -> None:
     events = [next(subscriber) for _ in range(5)]
     assert events == [
         RunStarted(),
-        GenerationCompleted(),
+        GenerationCompleted(iteration=1),
         ToolCallStarted(id="0", name="missing", arguments={}),
         ToolCallFinished(id="0", tool_call=call, result="missing", is_error=True),
-        GenerationCompleted(),
+        GenerationCompleted(iteration=2),
     ]
     assert ToolCallRecorded(name="missing", arguments={}, result="missing", is_error=True) in list(
         session.events()
@@ -108,7 +108,7 @@ def test_cancel_set_before_second_tool_call_leaves_it_unexecuted() -> None:
     events = [next(subscriber) for _ in range(4)]
     assert events[:3] == [
         RunStarted(),
-        GenerationCompleted(),
+        GenerationCompleted(iteration=1),
         ToolCallStarted(id="0", name="first", arguments={}),
     ]
     finished = events[3]

@@ -7,6 +7,7 @@ from pico.core.events import (
     AssistantThinkingFinished,
     AssistantThinkingStarted,
     ErrorOccurred,
+    GenerationCompleted,
     RunFinished,
     RunStarted,
     ToolCallArgumentsDelta,
@@ -22,6 +23,7 @@ from pico.tui.messages import (
     AssistantPaneCreate,
     AssistantPaneDelta,
     ErrorMessage,
+    GenerationCompletedMessage,
     RunFinishedMessage,
     RunStartedMessage,
     ThinkingPaneClose,
@@ -160,6 +162,24 @@ def test_translate_rejected_answer_settled_becomes_answer_pane_settle() -> None:
     assert isinstance(message, AnswerPaneSettle)
     assert message.accepted is False
     assert message.reason == "unknown fact citation(s): [3]"
+
+
+def test_translate_generation_completed_carries_budget_state() -> None:
+    message = translate(
+        GenerationCompleted(prompt_tokens=120, completion_tokens=17, iteration=4, pressure=True)
+    )
+    assert isinstance(message, GenerationCompletedMessage)
+    assert message.prompt_tokens == 120
+    assert message.completion_tokens == 17
+    assert message.iteration == 4
+    assert message.pressure is True
+
+
+def test_translate_generation_completed_defaults_to_no_budget_state() -> None:
+    message = translate(GenerationCompleted())
+    assert isinstance(message, GenerationCompletedMessage)
+    assert message.iteration is None
+    assert message.pressure is False
 
 
 def test_translate_error_occurred() -> None:

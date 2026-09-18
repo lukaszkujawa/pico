@@ -631,9 +631,92 @@ async def test_context_meter_with_no_context_size_stays_empty() -> None:
         assert meter.ratio == 0.0
 
 
+def _bar_color(meter: ContextMeter) -> str | None:
+    color = meter.render().get_style_at_offset(Console(), 0).color
+    return None if color is None else color.name
+
+
+async def test_context_meter_warning_band_when_pressure_is_active() -> None:
+    app = ContextMeterHarness()
+    async with app.run_test() as pilot:
+        meter = app.query_one(ContextMeter)
+        meter.used = 400
+        meter.pressure = True
+        await pilot.pause()
+
+        assert _bar_color(meter) == PICO_THEME.meter_warning
+        assert "400/1k" in meter.render().plain
+
+
+async def test_context_meter_dying_shows_the_error_band_at_low_usage() -> None:
+    app = ContextMeterHarness()
+    async with app.run_test() as pilot:
+        meter = app.query_one(ContextMeter)
+        meter.used = 100
+        meter.dying = True
+        await pilot.pause()
+
+        assert _bar_color(meter) == PICO_THEME.error
+
+
+async def test_context_meter_most_severe_band_wins() -> None:
+    app = ContextMeterHarness()
+    async with app.run_test() as pilot:
+        meter = app.query_one(ContextMeter)
+        meter.used = 950
+        meter.pressure = True
+        await pilot.pause()
+        assert _bar_color(meter) == PICO_THEME.error
+
+        meter.used = 400
+        meter.dying = True
+        await pilot.pause()
+        assert _bar_color(meter) == PICO_THEME.error
+
+
+async def test_context_meter_reset_returns_the_band_to_normal() -> None:
+    app = ContextMeterHarness()
+    async with app.run_test() as pilot:
+        meter = app.query_one(ContextMeter)
+        meter.used = 400
+        meter.pressure = True
+        meter.dying = True
+        await pilot.pause()
+
+        meter.reset()
+        await pilot.pause()
+        assert meter.used == 0
+        assert meter.pressure is False
+        assert meter.dying is False
+
+        meter.used = 400
+        await pilot.pause()
+        assert _bar_color(meter) == PICO_THEME.meter
+
+
 class RequestCounterHarness(App[None]):
     def compose(self) -> ComposeResult:
         yield RequestCounter()
+
+
+class BudgetedRequestCounterHarness(App[None]):
+    def compose(self) -> ComposeResult:
+        yield RequestCounter(budget=50)
+
+
+async def test_request_counter_renders_progress_against_a_known_budget() -> None:
+    app = BudgetedRequestCounterHarness()
+    async with app.run_test() as pilot:
+        counter = app.query_one(RequestCounter)
+        assert counter.render().plain == "0/50 req"
+
+        counter.requests = 7
+        await pilot.pause()
+        assert counter.render().plain == "7/50 req"
+
+        counter.reset()
+        await pilot.pause()
+        assert counter.render().plain == "0/50 req"
 
 
 async def test_request_counter_increments_and_resets() -> None:

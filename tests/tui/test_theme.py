@@ -24,6 +24,7 @@ GREYSCALE_FIELDS = [
     "thinking_bg",
     "thinking",
     "meter",
+    "meter_warning",
     "meter_empty",
 ]
 

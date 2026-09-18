@@ -10,7 +10,13 @@ from pico.core.events import (
     GenerationCompleted,
     ToolCallArgumentsDelta,
 )
-from pico.core.loop.policy import NARRATION_PRESSURE, demand, record_narration, undecided
+from pico.core.loop.policy import (
+    NARRATION_PRESSURE,
+    demand,
+    pressure,
+    record_narration,
+    undecided,
+)
 from pico.core.loop.prompt import Prompt, assemble, reconcile
 from pico.core.loop.runner import LoopRunner, StepOutcome
 from pico.core.loop.signals import Nudge
@@ -80,7 +86,10 @@ def stream(runner: LoopRunner, prompt: Prompt) -> Generation | None:
             ):
                 runner.bus.publish(
                     GenerationCompleted(
-                        prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        iteration=runner.iterations,
+                        pressure=runner.decision.crossroads or pressure(runner) is not None,
                     )
                 )
                 if prompt_tokens:

@@ -392,14 +392,14 @@ def test_delegate_child_stream_events_do_not_appear_on_parent_bus() -> None:
     events = [next(subscriber) for _ in range(8)]
     assert events == [
         RunStarted(),
-        GenerationCompleted(),
+        GenerationCompleted(iteration=1),
         ToolCallStarted(id="0", name="delegate", arguments={"question": "what is x?"}),
         ToolCallFinished(
             id="0", tool_call=delegate_call, result="x is 1", is_error=False, fact_id=None
         ),
         AssistantTextStarted(id="1"),
         AssistantTextDelta(id="1", text="done"),
-        GenerationCompleted(),
+        GenerationCompleted(iteration=2),
         AssistantTextFinished(id="1"),
     ]
 

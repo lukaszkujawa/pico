@@ -89,6 +89,8 @@ class AnswerSettled:
 class GenerationCompleted:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    iteration: int | None = None
+    pressure: bool = False
 
 
 @dataclass(frozen=True)

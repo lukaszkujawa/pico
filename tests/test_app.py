@@ -23,6 +23,7 @@ from pico.config import Config, ConfigError
 from pico.core.bus import Bus
 from pico.core.context import SYSTEM_PROMPT
 from pico.core.events import RunCancelled, RunFinished, RunStarted
+from pico.core.loop import DEFAULT_LOOP_CONFIG
 from pico.debug.log import LoggingLLMClient, RunLog
 from pico.llm.errors import LLMError
 from pico.llm.types import (
@@ -86,6 +87,7 @@ class AppSpy:
         default_factory=list[app_module.CancelHandle]
     )
     context_sizes: list[int] = field(default_factory=list[int])
+    max_steps: list[int | None] = field(default_factory=list[int | None])
     model_switches: list[ModelSwitch | None] = field(default_factory=list["ModelSwitch | None"])
 
 
@@ -101,6 +103,7 @@ def _spy_on_app_init(monkeypatch: pytest.MonkeyPatch) -> AppSpy:
         session_handle: SessionHandle | None = None,
         initial_prompt: str | None = None,
         context_size: int = 8192,
+        max_steps: int | None = None,
         model_switch: ModelSwitch | None = None,
     ) -> None:
         subscriber = bus.subscribe()
@@ -109,6 +112,7 @@ def _spy_on_app_init(monkeypatch: pytest.MonkeyPatch) -> AppSpy:
         if cancel_handle is not None:
             spy.cancel_handles.append(cancel_handle)
         spy.context_sizes.append(context_size)
+        spy.max_steps.append(max_steps)
         spy.model_switches.append(model_switch)
         original_init(
             self,
@@ -118,6 +122,7 @@ def _spy_on_app_init(monkeypatch: pytest.MonkeyPatch) -> AppSpy:
             session_handle,
             initial_prompt,
             context_size,
+            max_steps,
             model_switch,
         )
 
@@ -610,6 +615,7 @@ def test_run_pico_hands_the_configured_context_size_to_the_tui(
     run_pico(_config(tmp_path, context_size=4096))
 
     assert spy.context_sizes == [4096]
+    assert spy.max_steps == [DEFAULT_LOOP_CONFIG.max_steps]
 
 
 class NamedClient(NoModels):

@@ -161,11 +161,13 @@ class PicoApp(App[None]):
         session_handle: SessionHandle | None = None,
         initial_prompt: str | None = None,
         context_size: int = DEFAULT_CONTEXT_SIZE,
+        max_steps: int | None = None,
         model_switch: ModelSwitch | None = None,
     ) -> None:
         super().__init__()
         self._bus = bus
         self._context_size = context_size
+        self._max_steps = max_steps
         self._input_queue = input_queue
         self._cancel_handle = cancel_handle
         self._session_handle = session_handle
@@ -201,7 +203,7 @@ class PicoApp(App[None]):
             yield CommandMenu()
             yield InputBar()
             yield Rule()
-            yield StatsStrip(self._context_size)
+            yield StatsStrip(self._context_size, self._max_steps)
 
     def on_mount(self) -> None:
         self.register_theme(PICO_THEME.to_textual())
@@ -357,9 +359,18 @@ class PicoApp(App[None]):
 
     def on_generation_completed_message(self, message: GenerationCompletedMessage) -> None:
         stats = self._stats()
-        stats.requests.increment()
+        if message.iteration is None:
+            stats.requests.increment()
+        else:
+            stats.requests.requests = message.iteration
         if message.prompt_tokens is not None:
             stats.meter.used = message.prompt_tokens
+        stats.meter.pressure = message.pressure
+        stats.meter.dying = (
+            self._max_steps is not None
+            and message.iteration is not None
+            and message.iteration > self._max_steps
+        )
         counter = stats.counter
         if message.completion_tokens is None:
             if self._pending_token_text:

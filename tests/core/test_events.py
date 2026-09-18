@@ -118,12 +118,20 @@ def test_generation_completed_defaults_to_unknown_token_counts() -> None:
     event = GenerationCompleted()
     assert event.prompt_tokens is None
     assert event.completion_tokens is None
+    assert event.iteration is None
+    assert event.pressure is False
 
 
 def test_generation_completed_carries_token_counts() -> None:
     event = GenerationCompleted(prompt_tokens=120, completion_tokens=17)
     assert event.prompt_tokens == 120
     assert event.completion_tokens == 17
+
+
+def test_generation_completed_carries_iteration_and_pressure() -> None:
+    event = GenerationCompleted(iteration=4, pressure=True)
+    assert event.iteration == 4
+    assert event.pressure is True
 
 
 def test_error_occurred() -> None:

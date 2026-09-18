@@ -222,6 +222,7 @@ def run_pico(
         session_handle,
         initial_prompt,
         config.context_size,
+        DEFAULT_LOOP_CONFIG.max_steps,
         ModelSwitch(config, llm_handle),
     )
 
