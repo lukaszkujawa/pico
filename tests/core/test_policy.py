@@ -34,9 +34,6 @@ from pico.core.loop.prompt import transcript_fullness
 from pico.core.loop.runner import LoopConfig, LoopRunner
 from pico.core.loop.state import Answered, Failed, LastWords, Nudge, Running, WindingDown
 from pico.core.loop.stuckness import NUDGE_THRESHOLD, STUCK_THRESHOLD
-from pico.core.loop.subruns import (
-    child_budget,
-)
 from pico.llm.types import (
     GenerationComplete,
     Role,
@@ -67,8 +64,7 @@ from tests.core.loop_fixtures import (
 )
 
 
-def test_budget_remaining_counts_down_only_for_a_running_root_with_a_budget() -> None:
-    assert budget_remaining(1_000_000, None, 0, True) is None
+def test_budget_remaining_counts_down_only_for_a_running_root_near_the_cap() -> None:
     assert budget_remaining(8, 10, 1, True) is None
     assert budget_remaining(8, 10, 0, False) is None
     assert budget_remaining(7, 10, 0, True) is None
@@ -100,7 +96,7 @@ def test_the_view_folds_the_iteration_signals_into_one_snapshot() -> None:
         Bus(),
         session,
         128_000,
-        LoopConfig(steps=(), max_steps=max_steps),
+        LoopConfig(steps=(), budgets=(max_steps,)),
     )
     runner.iterations = int(max_steps * BUDGET_WIND_DOWN_FRACTION)
 
@@ -230,15 +226,6 @@ def test_stuck_run_carries_its_reason_on_run_finished() -> None:
     assert events[-1] == RunFinished(error=runner.state.reason)
 
 
-def test_budget_rule_is_silent_when_max_steps_is_none() -> None:
-    runner = LoopRunner(
-        FailingClient(), echo_registry(), Bus(), make_session(), 128_000, LoopConfig(steps=())
-    )
-    runner.iterations = 1_000_000
-    runner.view = observe(runner)
-    assert budget_rule(runner) == Verdict()
-
-
 def test_budget_rule_is_silent_for_delegates_regardless_of_iterations() -> None:
     runner = LoopRunner(
         FailingClient(),
@@ -246,10 +233,10 @@ def test_budget_rule_is_silent_for_delegates_regardless_of_iterations() -> None:
         Bus(),
         make_session(),
         128_000,
-        LoopConfig(steps=(), max_steps=child_budget(2)),
+        LoopConfig(steps=(), budgets=(50, 10)),
         depth=1,
     )
-    runner.iterations = child_budget(2)
+    runner.iterations = 10
     runner.view = observe(runner)
     assert budget_rule(runner) == Verdict()
 
@@ -262,7 +249,7 @@ def test_budget_rule_below_wind_down_threshold_is_silent() -> None:
         Bus(),
         make_session(),
         128_000,
-        LoopConfig(steps=(), max_steps=max_steps),
+        LoopConfig(steps=(), budgets=(max_steps,)),
     )
     runner.iterations = int(max_steps * BUDGET_WIND_DOWN_FRACTION) - 1
     runner.view = observe(runner)
@@ -277,7 +264,7 @@ def test_budget_rule_at_wind_down_threshold_speaks_nudge_and_pressure_together()
         Bus(),
         make_session(),
         128_000,
-        LoopConfig(steps=(), max_steps=max_steps),
+        LoopConfig(steps=(), budgets=(max_steps,)),
     )
     runner.iterations = int(max_steps * BUDGET_WIND_DOWN_FRACTION)
     runner.view = observe(runner)
@@ -300,7 +287,7 @@ def test_budget_pressure_yields_to_a_stronger_pressure_already_in_the_view() -> 
         Bus(),
         make_session(),
         128_000,
-        LoopConfig(steps=(), max_steps=10),
+        LoopConfig(steps=(), budgets=(10,)),
     )
     runner.generation.narration_pressure = True
     runner.iterations = 8
@@ -321,7 +308,7 @@ def test_policy_steps_accumulate_their_nudges() -> None:
         Bus(),
         session,
         128_000,
-        LoopConfig(steps=(), max_steps=max_steps),
+        LoopConfig(steps=(), budgets=(max_steps,)),
     )
     runner.iterations = int(max_steps * BUDGET_WIND_DOWN_FRACTION)
 
@@ -351,7 +338,7 @@ def test_budget_rule_leaves_the_kill_to_the_last_words_generation() -> None:
         Bus(),
         make_session(),
         128_000,
-        LoopConfig(steps=(), max_steps=max_steps),
+        LoopConfig(steps=(), budgets=(max_steps,)),
     )
     runner.iterations = max_steps
 
@@ -386,7 +373,7 @@ def test_run_reaching_soft_threshold_gets_wind_down_nudge_then_answers_normally(
     client = ScriptedClient(turns)
     config = LoopConfig(
         steps=(policy_step, generation_step, tool_call_step),
-        max_steps=max_steps,
+        budgets=(max_steps,),
     )
 
     runner = LoopRunner(client, echo_registry(), bus, session, 128_000, config)
@@ -415,7 +402,7 @@ def test_run_exhausting_budget_fails_explicitly_and_stays_resumable() -> None:
     client = ScriptedClient(turns)
     config = LoopConfig(
         steps=(policy_step, generation_step, tool_call_step),
-        max_steps=max_steps,
+        budgets=(max_steps,),
     )
 
     runner = LoopRunner(client, echo_registry(), bus, session, 128_000, config)
@@ -453,7 +440,7 @@ def test_budget_exhaustion_forces_a_final_answer_that_becomes_the_result() -> No
     max_steps = 3
     turns = [*repeat_turns(max_steps), answer_turn("what I found so far")]
     client = ScriptedClient(turns)
-    config = LoopConfig(steps=DEFAULT_LOOP_STEPS, max_steps=max_steps)
+    config = LoopConfig(steps=DEFAULT_LOOP_STEPS, budgets=(max_steps,))
 
     runner = LoopRunner(client, echo_registry(), Bus(), session, 128_000, config)
     runner.execute()
@@ -472,7 +459,7 @@ def test_the_final_generation_offers_only_the_answer_tool() -> None:
     session.append(UserMessageRecorded(content="hi"))
     max_steps = 2
     client = ScriptedClient([*repeat_turns(max_steps), answer_turn("all I have")])
-    config = LoopConfig(steps=DEFAULT_LOOP_STEPS, max_steps=max_steps)
+    config = LoopConfig(steps=DEFAULT_LOOP_STEPS, budgets=(max_steps,))
 
     LoopRunner(client, echo_registry(), Bus(), session, 128_000, config).execute()
 
@@ -502,7 +489,7 @@ def test_a_non_answer_call_in_the_final_generation_keeps_the_original_failure() 
     max_steps = 2
     turns = [*repeat_turns(max_steps + 1)]
     client = ScriptedClient(turns)
-    config = LoopConfig(steps=DEFAULT_LOOP_STEPS, max_steps=max_steps)
+    config = LoopConfig(steps=DEFAULT_LOOP_STEPS, budgets=(max_steps,))
 
     runner = LoopRunner(client, echo_registry(), Bus(), session, 128_000, config)
     runner.execute()
@@ -518,7 +505,7 @@ def test_silence_in_the_final_generation_fails_with_the_original_error() -> None
     session.append(UserMessageRecorded(content="hi"))
     max_steps = 2
     client = ScriptedClient([*repeat_turns(max_steps), text_turn("no comment")])
-    config = LoopConfig(steps=DEFAULT_LOOP_STEPS, max_steps=max_steps)
+    config = LoopConfig(steps=DEFAULT_LOOP_STEPS, budgets=(max_steps,))
 
     runner = LoopRunner(client, echo_registry(), Bus(), session, 128_000, config)
     runner.execute()
@@ -531,7 +518,7 @@ def test_the_wind_down_nudge_still_fires_before_the_final_generation() -> None:
     session.append(UserMessageRecorded(content="hi"))
     max_steps = 5
     client = ScriptedClient([*repeat_turns(max_steps), answer_turn("wrapping up")])
-    config = LoopConfig(steps=DEFAULT_LOOP_STEPS, max_steps=max_steps)
+    config = LoopConfig(steps=DEFAULT_LOOP_STEPS, budgets=(max_steps,))
 
     LoopRunner(client, echo_registry(), Bus(), session, 128_000, config).execute()
 
@@ -588,7 +575,7 @@ def test_the_root_at_wind_down_with_no_plan_gets_the_demand_and_the_wind_down_nu
     max_steps = 5
     threshold = int(max_steps * BUDGET_WIND_DOWN_FRACTION)
     client = ScriptedClient([*[note_turn(index) for index in range(threshold)], answer_turn()])
-    config = LoopConfig(steps=DEFAULT_LOOP_STEPS, max_steps=max_steps)
+    config = LoopConfig(steps=DEFAULT_LOOP_STEPS, budgets=(max_steps,))
 
     LoopRunner(client, registry, Bus(), session, 128_000, config).execute()
 
@@ -611,7 +598,7 @@ def test_the_root_at_wind_down_with_unfinished_steps_keeps_the_wind_down_wording
     )
     config = LoopConfig(
         steps=(policy_step, generation_step, tool_call_step),
-        max_steps=max_steps,
+        budgets=(max_steps,),
     )
 
     LoopRunner(client, registry, Bus(), session, 128_000, config).execute()
@@ -736,7 +723,7 @@ def test_the_last_words_path_still_offers_answer_alone() -> None:
     session, registry = decision_session()
     max_steps = 2
     client = ScriptedClient([*repeat_turns(max_steps), answer_turn("wrapping up")])
-    config = LoopConfig(steps=DEFAULT_LOOP_STEPS, max_steps=max_steps)
+    config = LoopConfig(steps=DEFAULT_LOOP_STEPS, budgets=(max_steps,))
 
     runner = LoopRunner(client, registry, Bus(), session, 128_000, config, depth=MAX_DELEGATE_DEPTH)
     runner.execute()

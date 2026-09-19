@@ -16,6 +16,7 @@ REQUIRED_VARS = {
 ENV_KEYS = [
     "LLM_TEMPERATURE",
     "LLM_VISION",
+    "STEP_BUDGETS",
     "LLM_VENDOR",
     "LLM_BASE_URL",
     "LLM_MODEL",
@@ -119,3 +120,34 @@ def test_vision_stays_off_for_other_values(monkeypatch: pytest.MonkeyPatch, valu
     _set_env(monkeypatch, LLM_VISION=value)
 
     assert load_config().vision is False
+
+
+def test_step_budgets_default_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_env(monkeypatch)
+
+    assert load_config().step_budgets == (50, 30, 10)
+
+
+def test_step_budgets_default_when_blank(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_env(monkeypatch, STEP_BUDGETS="")
+
+    assert load_config().step_budgets == (50, 30, 10)
+
+
+def test_step_budgets_parses_comma_separated_integers(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_env(monkeypatch, STEP_BUDGETS="40,20")
+
+    assert load_config().step_budgets == (40, 20)
+
+
+@pytest.mark.parametrize("value", ["ten", "0", "-5,10", "50,,10"])
+def test_malformed_step_budgets_raise_config_error(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    _set_env(monkeypatch, STEP_BUDGETS=value)
+
+    with pytest.raises(ConfigError) as excinfo:
+        load_config()
+
+    assert "STEP_BUDGETS" in str(excinfo.value)
+    assert repr(value) in str(excinfo.value)

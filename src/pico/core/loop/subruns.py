@@ -12,19 +12,13 @@ from pico.core.bus import Bus
 from pico.core.events import ToolCallStarted
 from pico.core.ledger import Plan, plan, render_plan
 from pico.core.loop.record import finish_tool_call
-from pico.core.loop.runner import LoopConfig, LoopRunner, StepOutcome
+from pico.core.loop.runner import LoopRunner, StepOutcome
 from pico.core.loop.state import Answered, Failed, Running, StepState, WindingDown
 from pico.core.tools import ToolRegistry
 from pico.llm.types import ToolCall
 from pico.session import PlanStepCompleted, Session, ToolCallRecorded, UserMessageRecorded
 
-CHILD_BUDGETS = (30, 10)
 MAX_STEP_ATTEMPTS = 2
-
-
-def child_budget(depth: int) -> int:
-    assert depth > 0, "depth 0 is the root run, not a child"
-    return CHILD_BUDGETS[min(depth, len(CHILD_BUDGETS)) - 1]
 
 
 def run_child(
@@ -44,7 +38,7 @@ def run_child(
         Bus(),
         child_session,
         runner.context_size,
-        LoopConfig(steps=runner.config.steps, max_steps=child_budget(runner.depth + 1)),
+        runner.config,
         cancel=runner.cancel,
         result_shape=shape,
         depth=runner.depth + 1,
@@ -62,7 +56,7 @@ def conclude(child: LoopRunner) -> Outcome:
         case Failed(reason):
             return Outcome(reason, is_error=True)
         case _:
-            return Outcome(f"no answer within {child.config.max_steps} steps", is_error=True)
+            return Outcome(f"no answer within {child.max_steps} steps", is_error=True)
 
 
 def spawn_delegate(runner: LoopRunner, delegate: Delegate) -> Outcome:

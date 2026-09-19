@@ -30,13 +30,16 @@ StepOutcome = Literal["continue", "done", "cancelled"]
 
 Step = Callable[["LoopRunner"], StepOutcome]
 
-MAX_RUN_STEPS = 50
+DEFAULT_STEP_BUDGETS = (50, 30, 10)
 
 
 @dataclass(frozen=True)
 class LoopConfig:
     steps: tuple[Step, ...]
-    max_steps: int | None = None
+    budgets: tuple[int, ...] = DEFAULT_STEP_BUDGETS
+
+    def budget(self, depth: int) -> int:
+        return self.budgets[min(depth, len(self.budgets) - 1)]
 
 
 class LoopRunner:
@@ -79,6 +82,10 @@ class LoopRunner:
     def chars_per_token(self) -> float:
         return self.generation.chars_per_token
 
+    @property
+    def max_steps(self) -> int:
+        return self.config.budget(self.depth)
+
     def emit(self, nudge: Nudge) -> None:
         self.pending_nudges.append(nudge)
 
@@ -97,13 +104,9 @@ class LoopRunner:
     def execute(self) -> None:
         self.bus.publish(RunStarted())
         try:
-            max_steps = self.config.max_steps
-            while max_steps is None or self.iterations <= max_steps:
-                if (
-                    max_steps is not None
-                    and self.iterations == max_steps
-                    and isinstance(self.state, Running)
-                ):
+            max_steps = self.max_steps
+            while self.iterations <= max_steps:
+                if self.iterations == max_steps and isinstance(self.state, Running):
                     self.state = WindingDown(f"the generation budget of {max_steps} is spent")
                 self.iterations += 1
                 outcome = self._run_iteration()

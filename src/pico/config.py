@@ -3,6 +3,8 @@ from dataclasses import dataclass
 
 from dotenv import find_dotenv, load_dotenv
 
+from pico.core.loop.runner import DEFAULT_STEP_BUDGETS
+
 
 class ConfigError(Exception):
     pass
@@ -18,6 +20,18 @@ class Config:
     session_path: str
     temperature: float | None = None
     vision: bool = False
+    step_budgets: tuple[int, ...] = DEFAULT_STEP_BUDGETS
+
+
+def _parse_step_budgets(raw: str) -> tuple[int, ...]:
+    message = f"STEP_BUDGETS must be comma-separated positive integers, got: {raw!r}"
+    try:
+        budgets = tuple(int(entry) for entry in raw.split(","))
+    except ValueError as error:
+        raise ConfigError(message) from error
+    if any(budget < 1 for budget in budgets):
+        raise ConfigError(message)
+    return budgets
 
 
 def _require(name: str) -> str:
@@ -58,6 +72,11 @@ def load_config() -> Config:
 
     vision = (os.environ.get("LLM_VISION") or "").lower() in ("1", "true")
 
+    step_budgets_raw = os.environ.get("STEP_BUDGETS") or None
+    step_budgets = (
+        DEFAULT_STEP_BUDGETS if step_budgets_raw is None else _parse_step_budgets(step_budgets_raw)
+    )
+
     return Config(
         vendor=vendor,
         base_url=base_url,
@@ -67,4 +86,5 @@ def load_config() -> Config:
         session_path=session_path,
         temperature=temperature,
         vision=vision,
+        step_budgets=step_budgets,
     )

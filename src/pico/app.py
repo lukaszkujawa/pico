@@ -9,7 +9,8 @@ from pico.config import Config, ConfigError
 from pico.core.actions import register_actions
 from pico.core.bus import Bus
 from pico.core.events import AnswerSettled, RunCancelled, RunFinished, RunStarted
-from pico.core.loop import DEFAULT_LOOP_CONFIG, LoopRunner
+from pico.core.loop import DEFAULT_LOOP_STEPS, LoopRunner
+from pico.core.loop.runner import LoopConfig
 from pico.core.tools import ToolRegistry
 from pico.debug.log import LoggingLLMClient, RunLog
 from pico.llm.anthropic import AnthropicClient
@@ -131,6 +132,7 @@ def _turn_loop(
     shutdown: threading.Event,
     cancel_handle: CancelHandle,
     vision: bool,
+    loop_config: LoopConfig,
 ) -> None:
     id_source = itertools.count()
     while True:
@@ -147,9 +149,7 @@ def _turn_loop(
         register_actions(tools, session, vision=vision)
         cancel = threading.Event()
         cancel_handle.arm(cancel)
-        runner = LoopRunner(
-            llm, tools, bus, session, context_size, DEFAULT_LOOP_CONFIG, cancel, id_source
-        )
+        runner = LoopRunner(llm, tools, bus, session, context_size, loop_config, cancel, id_source)
         runner.execute()
         cancel_handle.disarm()
 
@@ -247,6 +247,7 @@ def run_pico(
         threading.Thread(target=_consume_bus_to_log, args=(bus, run_log), daemon=True).start()
 
     llm_handle = LLMHandle(client, run_log)
+    loop_config = LoopConfig(steps=DEFAULT_LOOP_STEPS, budgets=config.step_budgets)
 
     core_thread = threading.Thread(
         target=_turn_loop,
@@ -259,6 +260,7 @@ def run_pico(
             shutdown,
             cancel_handle,
             config.vision,
+            loop_config,
         ),
         daemon=True,
     )
@@ -271,7 +273,7 @@ def run_pico(
         session_handle,
         initial_prompt,
         config.context_size,
-        DEFAULT_LOOP_CONFIG.max_steps,
+        loop_config.budget(0),
         ModelSwitch(config, llm_handle),
     )
 

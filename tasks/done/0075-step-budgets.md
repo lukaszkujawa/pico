@@ -10,7 +10,7 @@ How many generations a run may spend is hard-coded in two places at three levels
 * **Behaviour-preserving at the default.** With `STEP_BUDGETS` unset, every cap, wind-down threshold, TUI display, and eval run matches today's numbers exactly. Tests that construct `LoopConfig` directly keep working through the default tuple.
 * **Scope guard.** No per-run or per-prompt overrides, no CLI flag, no changes to `MAX_STEP_ATTEMPTS`, `MAX_DELEGATE_DEPTH`, or the wind-down fraction, no unlimited mode beyond whatever `LoopConfig` already expresses.
 
-## [ ] T001 STEP_BUDGETS in Config
+## [X] T001 STEP_BUDGETS in Config
 
 ### Description
 
@@ -22,7 +22,7 @@ Parse `STEP_BUDGETS` into `Config.step_budgets` with the `(50, 30, 10)` default 
 * Non-integer, zero, negative, and empty entries each raise `ConfigError` naming `STEP_BUDGETS` and the raw value.
 * `make check` passes.
 
-## [ ] T002 Budgets through the loop
+## [X] T002 Budgets through the loop
 
 ### Description
 
@@ -35,7 +35,7 @@ Carry the tuple on `LoopConfig`, derive each runner's cap from its depth, delete
 * Neither `MAX_RUN_STEPS` nor `CHILD_BUDGETS` exists anywhere; the numbers appear only in the `Config` default.
 * `make check` passes.
 
-## [ ] T003 Document the knob
+## [X] T003 Document the knob
 
 ### Description
 

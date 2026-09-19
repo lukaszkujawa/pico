@@ -58,10 +58,8 @@ class Verdict:
     degraded: str | None = None
 
 
-def budget_remaining(
-    iterations: int, max_steps: int | None, depth: int, running: bool
-) -> int | None:
-    if max_steps is None or depth > 0 or not running:
+def budget_remaining(iterations: int, max_steps: int, depth: int, running: bool) -> int | None:
+    if depth > 0 or not running:
         return None
     if iterations < int(max_steps * BUDGET_WIND_DOWN_FRACTION):
         return None
@@ -86,9 +84,7 @@ def observe(runner: LoopRunner) -> IterationView:
     )
     return IterationView(
         iterations=runner.iterations,
-        remaining=budget_remaining(
-            runner.iterations, runner.config.max_steps, runner.depth, running
-        ),
+        remaining=budget_remaining(runner.iterations, runner.max_steps, runner.depth, running),
         fullness=fullness,
         undecided=running and undecided(runner.session),
         narration=runner.generation.last_narration,

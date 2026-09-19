@@ -537,7 +537,7 @@ def test_generation_publishes_pressure_once_the_budget_winds_down() -> None:
         bus,
         session,
         128_000,
-        LoopConfig(steps=(generation_step,), max_steps=10),
+        LoopConfig(steps=(generation_step,), budgets=(10,)),
     )
     runner.iterations = 8
     policy_step(runner)

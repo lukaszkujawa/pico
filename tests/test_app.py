@@ -795,7 +795,7 @@ def test_run_pico_hands_the_configured_context_size_to_the_tui(
     run_pico(_config(tmp_path, context_size=4096))
 
     assert spy.context_sizes == [4096]
-    assert spy.max_steps == [DEFAULT_LOOP_CONFIG.max_steps]
+    assert spy.max_steps == [DEFAULT_LOOP_CONFIG.budget(0)]
 
 
 class NamedClient(NoModels):

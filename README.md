@@ -27,7 +27,7 @@ Copy `.env.example` to `.env` and fill in your model server details:
 cp .env.example .env
 ```
 
-`LLM_VENDOR` selects the client: `ollama`, `openai` (any OpenAI-compatible server, e.g. llama.cpp or vLLM), or `anthropic`. `LLM_CONTEXT_SIZE` drives the context budget; `LLM_TEMPERATURE` is optional, and `LLM_VISION=1` enables `view_image` for multimodal models.
+`LLM_VENDOR` selects the client: `ollama`, `openai` (any OpenAI-compatible server, e.g. llama.cpp or vLLM), or `anthropic`. `LLM_CONTEXT_SIZE` drives the context budget; `LLM_TEMPERATURE` is optional, and `LLM_VISION=1` enables `view_image` for multimodal models. `STEP_BUDGETS` is an optional comma-separated list of generation caps: the first entry caps the root run, each following entry caps the next delegation depth, and the last entry covers every depth beyond it (default `50,30,10`).
 
 Then run the TUI:
 

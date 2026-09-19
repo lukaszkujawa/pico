@@ -11,7 +11,8 @@ from pico.core.events import (
     RunFinished,
     ToolCallFinished,
 )
-from pico.core.loop import DEFAULT_LOOP_CONFIG, LoopRunner
+from pico.core.loop import DEFAULT_LOOP_STEPS, LoopRunner
+from pico.core.loop.runner import DEFAULT_STEP_BUDGETS, LoopConfig
 from pico.core.loop.state import Answered
 from pico.core.tools import ToolRegistry
 from pico.llm.client import LLMClient
@@ -30,14 +31,20 @@ class TurnResult:
 
 
 def run_turn(
-    llm: LLMClient, session: Session, context_size: int, prompt: str, vision: bool = False
+    llm: LLMClient,
+    session: Session,
+    context_size: int,
+    prompt: str,
+    vision: bool = False,
+    step_budgets: tuple[int, ...] = DEFAULT_STEP_BUDGETS,
 ) -> TurnResult:
     bus = Bus()
     subscriber = bus.subscribe()
     session.append(UserMessageRecorded(content=prompt))
     tools = ToolRegistry()
     register_actions(tools, session, vision=vision)
-    runner = LoopRunner(llm, tools, bus, session, context_size, DEFAULT_LOOP_CONFIG)
+    config = LoopConfig(steps=DEFAULT_LOOP_STEPS, budgets=step_budgets)
+    runner = LoopRunner(llm, tools, bus, session, context_size, config)
 
     started = time.monotonic()
     runner.execute()

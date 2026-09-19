@@ -13,7 +13,7 @@ from pico.core.loop import DEFAULT_LOOP_CONFIG
 from pico.core.loop.dispatch import tool_call_step
 from pico.core.loop.generate import generation_step
 from pico.core.loop.policy import policy_step
-from pico.core.loop.runner import MAX_RUN_STEPS, LoopConfig, LoopRunner, StepOutcome
+from pico.core.loop.runner import DEFAULT_STEP_BUDGETS, LoopConfig, LoopRunner, StepOutcome
 from pico.core.loop.state import Cancelled
 from pico.core.loop.subruns import (
     step_orchestration_step,
@@ -44,17 +44,23 @@ def test_step_outcome_accepts_each_literal_value() -> None:
     assert make("cancelled") == "cancelled"
 
 
-def test_loop_config_holds_ordered_steps_and_max_steps() -> None:
+def test_loop_config_holds_ordered_steps_and_budgets() -> None:
     def a(runner: LoopRunner) -> StepOutcome:
         return "done"
 
     def b(runner: LoopRunner) -> StepOutcome:
         return "done"
 
-    config = LoopConfig(steps=(a, b), max_steps=5)
+    config = LoopConfig(steps=(a, b), budgets=(5,))
 
     assert config.steps == (a, b)
-    assert config.max_steps == 5
+    assert config.budgets == (5,)
+
+
+def test_budget_clamps_depths_past_the_end_of_the_tuple() -> None:
+    config = LoopConfig(steps=(), budgets=(5, 2))
+
+    assert [config.budget(depth) for depth in range(4)] == [5, 2, 2, 2]
 
 
 def test_single_always_done_step_publishes_started_and_finished() -> None:
@@ -153,13 +159,34 @@ def test_max_steps_reached_without_terminal_outcome_publishes_finished() -> None
         bus,
         make_session(),
         128_000,
-        LoopConfig(steps=(always_continue,), max_steps=3),
+        LoopConfig(steps=(always_continue,), budgets=(3,)),
     )
     runner.execute()
 
     assert len(calls) == 4
     assert next(subscriber) == RunStarted()
     assert next(subscriber) == RunFinished()
+
+
+def test_runner_cap_follows_its_depth_in_the_budgets() -> None:
+    calls: list[int] = []
+
+    def always_continue(runner: LoopRunner) -> StepOutcome:
+        calls.append(1)
+        return "continue"
+
+    runner = LoopRunner(
+        FailingClient(),
+        echo_registry(),
+        Bus(),
+        make_session(),
+        128_000,
+        LoopConfig(steps=(always_continue,), budgets=(9, 2)),
+        depth=1,
+    )
+    runner.execute()
+
+    assert len(calls) == 3
 
 
 def test_steps_after_non_continue_step_are_not_called() -> None:
@@ -239,4 +266,5 @@ def test_default_loop_config_lists_the_phases_in_order() -> None:
         generation_step,
         tool_call_step,
     )
-    assert DEFAULT_LOOP_CONFIG.max_steps == MAX_RUN_STEPS
+    assert DEFAULT_LOOP_CONFIG.budgets == DEFAULT_STEP_BUDGETS
+    assert DEFAULT_STEP_BUDGETS == (50, 30, 10)
