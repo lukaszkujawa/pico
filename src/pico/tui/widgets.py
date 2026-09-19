@@ -551,6 +551,7 @@ class Splash(Static):
 
 SELECTED_GLYPH = "▸"
 CURRENT_GLYPH = "•"
+FETCHING_LABEL = "fetching models…"
 
 
 class CommandMenu(Static):
@@ -573,7 +574,7 @@ class CommandMenu(Static):
         self.selected = next(
             (index for index, row in enumerate(completion.rows) if row.label == previous), 0
         )
-        self.display = bool(completion.rows) or completion.error is not None
+        self.display = bool(completion.rows) or completion.error is not None or completion.pending
 
     def hide(self) -> None:
         self.completion = None
@@ -589,16 +590,13 @@ class CommandMenu(Static):
         if self.rows:
             self.selected = (self.selected + offset) % len(self.rows)
 
-    def accept(self) -> str | None:
-        if self.completion is None or not self.rows:
-            return None
-        return self.completion.accepted(self.rows[self.selected])
-
     def render(self) -> Text:
         if self.completion is None:
             return Text("")
         if self.completion.error is not None:
             return Text(f"{ERROR_GLYPH} {self.completion.error}", style=f"bold {self._theme.error}")
+        if self.completion.pending:
+            return Text(FETCHING_LABEL, style=f"italic {self._theme.muted_text}")
         lines: list[Text] = []
         width = max(len(self._label(row)) for row in self.rows)
         for index, row in enumerate(self.rows):

@@ -10,7 +10,7 @@ The TUI freezes solid, and the trigger is a synchronous HTTP request on the UI e
 * **`quit` moves before `model` in `COMMANDS`.** Belt and braces: if any staleness survives, the default highlighted row is the harmless one.
 * **Scope guard.** No change to the LLM clients, their timeouts, or `models()` itself; no persistent or cross-session caching of model names; no change to how `switch_to` builds clients. The uncancellable stalled-stream problem (`read=None` plus cancel checked only per stream event) is real but separate — it is not this milestone.
 
-## [ ] T001 Race-free accept
+## [X] T001 Race-free accept
 
 ### Description
 
@@ -22,7 +22,7 @@ Recompute the completion from the input's current text when Enter accepts, and r
 * Accepting `/model` from a menu genuinely matching the current text still inserts `/model ` and awaits the argument.
 * `make check` passes.
 
-## [ ] T002 Pure completion over provided names
+## [X] T002 Pure completion over provided names
 
 ### Description
 
@@ -34,7 +34,7 @@ Change `commands.complete` to take fetched model names instead of a `ModelSwitch
 * Filtering, current-model marking, and the error rendering behave as today given the same names.
 * `make check` passes.
 
-## [ ] T003 Worker-fetched model list
+## [X] T003 Worker-fetched model list
 
 ### Description
 

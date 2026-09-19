@@ -1,5 +1,6 @@
 import queue
 import re
+import threading
 
 import pytest
 from textual.containers import Vertical, VerticalScroll
@@ -26,10 +27,11 @@ from pico.core.events import (
 )
 from pico.llm.types import ToolCall
 from pico.tui.app import ChatInput, InputBar, PicoApp
-from pico.tui.commands import COMMANDS, Options
+from pico.tui.commands import COMMANDS, Options, complete
 from pico.tui.messages import UserInputSubmitted
 from pico.tui.widgets import (
     CURRENT_GLYPH,
+    FETCHING_LABEL,
     SUCCESS_GLYPH,
     ActivityStrip,
     AnswerPane,
@@ -1600,9 +1602,30 @@ class FakeSwitch:
         self._options = Options(names=names, error=error)
         self.current = "qwen3:8b"
         self.switched: list[str] = []
+        self.available_calls = 0
 
     def available(self) -> Options:
+        self.available_calls += 1
         return self._options
+
+    def switch_to(self, model: str) -> None:
+        self.switched.append(model)
+        self.current = model
+
+
+class GatedSwitch:
+    def __init__(self, results: list[Options]) -> None:
+        self.current = "qwen3:8b"
+        self.gates = [threading.Event() for _ in results]
+        self._results = results
+        self.calls = 0
+        self.switched: list[str] = []
+
+    def available(self) -> Options:
+        index = self.calls
+        self.calls += 1
+        self.gates[index].wait(timeout=10)
+        return self._results[index]
 
     def switch_to(self, model: str) -> None:
         self.switched.append(model)
@@ -1695,11 +1718,11 @@ async def test_typing_slash_shows_both_commands_with_descriptions() -> None:
         await pilot.press("/")
         await settle(pilot, lambda: _menu(app).display, "the menu appears")
 
-        assert _labels(app) == ["model", "quit"]
+        assert _labels(app) == ["quit", "model"]
         rendered = _menu(app).render().plain
         assert "switch the model for the next run" in rendered
         assert "exit pico" in rendered
-        assert _menu(app).selection == "model"
+        assert _menu(app).selection == "quit"
 
 
 async def test_narrowing_to_one_command_preselects_it_and_enter_runs_it() -> None:
@@ -1715,6 +1738,28 @@ async def test_narrowing_to_one_command_preselects_it_and_enter_runs_it() -> Non
         await settle(pilot, lambda: not app.is_running, "the app exits")
 
 
+async def test_enter_on_a_stale_menu_accepts_the_typed_command_not_the_displayed_one() -> None:
+    switch = FakeSwitch()
+    app = PicoApp(Bus(), queue.Queue(), model_switch=switch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        text_input = app.query_one("#user-input", ChatInput)
+        text_input.focus()
+        await pilot.press(*"/q")
+        await settle(pilot, lambda: _labels(app) == ["quit"], "the menu catches up")
+
+        stale = complete("/", None)
+        assert stale is not None
+        _menu(app).show(stale)
+        _menu(app).move(1)
+        assert _menu(app).selection == "model"
+
+        await pilot.press("enter")
+        await settle(pilot, lambda: not app.is_running, "quit runs")
+
+    assert switch.switched == []
+
+
 async def test_accepting_model_enters_the_argument_stage_with_the_live_model_list() -> None:
     switch = FakeSwitch()
     app = PicoApp(Bus(), queue.Queue(), model_switch=switch)
@@ -1725,7 +1770,7 @@ async def test_accepting_model_enters_the_argument_stage_with_the_live_model_lis
         await pilot.press(*"/mo", "enter")
         await settle(pilot, lambda: text_input.text == "/model ", "the argument stage opens")
 
-        assert _labels(app) == ["qwen3:8b", "gemma3:27b"]
+        await settle(pilot, lambda: _labels(app) == ["qwen3:8b", "gemma3:27b"], "models listed")
         assert switch.switched == []
 
 
@@ -1762,11 +1807,11 @@ async def test_up_and_down_move_the_selection_without_moving_the_cursor() -> Non
         cursor = text_input.cursor_location
 
         await pilot.press("down")
-        await settle(pilot, lambda: _menu(app).selection == "quit", "the selection moves down")
+        await settle(pilot, lambda: _menu(app).selection == "model", "the selection moves down")
         assert text_input.cursor_location == cursor
 
         await pilot.press("up")
-        await settle(pilot, lambda: _menu(app).selection == "model", "the selection wraps back")
+        await settle(pilot, lambda: _menu(app).selection == "quit", "the selection wraps back")
         assert text_input.cursor_location == cursor
 
 
@@ -1832,13 +1877,84 @@ async def test_model_list_failure_renders_an_error_row_and_the_input_keeps_worki
         text_input = app.query_one("#user-input", ChatInput)
         text_input.focus()
         await pilot.press(*"/model ")
-        await settle(pilot, lambda: _menu(app).display, "the error row appears")
-
-        assert "connection refused" in _menu(app).render().plain
+        await settle(
+            pilot,
+            lambda: "connection refused" in _menu(app).render().plain,
+            "the error row appears",
+        )
 
         await pilot.press(*"qwen3:8b", "enter")
         await settle(pilot, lambda: switch.switched == ["qwen3:8b"], "the typed name still works")
         assert text_input.text == ""
+
+
+async def test_opening_the_model_menu_fetches_once_and_reopening_fetches_fresh() -> None:
+    switch = FakeSwitch()
+    app = PicoApp(Bus(), queue.Queue(), model_switch=switch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#user-input", ChatInput).focus()
+        await pilot.press(*"/model ")
+        await settle(pilot, lambda: _labels(app) == ["qwen3:8b", "gemma3:27b"], "models listed")
+
+        await pilot.press(*"gem")
+        await settle(pilot, lambda: _labels(app) == ["gemma3:27b"], "the cached names narrow")
+        assert switch.available_calls == 1
+
+        await pilot.press("escape")
+        await settle(pilot, lambda: not _menu(app).display, "the menu hides")
+
+        await pilot.press("backspace")
+        await settle(pilot, lambda: switch.available_calls == 2, "reopening fetches fresh")
+
+
+async def test_keystrokes_during_a_pending_fetch_stay_responsive_until_names_land() -> None:
+    switch = GatedSwitch([Options(names=("qwen3:8b", "gemma3:27b"))])
+    app = PicoApp(Bus(), queue.Queue(), model_switch=switch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        text_input = app.query_one("#user-input", ChatInput)
+        text_input.focus()
+        await pilot.press(*"/model ")
+        await settle(
+            pilot, lambda: FETCHING_LABEL in _menu(app).render().plain, "the pending row shows"
+        )
+
+        await pilot.press(*"gem")
+        await pilot.pause()
+        assert text_input.text == "/model gem"
+        assert FETCHING_LABEL in _menu(app).render().plain
+        assert _menu(app).selection is None
+        assert switch.calls == 1
+
+        switch.gates[0].set()
+        await settle(
+            pilot, lambda: _labels(app) == ["gemma3:27b"], "the names land without further input"
+        )
+
+
+async def test_a_superseded_fetch_is_discarded_not_queued() -> None:
+    switch = GatedSwitch([Options(names=("stale:1",)), Options(names=("fresh:1",))])
+    app = PicoApp(Bus(), queue.Queue(), model_switch=switch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#user-input", ChatInput).focus()
+        await pilot.press(*"/model ")
+        await settle(pilot, lambda: switch.calls == 1, "the first fetch starts")
+
+        await pilot.press("escape")
+        await settle(pilot, lambda: not _menu(app).display, "the menu hides")
+
+        await pilot.press("f")
+        await settle(pilot, lambda: switch.calls == 2, "a second fetch runs despite the first")
+
+        switch.gates[1].set()
+        await settle(pilot, lambda: _labels(app) == ["fresh:1"], "the fresh names render")
+
+        switch.gates[0].set()
+        await pilot.pause()
+        await pilot.pause()
+        assert _labels(app) == ["fresh:1"]
 
 
 async def test_every_registered_command_is_dispatched() -> None:

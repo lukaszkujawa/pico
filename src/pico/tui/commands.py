@@ -1,6 +1,4 @@
-from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
 
 
 @dataclass(frozen=True)
@@ -9,29 +7,20 @@ class Options:
     error: str | None = None
 
 
-class ModelSwitch(Protocol):
-    @property
-    def current(self) -> str: ...
-
-    def available(self) -> Options: ...
-
-    def switch_to(self, model: str) -> None: ...
-
-
 @dataclass(frozen=True)
 class SlashCommand:
     name: str
     description: str
-    arguments: Callable[[ModelSwitch], Options] | None = None
+    takes_argument: bool = False
 
 
 COMMANDS: tuple[SlashCommand, ...] = (
+    SlashCommand(name="quit", description="exit pico"),
     SlashCommand(
         name="model",
         description="switch the model for the next run",
-        arguments=lambda switch: switch.available(),
+        takes_argument=True,
     ),
-    SlashCommand(name="quit", description="exit pico"),
 )
 
 KNOWN_COMMANDS = " ".join(f"/{command.name}" for command in COMMANDS)
@@ -44,7 +33,7 @@ def find(name: str) -> SlashCommand | None:
 def awaits_argument(text: str) -> bool:
     name, separator, _ = text.removeprefix("/").partition(" ")
     command = find(name)
-    return not separator and command is not None and command.arguments is not None
+    return not separator and command is not None and command.takes_argument
 
 
 @dataclass(frozen=True)
@@ -59,6 +48,7 @@ class Completion:
     rows: tuple[Row, ...] = ()
     error: str | None = None
     command: SlashCommand | None = None
+    pending: bool = False
 
     def accepted(self, row: Row) -> str:
         return f"/{row.label}" if self.command is None else f"/{self.command.name} {row.label}"
@@ -74,23 +64,24 @@ def _command_rows(prefix: str) -> Completion:
     )
 
 
-def complete(text: str, switch: ModelSwitch | None) -> Completion | None:
+def complete(text: str, models: Options | None, current: str | None = None) -> Completion | None:
     if not text.startswith("/") or "\n" in text:
         return None
     name, separator, argument = text.removeprefix("/").partition(" ")
     if not separator:
         return _command_rows(name)
     command = find(name)
-    if command is None or command.arguments is None or switch is None:
+    if command is None or not command.takes_argument:
         return None
-    options = command.arguments(switch)
-    if options.error is not None:
-        return Completion(error=options.error, command=command)
+    if models is None:
+        return Completion(command=command, pending=True)
+    if models.error is not None:
+        return Completion(error=models.error, command=command)
     prefix = argument.lstrip()
     return Completion(
         rows=tuple(
-            Row(label=model, marked=model == switch.current)
-            for model in options.names
+            Row(label=model, marked=model == current)
+            for model in models.names
             if model.startswith(prefix)
         ),
         command=command,

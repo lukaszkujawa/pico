@@ -48,7 +48,8 @@ from pico.session import (
     latest_session_id,
 )
 from pico.tui import PicoApp
-from pico.tui.commands import ModelSwitch, Options
+from pico.tui.app import ModelSwitch
+from pico.tui.commands import Options
 from pico.tui.messages import UserInputSubmitted
 from pico.tui.widgets import SystemPane, UserPane
 from tests.conftest import settle, wait_until

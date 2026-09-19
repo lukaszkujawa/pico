@@ -10,6 +10,7 @@ from pico.tui.commands import Completion, Row
 from pico.tui.theme import PICO_THEME
 from pico.tui.widgets import (
     ERROR_GLYPH,
+    FETCHING_LABEL,
     SUCCESS_GLYPH,
     WAITING_FRAMES,
     ActivityStrip,
@@ -851,16 +852,28 @@ async def test_stats_strip_readouts_are_monochrome_until_over_budget() -> None:
         assert _hues(meter.render()) == {PICO_THEME.error}
 
 
-def test_command_menu_with_no_completion_renders_nothing_and_accepts_nothing() -> None:
+def test_command_menu_with_no_completion_renders_nothing_and_selects_nothing() -> None:
     menu = CommandMenu()
 
     assert menu.render().plain == ""
-    assert menu.accept() is None
     assert menu.selection is None
 
     menu.move(1)
 
     assert menu.selected == 0
+
+
+def test_command_menu_pending_shows_an_unselectable_fetching_row() -> None:
+    menu = CommandMenu()
+    menu.show(Completion(pending=True))
+
+    assert menu.display
+    assert menu.render().plain == FETCHING_LABEL
+    assert menu.selection is None
+
+    menu.hide()
+
+    assert not menu.display
 
 
 def _selected_backgrounds(menu: CommandMenu) -> list[str]:

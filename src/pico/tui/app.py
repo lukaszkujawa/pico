@@ -11,10 +11,11 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.timer import Timer
 from textual.widgets import Rule, Static, TextArea
+from textual.worker import Worker, get_current_worker  # pyright: ignore[reportUnknownVariableType]
 
 from pico.core.bus import Bus
 from pico.tui import commands
-from pico.tui.commands import ModelSwitch
+from pico.tui.commands import Options
 from pico.tui.messages import (
     AnswerPaneCreate,
     AnswerPaneSettle,
@@ -56,6 +57,15 @@ class CancelHandle(Protocol):
     def trigger(self) -> None: ...
 
 
+class ModelSwitch(Protocol):
+    @property
+    def current(self) -> str: ...
+
+    def available(self) -> Options: ...
+
+    def switch_to(self, model: str) -> None: ...
+
+
 class SessionHandle(Protocol):
     @property
     def session_id(self) -> str: ...
@@ -94,7 +104,7 @@ class ChatInput(TextArea):
             event.stop()
             event.prevent_default()
             if menu.display:
-                accepted = menu.accept()
+                accepted = self._accept(menu)
                 if accepted is not None:
                     self.post_message(CommandAccepted(text=accepted))
                     return
@@ -105,6 +115,15 @@ class ChatInput(TextArea):
         if event.key in NEWLINE_KEYS:
             event.key = "enter"
         await super()._on_key(event)
+
+    def _accept(self, menu: CommandMenu) -> str | None:
+        app = cast("PicoApp", self.app)  # pyright: ignore[reportUnknownMemberType]
+        completion = app.command_completion(self.text)
+        if completion is None or not completion.rows:
+            return None
+        rows = completion.rows
+        row = next((row for row in rows if row.label == menu.selection), rows[0])
+        return completion.accepted(row)
 
 
 class Conversation(VerticalScroll):
@@ -184,6 +203,8 @@ class PicoApp(App[None]):
         self._queued_user_panes: list[UserPane] = []
         self._pending_token_text: str = ""
         self._flush_timer: Timer | None = None
+        self._menu_models: Options | None = None
+        self._models_worker: Worker[None] | None = None
 
     def _session_id(self) -> str:
         return "" if self._session_handle is None else self._session_handle.session_id
@@ -438,13 +459,48 @@ class PicoApp(App[None]):
     def _menu(self) -> CommandMenu:
         return self.query_one(CommandMenu)
 
+    def command_completion(self, text: str) -> commands.Completion | None:
+        switch = self._model_switch
+        current = None if switch is None else switch.current
+        completion = commands.complete(text, self._menu_models, current)
+        if completion is not None and completion.pending and switch is None:
+            return None
+        return completion
+
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
-        completion = commands.complete(event.text_area.text, self._model_switch)
-        menu = self._menu()
+        self._refresh_menu(event.text_area.text)
+
+    def _refresh_menu(self, text: str) -> None:
+        completion = self.command_completion(text)
         if completion is None:
-            menu.hide()
-        else:
-            menu.show(completion)
+            self._hide_menu()
+            return
+        if completion.pending and self._models_worker is None and self._model_switch is not None:
+            self._models_worker = self._fetch_models(self._model_switch)
+        self._menu().show(completion)
+
+    def _hide_menu(self) -> None:
+        self._menu_models = None
+        if self._models_worker is not None:
+            self._models_worker.cancel()
+            self._models_worker = None
+        self._menu().hide()
+
+    def _fetch_models(self, switch: ModelSwitch) -> Worker[None]:
+        def fetch() -> None:
+            options = switch.available()
+            worker = cast(Worker[None], get_current_worker())
+            if not worker.is_cancelled:
+                self.call_from_thread(self._apply_models, worker, options)
+
+        return self.run_worker(fetch, thread=True, exclusive=True, group="model-fetch")
+
+    def _apply_models(self, worker: Worker[None], options: Options) -> None:
+        if worker is not self._models_worker:
+            return
+        self._models_worker = None
+        self._menu_models = options
+        self._refresh_menu(self.query_one("#user-input", ChatInput).text)
 
     def on_command_menu_key(self, message: CommandMenuKey) -> None:
         menu = self._menu()
@@ -454,7 +510,7 @@ class PicoApp(App[None]):
             case "down":
                 menu.move(1)
             case _:
-                menu.hide()
+                self._hide_menu()
 
     async def on_command_accepted(self, message: CommandAccepted) -> None:
         text_input = self.query_one("#user-input", ChatInput)
@@ -462,7 +518,7 @@ class PicoApp(App[None]):
             text_input.text = f"{message.text} "
             text_input.move_cursor(text_input.document.end)
             return
-        self._menu().hide()
+        self._hide_menu()
         text_input.clear()
         await self.run_command(message.text)
 
