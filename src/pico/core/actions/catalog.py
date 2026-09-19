@@ -6,6 +6,7 @@ from pico.core.actions.files import edit_file_tool, read_file_tool, write_file_t
 from pico.core.actions.planning import complete_step_tool, set_plan_tool
 from pico.core.actions.scratch import load_table_tool, sql_tool
 from pico.core.actions.shell import SHELL_ACTION
+from pico.core.actions.view import view_image_tool
 from pico.core.scratch import Scratch
 from pico.core.tools import ToolRegistry
 from pico.llm.types import ToolSpec
@@ -17,7 +18,9 @@ RUNNER_ACTIONS: dict[str, RunnerAction] = {
 }
 
 
-def register_actions(registry: ToolRegistry, session: Session, depth: int = 0) -> None:
+def register_actions(
+    registry: ToolRegistry, session: Session, depth: int = 0, vision: bool = False
+) -> None:
     registry.register(read_file_tool())
     registry.register(write_file_tool())
     registry.register(edit_file_tool())
@@ -28,6 +31,8 @@ def register_actions(registry: ToolRegistry, session: Session, depth: int = 0) -
     registry.register(fact_recall_tool(session))
     registry.register(set_plan_tool(session))
     registry.register(complete_step_tool(session))
+    if vision:
+        registry.register(view_image_tool())
 
 
 def vocabulary(

@@ -29,12 +29,14 @@ class TurnResult:
     error: str | None
 
 
-def run_turn(llm: LLMClient, session: Session, context_size: int, prompt: str) -> TurnResult:
+def run_turn(
+    llm: LLMClient, session: Session, context_size: int, prompt: str, vision: bool = False
+) -> TurnResult:
     bus = Bus()
     subscriber = bus.subscribe()
     session.append(UserMessageRecorded(content=prompt))
     tools = ToolRegistry()
-    register_actions(tools, session)
+    register_actions(tools, session, vision=vision)
     runner = LoopRunner(llm, tools, bus, session, context_size, DEFAULT_LOOP_CONFIG)
 
     started = time.monotonic()

@@ -52,6 +52,19 @@ def _rendered_arguments(name: str, arguments: Mapping[str, object]) -> Mapping[s
     return {**arguments, "content": stub}
 
 
+def _live_image_index(records: list[tuple[int | None, SessionEvent]]) -> int | None:
+    return max(
+        (
+            index
+            for index, (_, event) in enumerate(records)
+            if isinstance(event, ToolCallRecorded)
+            and event.name == "view_image"
+            and not event.is_error
+        ),
+        default=None,
+    )
+
+
 def _decode(kind: str, payload: str) -> SessionEvent:
     event_type = _EVENT_KINDS.get(kind)
     if event_type is None:
@@ -133,8 +146,10 @@ class Session:
         return (event for _, event in self.records())
 
     def messages(self) -> list[Message]:
+        records = list(self.records())
+        live_image = _live_image_index(records)
         messages: list[Message] = []
-        for fact_id, event in self.records():
+        for index, (fact_id, event) in enumerate(records):
             match event:
                 case UserMessageRecorded(content=content):
                     messages.append(Message(role=Role.USER, content=content))
@@ -156,12 +171,24 @@ class Session:
                             ),
                         )
                     )
+                    content = result
+                    images: tuple[str, ...] = ()
+                    if name == "view_image" and not is_error:
+                        path = str(arguments.get("path", ""))
+                        if index == live_image:
+                            images = (path,)
+                        else:
+                            content = (
+                                f"viewed {path} — the image has left your sight; "
+                                "call view_image again if you need another look"
+                            )
                     messages.append(
                         Message(
                             role=Role.TOOL,
                             tool_result=ToolResult(
-                                tool_call_id=call_id, content=result, is_error=is_error, name=name
+                                tool_call_id=call_id, content=content, is_error=is_error, name=name
                             ),
+                            images=images,
                         )
                     )
                 case AssistantMessageRecorded() | PlanSet() | PlanStepCompleted():

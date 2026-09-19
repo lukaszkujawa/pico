@@ -27,6 +27,8 @@ PLAN_INLINE_HINT = "Keep it current with set_plan and complete_step."
 MIN_CHARS_PER_TOKEN = 2.0
 MAX_CHARS_PER_TOKEN = 6.0
 
+IMAGE_TOKEN_ESTIMATE = 1500
+
 _HANDLE_PREVIEW_CHARS = 200
 
 
@@ -232,10 +234,11 @@ def message_text(message: Message) -> str:
 
 
 def message_tokens(message: Message, chars_per_token: float = 4.0) -> int:
+    image_tokens = IMAGE_TOKEN_ESTIMATE * len(message.images)
     if message.role is Role.TOOL:
         assert message.tool_result is not None
-        return estimate_tokens(message.tool_result.content, chars_per_token)
-    total = estimate_tokens(message.content, chars_per_token)
+        return image_tokens + estimate_tokens(message.tool_result.content, chars_per_token)
+    total = image_tokens + estimate_tokens(message.content, chars_per_token)
     return total + sum(
         estimate_tokens(_tool_call_text(call), chars_per_token) for call in message.tool_calls
     )

@@ -31,6 +31,7 @@ class Message:
     content: str = ""
     tool_calls: tuple[ToolCall, ...] = ()
     tool_result: ToolResult | None = None
+    images: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

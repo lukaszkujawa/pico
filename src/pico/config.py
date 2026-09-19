@@ -17,6 +17,7 @@ class Config:
     context_size: int
     session_path: str
     temperature: float | None = None
+    vision: bool = False
 
 
 def _require(name: str) -> str:
@@ -55,6 +56,8 @@ def load_config() -> Config:
                 f"LLM_TEMPERATURE must be a number, got: {temperature_raw!r}"
             ) from error
 
+    vision = (os.environ.get("LLM_VISION") or "").lower() in ("1", "true")
+
     return Config(
         vendor=vendor,
         base_url=base_url,
@@ -63,4 +66,5 @@ def load_config() -> Config:
         context_size=context_size,
         session_path=session_path,
         temperature=temperature,
+        vision=vision,
     )

@@ -12,7 +12,7 @@ Many of the models Pico targets are multimodal — Qwen VL variants run happily 
 * **Budget counts images at a flat `IMAGE_TOKEN_ESTIMATE = 1500`.** `message_tokens` adds the constant per attached image so the recency window budgets honestly. `sent_chars` and `reconcile` are untouched: with at most one live image the calibration skew is bounded by the existing `MIN_CHARS_PER_TOKEN` clamp, and per-model image tokenisation is not worth modelling until evidence demands it.
 * **Scope guard.** No screenshot tool, no image generation, no OCR, no autodetection of model modality, no image content in facts or the scratch database, no retroactive changes to sessions recorded before the flag existed.
 
-## [ ] T001 Vision flag and view_image tool
+## [X] T001 Vision flag and view_image tool
 
 ### Description
 
@@ -25,7 +25,7 @@ Add `vision` to `Config` from `LLM_VISION`; add `view_image` in the house closur
 * Format detection uses magic bytes, not the file extension.
 * `make check` passes.
 
-## [ ] T002 Latest-image replay and budgeting
+## [X] T002 Latest-image replay and budgeting
 
 ### Description
 
@@ -39,7 +39,7 @@ Add `images` to `Message`; in `session.messages()` attach the path to the render
 * The stored `ToolCallRecorded` event carries no image bytes.
 * `make check` passes.
 
-## [ ] T003 Vendor wire formats
+## [X] T003 Vendor wire formats
 
 ### Description
 

@@ -1,4 +1,6 @@
+import base64
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -17,6 +19,7 @@ from pico.llm.types import (
     ToolResult,
     ToolSpec,
 )
+from tests.image_fixtures import TINY_PNG
 
 BASE_URL = "http://localhost:8000/v1"
 
@@ -401,3 +404,77 @@ def test_temperature_is_sent_when_configured() -> None:
 
     payload = json.loads(captured[0].content)
     assert payload["temperature"] == 0.2
+
+
+def _image_message(path: str) -> Message:
+    return Message(
+        role=Role.TOOL,
+        tool_result=ToolResult(tool_call_id="toolu_1", content="viewing shot", name="view_image"),
+        images=(path,),
+    )
+
+
+def _captured_messages(messages: list[Message]) -> list[dict[str, object]]:
+    captured: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return _sse_response([_message_start(), *_message_end()])
+
+    list(_client(httpx.MockTransport(handle)).stream(messages, []))
+    payload = json.loads(captured[0].content)
+    return payload["messages"]
+
+
+def test_tool_result_with_image_carries_a_base64_image_block(tmp_path: Path) -> None:
+    path = tmp_path / "shot.png"
+    path.write_bytes(TINY_PNG)
+
+    rendered = _captured_messages([_image_message(str(path))])
+
+    assert rendered == [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_1",
+                    "content": [
+                        {"type": "text", "text": "viewing shot"},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": base64.b64encode(TINY_PNG).decode(),
+                            },
+                        },
+                    ],
+                    "is_error": False,
+                }
+            ],
+        }
+    ]
+
+
+def test_an_unreadable_image_degrades_to_a_text_stub(tmp_path: Path) -> None:
+    path = tmp_path / "gone.png"
+
+    rendered = _captured_messages([_image_message(str(path))])
+
+    assert rendered == [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_1",
+                    "content": [
+                        {"type": "text", "text": "viewing shot"},
+                        {"type": "text", "text": f"[image at {path} is no longer readable]"},
+                    ],
+                    "is_error": False,
+                }
+            ],
+        }
+    ]

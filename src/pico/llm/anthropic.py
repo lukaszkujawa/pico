@@ -7,6 +7,7 @@ import httpx
 
 from pico.llm.budget import COMPLETION_RESERVE_CAP, completion_reserve
 from pico.llm.client import LLMError
+from pico.llm.images import encode_image, unreadable_stub
 from pico.llm.types import (
     GenerationComplete,
     Message,
@@ -30,11 +31,30 @@ def _lift_system(messages: list[Message]) -> tuple[str, list[Message]]:
     return system, rest
 
 
-def _tool_result_block(result: ToolResult) -> dict[str, Any]:
+def _tool_result_block(result: ToolResult, images: tuple[str, ...]) -> dict[str, Any]:
+    content: str | list[dict[str, Any]] = result.content
+    if images:
+        blocks: list[dict[str, Any]] = [{"type": "text", "text": result.content}]
+        for path in images:
+            encoded = encode_image(path)
+            if encoded is None:
+                blocks.append({"type": "text", "text": unreadable_stub(path)})
+            else:
+                blocks.append(
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": encoded.media_type,
+                            "data": encoded.base64,
+                        },
+                    }
+                )
+        content = blocks
     return {
         "type": "tool_result",
         "tool_use_id": result.tool_call_id,
-        "content": result.content,
+        "content": content,
         "is_error": result.is_error,
     }
 
@@ -58,7 +78,7 @@ def _messages_to_payload(messages: list[Message]) -> list[dict[str, Any]]:
         if message.role is Role.TOOL:
             result = message.tool_result
             assert result is not None
-            block = _tool_result_block(result)
+            block = _tool_result_block(result, message.images)
             last = payload[-1] if payload else None
             if last is not None and last["role"] == "user" and isinstance(last["content"], list):
                 cast(list[dict[str, Any]], last["content"]).append(block)

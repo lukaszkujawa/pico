@@ -3,6 +3,7 @@ from itertools import pairwise
 
 from pico.core.ledger import facts
 from pico.core.loop.prompt import (
+    IMAGE_TOKEN_ESTIMATE,
     compile_context,
     message_text,
     message_tokens,
@@ -482,3 +483,19 @@ def test_compile_context_keeps_dropped_facts_addressable_in_the_index() -> None:
     dropped_fact = facts(session)[0]
     assert f"[{dropped_fact.id}]" in briefing.content
     assert all(dropped_fact.content not in message_text(message) for message in window)
+
+
+def test_message_tokens_counts_an_attached_image_at_the_flat_estimate() -> None:
+    result = ToolResult(tool_call_id="1", content="viewing /tmp/x.png", name="view_image")
+    plain = Message(role=Role.TOOL, tool_result=result)
+    with_image = Message(role=Role.TOOL, tool_result=result, images=("/tmp/x.png",))
+
+    assert message_tokens(with_image) == message_tokens(plain) + IMAGE_TOKEN_ESTIMATE
+
+
+def test_message_text_ignores_attached_images() -> None:
+    result = ToolResult(tool_call_id="1", content="viewing /tmp/x.png", name="view_image")
+    plain = Message(role=Role.TOOL, tool_result=result)
+    with_image = Message(role=Role.TOOL, tool_result=result, images=("/tmp/x.png",))
+
+    assert message_text(with_image) == message_text(plain)

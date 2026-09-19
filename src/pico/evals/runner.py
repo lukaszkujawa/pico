@@ -30,7 +30,7 @@ def run_task(llm: LLMClient, config: Config, task: EvalTask) -> EvalOutcome:
         origin = Path.cwd()
         os.chdir(workdir)
         try:
-            result = run_turn(llm, session, config.context_size, task.prompt)
+            result = run_turn(llm, session, config.context_size, task.prompt, config.vision)
         finally:
             os.chdir(origin)
         passed = result.error is None and task.check(workdir, result.answer or "")

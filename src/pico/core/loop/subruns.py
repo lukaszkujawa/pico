@@ -36,7 +36,8 @@ def run_child(
     child_session = runner.session.child(suffix)
     child_session.append(UserMessageRecorded(content=prompt))
     child_tools = ToolRegistry()
-    register_actions(child_tools, child_session, depth=runner.depth + 1)
+    vision = any(spec.name == "view_image" for spec in runner.tools.specs())
+    register_actions(child_tools, child_session, depth=runner.depth + 1, vision=vision)
     child_runner = LoopRunner(
         runner.llm,
         child_tools,

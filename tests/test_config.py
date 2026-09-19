@@ -15,6 +15,7 @@ REQUIRED_VARS = {
 
 ENV_KEYS = [
     "LLM_TEMPERATURE",
+    "LLM_VISION",
     "LLM_VENDOR",
     "LLM_BASE_URL",
     "LLM_MODEL",
@@ -98,3 +99,23 @@ def test_non_numeric_temperature_is_rejected(monkeypatch: pytest.MonkeyPatch) ->
 
     with pytest.raises(ConfigError, match="LLM_TEMPERATURE"):
         load_config()
+
+
+def test_vision_defaults_to_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_env(monkeypatch)
+
+    assert load_config().vision is False
+
+
+@pytest.mark.parametrize("value", ["1", "true", "True"])
+def test_vision_is_enabled_by_truthy_values(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    _set_env(monkeypatch, LLM_VISION=value)
+
+    assert load_config().vision is True
+
+
+@pytest.mark.parametrize("value", ["0", "false", "no", ""])
+def test_vision_stays_off_for_other_values(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    _set_env(monkeypatch, LLM_VISION=value)
+
+    assert load_config().vision is False

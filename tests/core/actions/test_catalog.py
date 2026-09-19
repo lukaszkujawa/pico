@@ -9,6 +9,9 @@ from pico.core.actions import (
     register_actions,
     vocabulary,
 )
+from pico.core.bus import Bus
+from pico.core.loop.runner import LoopConfig, LoopRunner
+from pico.core.loop.subruns import run_child
 from pico.core.tools import ToolError, ToolRegistry
 from pico.llm.types import (
     ToolCall,
@@ -18,6 +21,7 @@ from pico.session import (
     connect,
 )
 from tests.core.loop_fixtures import (
+    FailingClient,
     make_session,
 )
 
@@ -49,6 +53,34 @@ def test_register_actions_populates_all_plain_tool_names() -> None:
         "set_plan",
         "complete_step",
     }
+
+
+def test_register_actions_with_vision_adds_view_image() -> None:
+    registry = ToolRegistry()
+    register_actions(registry, Session(connect(":memory:"), "s1"), vision=True)
+
+    names = {spec.name for spec in registry.specs()}
+
+    assert "view_image" in names
+
+
+def _child_tool_names(vision: bool) -> set[str]:
+    session = make_session()
+    registry = ToolRegistry()
+    register_actions(registry, session, vision=vision)
+    runner = LoopRunner(FailingClient(), registry, Bus(), session, 128_000, LoopConfig(steps=()))
+
+    child = run_child(runner, "delegate/1", "look at it")
+
+    return {spec.name for spec in child.tools.specs()}
+
+
+def test_child_registry_inherits_view_image_when_parent_has_vision() -> None:
+    assert "view_image" in _child_tool_names(vision=True)
+
+
+def test_child_registry_omits_view_image_without_vision() -> None:
+    assert "view_image" not in _child_tool_names(vision=False)
 
 
 def test_register_actions_has_no_placeholder_executors() -> None:

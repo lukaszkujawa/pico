@@ -1,4 +1,6 @@
+import base64
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -13,8 +15,10 @@ from pico.llm.types import (
     ThinkingDelta,
     ToolCallDelta,
     ToolCallReady,
+    ToolResult,
     ToolSpec,
 )
+from tests.image_fixtures import TINY_PNG
 
 
 def _ndjson_response(lines: list[dict[str, object]]) -> httpx.Response:
@@ -336,3 +340,54 @@ def test_temperature_is_sent_in_options() -> None:
 
     payload = json.loads(captured[0].content)
     assert payload["options"] == {"temperature": 0.2}
+
+
+def _image_message(path: str) -> Message:
+    return Message(
+        role=Role.TOOL,
+        tool_result=ToolResult(tool_call_id="1", content="viewing shot", name="view_image"),
+        images=(path,),
+    )
+
+
+def _captured_messages(messages: list[Message]) -> list[dict[str, object]]:
+    captured: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return _ndjson_response([{"message": {"role": "assistant", "content": ""}, "done": True}])
+
+    client = OllamaClient(model="qwen3", transport=httpx.MockTransport(handle))
+    list(client.stream(messages, []))
+    payload = json.loads(captured[0].content)
+    return payload["messages"]
+
+
+def test_tool_message_with_image_uses_the_images_field(tmp_path: Path) -> None:
+    path = tmp_path / "shot.png"
+    path.write_bytes(TINY_PNG)
+
+    rendered = _captured_messages([_image_message(str(path))])
+
+    assert rendered == [
+        {
+            "role": "tool",
+            "content": "viewing shot",
+            "tool_name": "view_image",
+            "images": [base64.b64encode(TINY_PNG).decode()],
+        }
+    ]
+
+
+def test_an_unreadable_image_degrades_to_a_text_stub(tmp_path: Path) -> None:
+    path = tmp_path / "gone.png"
+
+    rendered = _captured_messages([_image_message(str(path))])
+
+    assert rendered == [
+        {
+            "role": "tool",
+            "content": f"viewing shot\n[image at {path} is no longer readable]",
+            "tool_name": "view_image",
+        }
+    ]

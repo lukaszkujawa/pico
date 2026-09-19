@@ -1,4 +1,6 @@
+import base64
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -17,6 +19,7 @@ from pico.llm.types import (
     ToolResult,
     ToolSpec,
 )
+from tests.image_fixtures import TINY_PNG
 
 BASE_URL = "http://localhost:8000/v1"
 
@@ -394,3 +397,55 @@ def test_temperature_is_omitted_by_default() -> None:
 
     payload = json.loads(captured[0].content)
     assert "temperature" not in payload
+
+
+def _image_message(path: str) -> Message:
+    return Message(
+        role=Role.TOOL,
+        tool_result=ToolResult(tool_call_id="call_1", content="viewing shot", name="view_image"),
+        images=(path,),
+    )
+
+
+def _captured_messages(messages: list[Message]) -> list[dict[str, object]]:
+    captured: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return _sse_response([_delta_chunk({}, finish_reason="stop")])
+
+    list(_client(httpx.MockTransport(handle)).stream(messages, []))
+    payload = json.loads(captured[0].content)
+    return payload["messages"]
+
+
+def test_tool_message_with_image_is_followed_by_a_user_image_message(tmp_path: Path) -> None:
+    path = tmp_path / "shot.png"
+    path.write_bytes(TINY_PNG)
+
+    rendered = _captured_messages([_image_message(str(path))])
+
+    encoded = base64.b64encode(TINY_PNG).decode()
+    assert rendered == [
+        {"role": "tool", "content": "viewing shot", "tool_call_id": "call_1"},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{encoded}"},
+                }
+            ],
+        },
+    ]
+
+
+def test_an_unreadable_image_degrades_to_a_text_stub(tmp_path: Path) -> None:
+    path = tmp_path / "gone.png"
+
+    rendered = _captured_messages([_image_message(str(path))])
+
+    assert rendered[1] == {
+        "role": "user",
+        "content": [{"type": "text", "text": f"[image at {path} is no longer readable]"}],
+    }

@@ -7,6 +7,7 @@ from typing import Any, cast
 import httpx
 
 from pico.llm.client import LLMError
+from pico.llm.images import encode_image, unreadable_stub
 from pico.llm.types import (
     GenerationComplete,
     Message,
@@ -42,6 +43,24 @@ def _message_to_payload(message: Message) -> dict[str, Any]:
             for call in message.tool_calls
         ]
     return payload
+
+
+def _image_part(path: str) -> dict[str, Any]:
+    encoded = encode_image(path)
+    if encoded is None:
+        return {"type": "text", "text": unreadable_stub(path)}
+    return {
+        "type": "image_url",
+        "image_url": {"url": f"data:{encoded.media_type};base64,{encoded.base64}"},
+    }
+
+
+def _message_payloads(message: Message) -> list[dict[str, Any]]:
+    payload = _message_to_payload(message)
+    if not message.images:
+        return [payload]
+    parts = [_image_part(path) for path in message.images]
+    return [payload, {"role": Role.USER.value, "content": parts}]
 
 
 def _tool_spec_to_payload(spec: ToolSpec) -> dict[str, Any]:
@@ -99,7 +118,7 @@ class OpenAIClient:
     def stream(self, messages: list[Message], tools: list[ToolSpec]) -> Iterator[StreamEvent]:
         payload: dict[str, Any] = {
             "model": self._model,
-            "messages": [_message_to_payload(message) for message in messages],
+            "messages": [payload for message in messages for payload in _message_payloads(message)],
             "stream": True,
             "stream_options": {"include_usage": True},
         }

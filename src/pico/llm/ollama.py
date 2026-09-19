@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 
 from pico.llm.client import LLMError
+from pico.llm.images import encode_image, unreadable_stub
 from pico.llm.types import (
     GenerationComplete,
     Message,
@@ -24,9 +25,19 @@ def _message_to_payload(message: Message) -> dict[str, Any]:
     if message.role is Role.TOOL:
         result = message.tool_result
         assert result is not None
-        payload = {"role": Role.TOOL.value, "content": result.content}
+        content = result.content
+        images: list[str] = []
+        for path in message.images:
+            encoded = encode_image(path)
+            if encoded is None:
+                content += f"\n{unreadable_stub(path)}"
+            else:
+                images.append(encoded.base64)
+        payload: dict[str, Any] = {"role": Role.TOOL.value, "content": content}
         if result.name:
             payload["tool_name"] = result.name
+        if images:
+            payload["images"] = images
         return payload
 
     payload: dict[str, Any] = {"role": message.role.value, "content": message.content}

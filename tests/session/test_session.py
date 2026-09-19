@@ -292,3 +292,62 @@ def test_messages_ignores_plan_events() -> None:
         session.append(AssistantMessageRecorded(content="done", thinking=""))
 
     assert planned.messages() == plain.messages()
+
+
+def _view_image(path: str, is_error: bool = False) -> ToolCallRecorded:
+    result = f"error reading {path}" if is_error else f"viewing {path} (png, 67 bytes)"
+    return ToolCallRecorded(
+        name="view_image", arguments={"path": path}, result=result, is_error=is_error
+    )
+
+
+def _tool_messages(session: Session) -> list[Message]:
+    return [message for message in session.messages() if message.role is Role.TOOL]
+
+
+def test_messages_attaches_only_the_latest_view_image() -> None:
+    session = Session(connect(":memory:"), "s1")
+    session.append(UserMessageRecorded(content="look"))
+    session.append(_view_image("/tmp/a.png"))
+    session.append(_view_image("/tmp/b.png"))
+
+    earlier, latest = _tool_messages(session)
+
+    assert earlier.images == ()
+    assert earlier.tool_result is not None
+    assert "/tmp/a.png" in earlier.tool_result.content
+    assert "view_image" in earlier.tool_result.content
+    assert latest.images == ("/tmp/b.png",)
+    assert latest.tool_result is not None
+    assert latest.tool_result.content == "viewing /tmp/b.png (png, 67 bytes)"
+
+
+def test_view_image_events_store_the_handle_result_unchanged() -> None:
+    session = Session(connect(":memory:"), "s1")
+    session.append(_view_image("/tmp/a.png"))
+    session.append(_view_image("/tmp/b.png"))
+
+    assert list(session.events()) == [_view_image("/tmp/a.png"), _view_image("/tmp/b.png")]
+
+
+def test_an_errored_view_image_renders_as_a_plain_error() -> None:
+    session = Session(connect(":memory:"), "s1")
+    session.append(_view_image("/tmp/a.png", is_error=True))
+
+    (message,) = _tool_messages(session)
+
+    assert message.images == ()
+    assert message.tool_result is not None
+    assert message.tool_result.content == "error reading /tmp/a.png"
+    assert message.tool_result.is_error
+
+
+def test_an_errored_view_never_displaces_the_last_successful_view() -> None:
+    session = Session(connect(":memory:"), "s1")
+    session.append(_view_image("/tmp/a.png"))
+    session.append(_view_image("/tmp/b.png", is_error=True))
+
+    success, failure = _tool_messages(session)
+
+    assert success.images == ("/tmp/a.png",)
+    assert failure.images == ()

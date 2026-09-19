@@ -129,6 +129,7 @@ def _turn_loop(
     input_queue: "queue.Queue[str]",
     shutdown: threading.Event,
     cancel_handle: CancelHandle,
+    vision: bool,
 ) -> None:
     id_source = itertools.count()
     while True:
@@ -142,7 +143,7 @@ def _turn_loop(
         session = session_handle.session
         session.append(UserMessageRecorded(content=text))
         tools = ToolRegistry()
-        register_actions(tools, session)
+        register_actions(tools, session, vision=vision)
         cancel = threading.Event()
         cancel_handle.arm(cancel)
         runner = LoopRunner(
@@ -218,6 +219,7 @@ def run_pico(
             input_queue,
             shutdown,
             cancel_handle,
+            config.vision,
         ),
         daemon=True,
     )
