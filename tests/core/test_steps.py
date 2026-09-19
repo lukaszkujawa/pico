@@ -265,7 +265,11 @@ def test_parent_context_after_a_step_holds_the_result_but_no_child_transcript() 
 
     LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
 
-    parent_window = "".join(message_text(message) for message in client.seen_messages[-1][2:])
+    parent_window = "".join(
+        message_text(message)
+        for message in client.seen_messages[-1][1:]
+        if not message.content.startswith("Your current plan:")
+    )
     assert "there are 12 files" in parent_window
     assert "private" not in parent_window
 
@@ -339,7 +343,11 @@ def test_orchestrated_briefing_replaces_the_complete_step_hint() -> None:
 
     LoopRunner(client, registry, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
 
-    briefing = client.seen_messages[-1][1]
+    briefing = next(
+        message
+        for message in client.seen_messages[-1]
+        if message.content.startswith("Your current plan:")
+    )
     assert PLAN_ORCHESTRATED_HINT in briefing.content
     assert PLAN_INLINE_HINT not in briefing.content
 

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pico.core.actions import MAX_DELEGATE_DEPTH, vocabulary
 from pico.core.context import (
     SYSTEM_PROMPT,
+    Degradation,
     compile_context,
     estimate_tokens,
     message_text,
@@ -44,6 +45,7 @@ def assemble(
     chars_per_token: float,
     active: Restrict | None,
     nudge: str | None,
+    degradation: Degradation | None = None,
 ) -> Prompt:
     specs = vocabulary(tools, depth, None if active is None else active.allowed)
     text = active.text if active is not None else nudge
@@ -60,6 +62,7 @@ def assemble(
         overhead_tokens,
         chars_per_token,
         depth < MAX_DELEGATE_DEPTH,
+        degradation,
     )
     estimated = overhead_tokens + sum(
         message_tokens(message, chars_per_token) for message in conversation

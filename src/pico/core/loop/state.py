@@ -1,5 +1,7 @@
 from dataclasses import dataclass, field
 
+from pico.core.context import Degradation
+
 DEFAULT_CHARS_PER_TOKEN = 4.0
 
 
@@ -41,6 +43,7 @@ RunState = Running | WindingDown | LastWords | Answered | Failed | Cancelled
 class GenerationState:
     actionless_generations: int = 0
     chars_per_token: float = DEFAULT_CHARS_PER_TOKEN
+    degradation: Degradation = field(default_factory=Degradation)
     last_narration: str | None = None
     narration_pressure: bool = False
 

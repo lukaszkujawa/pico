@@ -2,6 +2,7 @@ import random
 from itertools import pairwise
 
 from pico.core.context import (
+    Degradation,
     compile_context,
     estimate_tokens,
     fact_index,
@@ -534,7 +535,71 @@ def test_recency_window_evicts_oldest_units_first_and_keeps_the_task() -> None:
     )
 
 
-def test_compile_context_briefs_then_windows_with_plan_and_facts() -> None:
+def test_recency_window_never_repromotes_a_demoted_result() -> None:
+    degradation = Degradation()
+    messages = [Message(role=Role.USER, content="question"), *_tool_pair(1, "z" * 5_000)]
+    tight = recency_window(messages, budget=300, degradation=degradation)
+
+    relaxed = recency_window(messages, budget=100_000, degradation=degradation)
+
+    assert relaxed == tight
+    handle = relaxed[-1]
+    assert handle.tool_result is not None
+    assert "read_fact(1)" in handle.tool_result.content
+
+
+def test_recency_window_never_restores_a_cut_unit() -> None:
+    degradation = Degradation()
+    messages = [Message(role=Role.USER, content="the task")]
+    for fact_id in range(4):
+        messages.extend(_tool_pair(fact_id, "x" * 2_000))
+    tight = recency_window(messages, budget=100, degradation=degradation)
+
+    relaxed = recency_window(messages, budget=100_000, degradation=degradation)
+
+    assert relaxed == tight
+    kept_ids = {
+        message.tool_result.tool_call_id for message in tight if message.tool_result is not None
+    }
+    assert kept_ids < {"0", "1", "2", "3"}
+
+
+def test_recency_window_degradation_only_grows_as_the_session_appends() -> None:
+    degradation = Degradation()
+    messages = [Message(role=Role.USER, content="the task")]
+    for fact_id in range(3):
+        messages.extend(_tool_pair(fact_id, "x" * 2_000))
+    tight = recency_window(messages, budget=100, degradation=degradation)
+    degraded_ids = {"0", "1", "2"} - {
+        message.tool_result.tool_call_id
+        for message in tight
+        if message.tool_result is not None and "truncated" not in message.tool_result.content
+    }
+
+    grown = [*messages, Message(role=Role.ASSISTANT, content="moving on")]
+    relaxed = recency_window(grown, budget=100_000, degradation=degradation)
+
+    assert relaxed == [*tight, grown[-1]]
+    for message in relaxed:
+        if message.tool_result is not None and message.tool_result.tool_call_id in degraded_ids:
+            assert "truncated" in message.tool_result.content
+
+
+def test_recency_window_still_degrades_further_when_the_budget_demands_it() -> None:
+    degradation = Degradation()
+    messages = [Message(role=Role.USER, content="the task"), *_tool_pair(0, "small result")]
+    recency_window(messages, budget=100_000, degradation=degradation)
+
+    grown = [*messages, *_tool_pair(1, "y" * 8_000)]
+    window = recency_window(grown, budget=300, degradation=degradation)
+
+    assert _tokens(window) <= 300
+    newest = window[-1]
+    assert newest.tool_result is not None
+    assert "read_fact(1)" in newest.tool_result.content
+
+
+def test_compile_context_windows_then_briefs_with_plan_and_facts() -> None:
     session = _session()
     session.append(PlanSet(steps=("find the port",)))
     session.append(UserMessageRecorded(content="what port?"))
@@ -544,13 +609,34 @@ def test_compile_context_briefs_then_windows_with_plan_and_facts() -> None:
 
     compiled = compile_context(session, context_size=100_000)
 
-    briefing = compiled[0]
+    briefing = compiled[-1]
     assert briefing.role is Role.USER
     assert "Your current plan:" in briefing.content
     assert "[ ] 0. find the port" in briefing.content
     assert "Facts gathered so far:" in briefing.content
     assert "read_fact(" in briefing.content
-    assert compiled[1:] == session.messages()
+    assert compiled[:-1] == session.messages()
+
+
+def test_compile_context_pre_briefing_messages_prefix_the_next_generation() -> None:
+    session = _session()
+    session.append(PlanSet(steps=("investigate",)))
+    session.append(UserMessageRecorded(content="start"))
+    session.append(
+        ToolCallRecorded(name="shell", arguments={"command": "ls"}, result="a.py", is_error=False)
+    )
+    earlier = compile_context(session, context_size=100_000)
+
+    session.append(
+        ToolCallRecorded(
+            name="read_file", arguments={"path": "a.py"}, result="body", is_error=False
+        )
+    )
+    session.append(AssistantMessageRecorded(content="done", thinking=""))
+    later = compile_context(session, context_size=100_000)
+
+    assert earlier[-1].content != later[-1].content
+    assert earlier[:-1] == later[: len(earlier) - 1]
 
 
 def test_compile_context_without_plan_or_facts_is_the_bare_window() -> None:
@@ -594,8 +680,8 @@ def test_compile_context_keeps_dropped_facts_addressable_in_the_index() -> None:
 
     compiled = compile_context(session, context_size=8_192)
 
-    briefing = compiled[0]
-    window = compiled[1:]
+    briefing = compiled[-1]
+    window = compiled[:-1]
     dropped_fact = facts(session)[0]
     assert f"[{dropped_fact.id}]" in briefing.content
     assert all(dropped_fact.content not in message_text(message) for message in window)

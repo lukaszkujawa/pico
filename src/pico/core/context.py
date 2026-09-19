@@ -1,5 +1,6 @@
 import json
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Literal
 
 from pico.core.ledger import BOOKKEEPING_TOOLS, Fact, facts, plan, render_call, render_plan
@@ -135,6 +136,12 @@ def _demote_to_handle(body: list[Message], index: int) -> Message:
     )
 
 
+@dataclass
+class Degradation:
+    demoted: set[int] = field(default_factory=set[int])
+    cut: int = 0
+
+
 def _pinned_positions(messages: list[Message]) -> list[int]:
     users = [position for position, message in enumerate(messages) if message.role is Role.USER]
     return sorted({users[0], users[-1]}) if users else []
@@ -148,11 +155,23 @@ def transcript_fullness(
 
 
 def recency_window(
-    messages: list[Message], budget: int, chars_per_token: float = 4.0
+    messages: list[Message],
+    budget: int,
+    chars_per_token: float = 4.0,
+    degradation: Degradation | None = None,
 ) -> list[Message]:
+    if degradation is None:
+        degradation = Degradation()
     pinned = _pinned_positions(messages)
-    positions = [position for position in range(len(messages)) if position not in pinned]
+    positions = [
+        position
+        for position in range(len(messages))
+        if position not in pinned and position >= degradation.cut
+    ]
     body = [messages[position] for position in positions]
+    for index, position in enumerate(positions):
+        if position in degradation.demoted:
+            body[index] = _demote_to_handle(body, index)
 
     total = sum(message_tokens(messages[position], chars_per_token) for position in pinned)
     total += sum(message_tokens(message, chars_per_token) for message in body)
@@ -160,7 +179,7 @@ def recency_window(
     for index, message in enumerate(body):
         if total <= budget:
             break
-        if message.role is not Role.TOOL:
+        if message.role is not Role.TOOL or positions[index] in degradation.demoted:
             continue
         assert message.tool_result is not None
         if message.tool_result.is_error:
@@ -168,12 +187,15 @@ def recency_window(
         demoted = _demote_to_handle(body, index)
         total += message_tokens(demoted, chars_per_token) - message_tokens(message, chars_per_token)
         body[index] = demoted
+        degradation.demoted.add(positions[index])
 
     cut = 0
     while cut < len(body) and total > budget:
         next_cut = _unit_end(body, cut)
         total -= sum(message_tokens(message, chars_per_token) for message in body[cut:next_cut])
         cut = next_cut
+    if cut:
+        degradation.cut = positions[cut] if cut < len(positions) else len(messages)
 
     window = [(position, messages[position]) for position in pinned]
     window += list(zip(positions[cut:], body[cut:], strict=True))
@@ -209,10 +231,12 @@ def compile_context(
     overhead_tokens: int = 0,
     chars_per_token: float = 4.0,
     orchestrated: bool = False,
+    degradation: Degradation | None = None,
 ) -> list[Message]:
     budget = prompt_budget(context_size) - overhead_tokens
     briefing = _briefing(session, orchestrated)
     if briefing is None:
-        return recency_window(session.messages(), budget, chars_per_token)
+        return recency_window(session.messages(), budget, chars_per_token, degradation)
     budget -= message_tokens(briefing, chars_per_token)
-    return [briefing, *recency_window(session.messages(), budget, chars_per_token)]
+    window = recency_window(session.messages(), budget, chars_per_token, degradation)
+    return [*window, briefing]

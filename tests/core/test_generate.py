@@ -455,6 +455,34 @@ def test_generation_step_sends_budget_rendered_messages_to_llm() -> None:
     assert sent_tool_messages[0].tool_result.content != "x" * 10_000
 
 
+def test_runner_keeps_a_demoted_result_byte_stable_across_generations() -> None:
+    session = make_session()
+    session.append(UserMessageRecorded(content="hi"))
+    session.append(
+        ToolCallRecorded(name="read_file", arguments={}, result="x" * 12_000, is_error=False)
+    )
+    client = ScriptedClient(
+        [
+            [
+                ToolCallReady(tool_call=ToolCall(id="1", name="echo", arguments={"text": "hi"})),
+                GenerationComplete(
+                    finish_reason="tool_calls", prompt_tokens=150, completion_tokens=5
+                ),
+            ],
+            stop_turn(),
+        ]
+    )
+    runner = LoopRunner(client, echo_registry(), Bus(), session, 4_000, DEFAULT_LOOP_CONFIG)
+
+    runner.execute()
+
+    first = next(m for m in client.seen_messages[0] if m.role is Role.TOOL)
+    second = next(m for m in client.seen_messages[1] if m.role is Role.TOOL)
+    assert first.tool_result is not None
+    assert "read_fact(1)" in first.tool_result.content
+    assert second == first
+
+
 def test_each_llm_call_publishes_its_own_token_counts() -> None:
     bus = Bus()
     subscriber = bus.subscribe()
@@ -648,10 +676,10 @@ def test_generation_step_sends_briefing_and_window_not_the_full_transcript() -> 
 
     sent = client.seen_messages[0]
     assert sent[0].role is Role.SYSTEM
-    briefing = sent[1]
+    briefing = sent[-2]
     assert briefing.content.startswith("Your current plan:")
     assert "Facts gathered so far:" in briefing.content
-    window = sent[2:-1]
+    window = sent[1:-2]
     assert 0 < len(window) < len(transcript)
     assert window == [transcript[0], *transcript[-(len(window) - 1) :]]
     assert sent[-1].content.startswith("decision required")
@@ -749,7 +777,7 @@ def test_overhead_shrinks_the_conversation_budget() -> None:
         for message in session.messages()
     )
     briefing = estimate_tokens(
-        message_text(compile_context(session, 128_000)[0]), DEFAULT_CHARS_PER_TOKEN
+        message_text(compile_context(session, 128_000)[-1]), DEFAULT_CHARS_PER_TOKEN
     )
     context_size = _context_size_for_budget(conversation + briefing + overhead - 1)
     client = ScriptedClient([stop_turn()])
@@ -1042,6 +1070,6 @@ def test_long_single_prompt_run_keeps_the_prompt_bounded() -> None:
     full_transcript = sum(len(message_text(message)) for message in session.messages())
     assert final < full_transcript / 2
     assert final <= prompt_budget(4000) * 6
-    task = client.seen_messages[-1][2]
+    task = client.seen_messages[-1][1]
     assert task.role is Role.USER
     assert task.content == "review everything"

@@ -868,5 +868,9 @@ def test_child_sees_parent_facts_in_its_briefing_index() -> None:
 
     LoopRunner(client, tools, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG).execute()
 
-    briefing = client.seen_messages[1][1]
+    briefing = next(
+        message
+        for message in client.seen_messages[1]
+        if "Facts gathered so far:" in message.content
+    )
     assert "[1] note(): the port is 8421" in briefing.content

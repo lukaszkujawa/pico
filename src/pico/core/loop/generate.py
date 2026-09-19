@@ -163,6 +163,7 @@ def generation_step(runner: LoopRunner) -> StepOutcome:
         runner.generation.chars_per_token,
         active,
         joined,
+        runner.generation.degradation,
     )
     budget = prompt_budget(runner.context_size)
     if prompt.estimated_tokens > budget:

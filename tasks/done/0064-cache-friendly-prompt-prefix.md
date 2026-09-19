@@ -9,7 +9,7 @@ The prompt is assembled cache-hostile. `compile_context` (context.py) returns `[
 * **Fitting still wins over stability.** The watermark is a floor, not the algorithm: after applying it, the existing oldest-first demote-then-cut logic runs as today until the window fits. No prompt may exceed the budget to preserve a cache prefix.
 * **Scope guard.** No llm-layer changes (no cache_control breakpoints, no provider-specific API use), no change to briefing content, fact index size, or demotion/cut rules themselves. Restriction-driven tool-spec churn at crossroads/last-words is accepted — it is rare and end-of-run.
 
-## [ ] T001 Briefing at the end of the prompt
+## [X] T001 Briefing at the end of the prompt
 
 ### Description
 
@@ -22,7 +22,7 @@ Reorder assembly so the briefing follows the recency window instead of preceding
 * Context and prompt tests assert the new order; a test states the intent: the messages before the briefing are a prefix of the previous generation's messages for an append-only session.
 * `make check` passes.
 
-## [ ] T002 Monotone degradation watermark
+## [X] T002 Monotone degradation watermark
 
 ### Description
 
