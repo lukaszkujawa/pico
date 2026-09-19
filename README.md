@@ -1,57 +1,78 @@
 # Pico
 
+Pico is an agentic harness for local and smaller language models. Its goal is to let modest models complete complex, long-running tasks with reliability approaching frontier models — through a strong runtime rather than model scale. The model reasons and decides; the runtime remembers, organises, computes, verifies, and manages context. See `VISION.md` for the principles.
+
+## How it works
+
+Context is treated as a cache, not memory. Every model call receives a compiled view of current state — a recency window of the conversation plus a briefing with the current plan and an index of facts — sized to the model's context budget. Bulky content is elided or demoted to handles that the model can recover on demand.
+
+The agent works with a small vocabulary of tools:
+
+- **Files** — `read_file` (sliced and capped), `edit_file` (exact-text replacement), `write_file`.
+- **Shell** — run commands, with results recorded as facts.
+- **Facts** — `note` records durable findings, optionally verified by a shell check that must pass before the note becomes a fact; `search_facts` and `read_fact` recover them after they fall out of context.
+- **Plans** — `set_plan` and `complete_step`; the runtime runs each step in a fresh agent.
+- **Scratch SQL** — `load_table` and `sql` push filtering and aggregation into SQLite instead of the context window.
+- **Delegation** — `delegate` decomposes work into isolated subagents with small contexts and typed results.
+- **Vision** — `view_image` looks at a png, jpeg, gif, or webp when `LLM_VISION=1` and the model is multimodal; only the latest image stays in the prompt.
+- **Answer** — finish the run with a final response.
+
+Everything is recorded as events in a SQLite session database, so state survives the context window and sessions can be resumed.
+
 ## Usage
 
-Copy `.env.example` to `.env` and fill in your Ollama server details:
+Copy `.env.example` to `.env` and fill in your model server details:
 
 ```
 cp .env.example .env
 ```
 
-Then run:
+`LLM_VENDOR` selects the client: `ollama`, `openai` (any OpenAI-compatible server, e.g. llama.cpp or vLLM), or `anthropic`. `LLM_CONTEXT_SIZE` drives the context budget; `LLM_TEMPERATURE` is optional, and `LLM_VISION=1` enables `view_image` for multimodal models.
+
+Then run the TUI:
 
 ```
 uv run python -m pico
 ```
 
+Flags: `--debug` writes per-run logs under `logs/`, `--prompt` submits an initial prompt, `--resume` continues a session (see below), `--sock NAME` accepts prompts written to a FIFO. Inside the TUI, `/model` switches the model for the next run, `/quit` exits, and `ctrl+n` starts a fresh conversation.
+
 ## Sessions
 
-Each launch starts a fresh, empty conversation with a new session id, shown under the logo at startup. Earlier conversations are never deleted — they stay in the session database at `SESSION_DB_PATH`.
-
-To continue where you left off:
+Each launch starts a fresh conversation with a new session id, shown under the logo. Earlier conversations stay in the session database at `SESSION_DB_PATH`.
 
 ```
 uv run python -m pico --resume            # the most recent conversation
 uv run python -m pico --resume <session>  # a specific session id
 ```
 
-Press `ctrl+n` at any time (except mid-turn) to start a new conversation without quitting. The transcript clears and the session id under the logo updates; the previous conversation stays resumable by its id.
-
 ## Running in Docker
 
-`make run_in_docker` runs Pico in a container, with no local Python or `uv` install needed. It builds the image (tagged `pico:local`, reusing that tag on rebuild) and drops you into the same interactive TUI as `make run`, reading the same `.env` — see above to set one up first. The session database persists across runs the same way, in `.docker_data/` on the host — so two consecutive runs are independent conversations that you can still `--resume` by id (see above).
+`make run_in_docker` runs Pico in a container with no local Python or `uv` needed. It builds the image (tagged `pico:local`) and drops you into the same TUI, reading the same `.env`. The session database persists in `.docker_data/` on the host, so previous runs stay resumable by id.
 
-Pass extra flags through `ARGS`. `--sock NAME` lets you drive the running container from another terminal: prompts written to `./sock/NAME` on the host are submitted as if you had typed them.
+Pass extra flags through `ARGS`. `--sock NAME` lets you drive the running container from another terminal — prompts written to `./sock/NAME` on the host are forwarded into the container and submitted as if typed:
 
 ```
 make run_in_docker ARGS="--debug --sock 0"
 echo "What is 17 * 23?" > ./sock/0
 ```
 
-A FIFO on a bind mount is not shared across the container boundary, so the FIFO Pico reads lives on a tmpfs inside the container and the host-side `./sock/NAME` forwards each line into it. The forwarder holds prompts written before the TUI is ready and delivers them once it is, then removes `./sock/NAME` when the container exits.
-
-To reclaim space, remove the image with `docker rmi pico:local`, or clear any dangling build layers with `docker image prune`.
+To reclaim space, `docker rmi pico:local` or `docker image prune`.
 
 ## Evals
 
-The eval suite measures whether the runtime helps a small model, not whether the model is clever. It is a fixed set of tasks — read a file, search several files, write a file, run a script, aggregate a file too large for the context budget, recall evidence buried in a long log, iterate until a seeded test script passes, and a multi-step chore — each with a pass/fail check written in ordinary Python. Nothing is judged by a model.
+The eval suite measures whether the runtime helps a small model, not whether the model is clever: a fixed set of tasks (read, search, write, run a script, aggregate a file too large for the context budget, recall evidence from a long log, iterate until a seeded test passes, a multi-step chore), each with a deterministic pass/fail check. Nothing is judged by a model.
 
-The suite needs a live model, so it is not part of `make check`. With a working `.env` (see Usage above), run:
+It needs a live model, so it is not part of `make check`. With a working `.env`:
 
 ```
 make evals
 ```
 
-Each task gets a fresh temporary directory, a throwaway session database, and one headless turn against the configured model. The run prints a table of task, pass/fail, iterations, tool calls, prompt and completion tokens, and seconds, and writes the same data plus the model and context size to `eval_results/<timestamp>.json`. That directory is gitignored. The exit code is always 0 — evals report, they do not gate.
+Each task runs one headless turn in a fresh temporary directory with a throwaway session database. Results print as a table and land in `eval_results/<timestamp>.json`. Evals report, they do not gate.
 
-Milestones that change runtime behaviour — budgets, thresholds, context compilation, delegation — should quote suite results from before and after the change in their completion notes whenever a live model is available.
+## Development
+
+Milestones live in `tasks/todo/`, one per file, and move to `tasks/done/` when complete. `make check` runs lint, strict type checking, dead-code and architecture checks, tests, and a build — it must stay green. `make format` auto-fixes formatting and lint.
+
+`make code` runs milestones unattended: each pending milestone is claimed into its own git worktree, given to a Claude Code agent driven by `tasks/PROMPT.md`, and merged into master when the agent completes it. `make code_attach` watches a running agent live; `make stop_code` stops the loop after the current step. Logs land in `logs-code/`.
