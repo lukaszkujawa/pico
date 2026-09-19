@@ -41,7 +41,7 @@ from pico.core.loop.generate import (
     generation_step,
     record,
 )
-from pico.core.loop.policy import snapshot_step
+from pico.core.loop.policy import policy_step
 from pico.core.loop.prompt import MAX_CHARS_PER_TOKEN, MIN_CHARS_PER_TOKEN, reconcile, specs_text
 from pico.core.loop.runner import LoopConfig, LoopRunner
 from pico.core.loop.state import (
@@ -51,6 +51,7 @@ from pico.core.loop.state import (
     GenerationState,
     LastWords,
     Running,
+    WindingDown,
 )
 from pico.core.stuckness import NUDGE_THRESHOLD
 from pico.core.tools import ToolRegistry
@@ -537,7 +538,7 @@ def test_generation_publishes_pressure_once_the_budget_winds_down() -> None:
         LoopConfig(steps=(generation_step,), max_steps=10),
     )
     runner.iterations = 8
-    snapshot_step(runner)
+    policy_step(runner)
 
     generation_step(runner)
 
@@ -559,6 +560,42 @@ def test_generation_publishes_pressure_at_a_decision_crossroads() -> None:
     generation_step(runner)
 
     assert _published_completion(subscriber) == GenerationCompleted(iteration=2, pressure=True)
+
+
+def test_generation_turns_a_wind_down_into_last_words_in_the_same_iteration() -> None:
+    session = make_session()
+    session.append(UserMessageRecorded(content="hi"))
+    client = ScriptedClient([text_turn("all I know")])
+    runner = LoopRunner(
+        client, echo_registry(), Bus(), session, 128_000, LoopConfig(steps=(generation_step,))
+    )
+    runner.state = WindingDown("stuck")
+
+    assert generation_step(runner) == "done"
+
+    assert runner.state == LastWords("stuck")
+    assert client.seen_messages[-1][-1].content.startswith("this run is ending now")
+    assert [spec.name for spec in client.seen_tools[-1]] == ["answer"]
+
+
+def test_generation_owns_the_narration_pressure_flag() -> None:
+    session = make_session()
+    session.append(UserMessageRecorded(content="hi"))
+    echo_turn: list[StreamEvent] = [
+        ToolCallReady(tool_call=ToolCall(id="1", name="echo", arguments={"text": "hi"})),
+        GenerationComplete(finish_reason="tool_calls"),
+    ]
+    client = ScriptedClient([text_turn("musing"), echo_turn])
+    runner = LoopRunner(
+        client, echo_registry(), Bus(), session, 128_000, LoopConfig(steps=(generation_step,))
+    )
+    runner.view = IterationView(undecided=True)
+
+    generation_step(runner)
+    assert runner.generation.narration_pressure is True
+
+    generation_step(runner)
+    assert runner.generation.narration_pressure is False
 
 
 def _plan_messages(messages: list[Message]) -> list[Message]:

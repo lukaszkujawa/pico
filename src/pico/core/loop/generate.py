@@ -17,7 +17,7 @@ from pico.core.loop.policy import restriction
 from pico.core.loop.prompt import Prompt, assemble, reconcile
 from pico.core.loop.runner import LoopRunner, StepOutcome
 from pico.core.loop.signals import Nudge
-from pico.core.loop.state import GenerationState, LastWords, RunState
+from pico.core.loop.state import GenerationState, LastWords, RunState, WindingDown
 from pico.llm.types import (
     GenerationComplete,
     TextDelta,
@@ -151,6 +151,8 @@ def record(
 
 
 def generation_step(runner: LoopRunner) -> StepOutcome:
+    if isinstance(runner.state, WindingDown):
+        runner.state = LastWords(runner.state.cause)
     nudges = runner.take_nudges()
     joined = "\n\n".join(nudge.text for nudge in nudges) if nudges else None
     active = restriction(runner.state, runner.decision, joined)
@@ -182,13 +184,12 @@ def generation_step(runner: LoopRunner) -> StepOutcome:
         runner.pending_tool_calls = generation.tool_calls
     recorded = record(generation, runner.state, runner.view, runner.generation)
     runner.generation.actionless_generations = recorded.actionless
+    runner.generation.narration_pressure = isinstance(recorded.command, Press)
     match recorded.command:
-        case Press():
-            runner.generation.narration_pressure = True
         case Emit(nudge=nudge):
             runner.emit(Nudge(nudge))
         case Fail(reason=reason):
             runner.fail(reason)
-        case None:
+        case Press() | None:
             pass
     return recorded.outcome

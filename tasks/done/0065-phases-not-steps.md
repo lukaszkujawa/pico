@@ -12,7 +12,7 @@
 * **Less code, verified.** This milestone deletes wiring (`snapshot_step`, `budget_step`, `lifecycle_step`, their exports and list entries); the rule contract may add a small type. Net line count of `src/pico/core/loop/` must not grow. No new abstraction is admitted unless it deletes more than it adds.
 * **Behaviour-preserving.** Thresholds, nudge texts, decision-table values, event order, and the same-iteration wind-down semantics are unchanged. Scripted-LLM tests pass with mechanical updates only.
 
-## [ ] T001 Policy rules behind one contract
+## [X] T001 Policy rules behind one contract
 
 ### Description
 
@@ -25,7 +25,7 @@ Recast stuckness, budget, and decision as value-returning rules of one shape; th
 * The budget nudge and budget pressure are produced by exactly one rule; `budget_step` no longer exists.
 * `make check` passes.
 
-## [ ] T002 The pipeline lists phases
+## [X] T002 The pipeline lists phases
 
 ### Description
 
@@ -39,7 +39,7 @@ Shrink `DEFAULT_LOOP_STEPS` to policy → orchestration → generation → dispa
 * Net line count of `src/pico/core/loop/` is not higher than before the milestone.
 * `make check` passes.
 
-## [ ] T003 The map matches the territory
+## [X] T003 The map matches the territory
 
 ### Description
 

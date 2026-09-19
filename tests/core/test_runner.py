@@ -12,13 +12,7 @@ from pico.core.events import (
 from pico.core.loop import DEFAULT_LOOP_CONFIG
 from pico.core.loop.dispatch import tool_call_step
 from pico.core.loop.generate import generation_step
-from pico.core.loop.policy import (
-    budget_step,
-    decision_step,
-    lifecycle_step,
-    snapshot_step,
-    stuckness_step,
-)
+from pico.core.loop.policy import policy_step
 from pico.core.loop.runner import MAX_RUN_STEPS, LoopConfig, LoopRunner, StepOutcome
 from pico.core.loop.state import Cancelled
 from pico.core.loop.subruns import (
@@ -238,14 +232,10 @@ def test_shared_id_source_keeps_ids_unique_across_separate_runners() -> None:
     assert len(set(started_ids)) == len(started_ids)
 
 
-def test_default_loop_config_snapshots_before_the_steps_that_read_the_view() -> None:
+def test_default_loop_config_lists_the_phases_in_order() -> None:
     assert DEFAULT_LOOP_CONFIG.steps == (
-        stuckness_step,
-        snapshot_step,
-        budget_step,
-        decision_step,
+        policy_step,
         step_orchestration_step,
-        lifecycle_step,
         generation_step,
         tool_call_step,
     )

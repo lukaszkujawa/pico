@@ -17,17 +17,18 @@ from pico.core.loop.decision import (
 from pico.core.loop.dispatch import tool_call_step
 from pico.core.loop.generate import generation_step
 from pico.core.loop.policy import (
+    BUDGET_PRESSURE,
     BUDGET_WIND_DOWN_FRACTION,
     CONTEXT_PRESSURE_CAUSE,
     LAST_WORDS_ACTIONS,
+    Verdict,
+    apply_verdict,
     budget_remaining,
-    budget_step,
-    decision_step,
-    lifecycle_step,
-    pressure,
+    budget_rule,
+    felt_pressure,
+    observe,
+    policy_step,
     restriction,
-    snapshot_step,
-    stuckness_step,
     undecided,
 )
 from pico.core.loop.runner import LoopConfig, LoopRunner
@@ -84,10 +85,10 @@ def test_undecided_tracks_the_plan_in_the_session() -> None:
     assert undecided(session) is True
 
 
-def test_pressure_reports_context_before_budget() -> None:
-    assert pressure(0.9, 2) == CONTEXT_PRESSURE_CAUSE
-    assert pressure(0.5, 2) == "only 2 generations remain of your budget"
-    assert pressure(0.1, None) is None
+def test_pressure_prefers_narration_then_context() -> None:
+    assert felt_pressure(True, 0.9) == NARRATION_PRESSURE
+    assert felt_pressure(False, 0.9) == CONTEXT_PRESSURE_CAUSE
+    assert felt_pressure(False, 0.1) is None
 
 
 def test_the_view_folds_the_iteration_signals_into_one_snapshot() -> None:
@@ -104,14 +105,14 @@ def test_the_view_folds_the_iteration_signals_into_one_snapshot() -> None:
     )
     runner.iterations = int(max_steps * BUDGET_WIND_DOWN_FRACTION)
 
-    assert snapshot_step(runner) == "continue"
+    assert policy_step(runner) == "continue"
 
     view = runner.view
     assert view.iterations == runner.iterations
     assert view.remaining == 2
     assert view.fullness == transcript_fullness(session.messages(), 128_000, runner.chars_per_token)
     assert view.undecided is True
-    assert view.pressure == pressure(view.fullness, view.remaining)
+    assert view.pressure == BUDGET_PRESSURE.format(remaining=2)
     assert view.pressed is True
 
 
@@ -121,7 +122,7 @@ def test_the_view_reports_no_pressure_for_a_quiet_iteration() -> None:
     )
     runner.state = WindingDown("stuck")
 
-    snapshot_step(runner)
+    policy_step(runner)
 
     assert runner.view.remaining is None
     assert runner.view.undecided is False
@@ -129,7 +130,7 @@ def test_the_view_reports_no_pressure_for_a_quiet_iteration() -> None:
     assert runner.view.pressed is False
 
 
-def test_the_view_takes_the_narration_pressure_flag_once() -> None:
+def test_observe_builds_the_same_view_twice() -> None:
     session, _ = decision_session()
     runner = LoopRunner(
         FailingClient(), echo_registry(), Bus(), session, 128_000, LoopConfig(steps=())
@@ -137,25 +138,12 @@ def test_the_view_takes_the_narration_pressure_flag_once() -> None:
     runner.generation.narration_pressure = True
     runner.generation.last_narration = "musing"
 
-    snapshot_step(runner)
-    assert runner.view.pressure == NARRATION_PRESSURE
-    assert runner.view.narration == "musing"
+    first = observe(runner)
+    second = observe(runner)
 
-    snapshot_step(runner)
-    assert runner.view.pressure is None
-
-
-def test_lifecycle_step_turns_winding_down_into_last_words_once() -> None:
-    runner = LoopRunner(
-        FailingClient(), echo_registry(), Bus(), make_session(), 128_000, LoopConfig(steps=())
-    )
-    runner.state = WindingDown("stuck")
-
-    assert lifecycle_step(runner) == "continue"
-    assert runner.state == LastWords("stuck")
-
-    assert lifecycle_step(runner) == "continue"
-    assert runner.state == LastWords("stuck")
+    assert first == second
+    assert first.pressure == NARRATION_PRESSURE
+    assert first.narration == "musing"
 
 
 def test_restriction_prefers_last_words_over_a_crossroads() -> None:
@@ -243,18 +231,16 @@ def test_stuck_run_carries_its_reason_on_run_finished() -> None:
     assert events[-1] == RunFinished(error=runner.state.reason)
 
 
-def test_budget_step_is_noop_when_max_steps_is_none() -> None:
+def test_budget_rule_is_silent_when_max_steps_is_none() -> None:
     runner = LoopRunner(
         FailingClient(), echo_registry(), Bus(), make_session(), 128_000, LoopConfig(steps=())
     )
     runner.iterations = 1_000_000
-    snapshot_step(runner)
-    assert budget_step(runner) == "continue"
-    assert runner.pending_nudges == []
-    assert runner.state == Running()
+    runner.view = observe(runner)
+    assert budget_rule(runner) == Verdict()
 
 
-def test_budget_step_is_noop_for_delegates_regardless_of_iterations() -> None:
+def test_budget_rule_is_silent_for_delegates_regardless_of_iterations() -> None:
     runner = LoopRunner(
         FailingClient(),
         echo_registry(),
@@ -265,13 +251,11 @@ def test_budget_step_is_noop_for_delegates_regardless_of_iterations() -> None:
         depth=1,
     )
     runner.iterations = child_budget(2)
-    snapshot_step(runner)
-    assert budget_step(runner) == "continue"
-    assert runner.pending_nudges == []
-    assert runner.state == Running()
+    runner.view = observe(runner)
+    assert budget_rule(runner) == Verdict()
 
 
-def test_budget_step_below_wind_down_threshold_sets_no_nudge() -> None:
+def test_budget_rule_below_wind_down_threshold_is_silent() -> None:
     max_steps = 10
     runner = LoopRunner(
         FailingClient(),
@@ -282,12 +266,11 @@ def test_budget_step_below_wind_down_threshold_sets_no_nudge() -> None:
         LoopConfig(steps=(), max_steps=max_steps),
     )
     runner.iterations = int(max_steps * BUDGET_WIND_DOWN_FRACTION) - 1
-    snapshot_step(runner)
-    assert budget_step(runner) == "continue"
-    assert runner.pending_nudges == []
+    runner.view = observe(runner)
+    assert budget_rule(runner) == Verdict()
 
 
-def test_budget_step_at_wind_down_threshold_sets_nudge_with_remaining_count() -> None:
+def test_budget_rule_at_wind_down_threshold_speaks_nudge_and_pressure_together() -> None:
     max_steps = 10
     runner = LoopRunner(
         FailingClient(),
@@ -298,13 +281,35 @@ def test_budget_step_at_wind_down_threshold_sets_nudge_with_remaining_count() ->
         LoopConfig(steps=(), max_steps=max_steps),
     )
     runner.iterations = int(max_steps * BUDGET_WIND_DOWN_FRACTION)
-    snapshot_step(runner)
-    outcome = budget_step(runner)
+    runner.view = observe(runner)
+    verdict = budget_rule(runner)
     remaining = max_steps - runner.iterations
-    assert outcome == "continue"
-    [nudge] = runner.pending_nudges
-    assert str(remaining) in nudge.text
-    assert "answer" in nudge.text
+    [nudge] = verdict.nudges
+    assert str(remaining) in nudge
+    assert "answer" in nudge
+    assert verdict.pressure == BUDGET_PRESSURE.format(remaining=remaining)
+
+    assert apply_verdict(runner, verdict) == "continue"
+    assert runner.view.pressure == verdict.pressure
+    assert [pending.text for pending in runner.pending_nudges] == [nudge]
+
+
+def test_budget_pressure_yields_to_a_stronger_pressure_already_in_the_view() -> None:
+    runner = LoopRunner(
+        FailingClient(),
+        echo_registry(),
+        Bus(),
+        make_session(),
+        128_000,
+        LoopConfig(steps=(), max_steps=10),
+    )
+    runner.generation.narration_pressure = True
+    runner.iterations = 8
+    runner.view = observe(runner)
+
+    apply_verdict(runner, budget_rule(runner))
+
+    assert runner.view.pressure == NARRATION_PRESSURE
 
 
 def test_policy_steps_accumulate_their_nudges() -> None:
@@ -321,9 +326,7 @@ def test_policy_steps_accumulate_their_nudges() -> None:
     )
     runner.iterations = int(max_steps * BUDGET_WIND_DOWN_FRACTION)
 
-    assert snapshot_step(runner) == "continue"
-    assert budget_step(runner) == "continue"
-    assert decision_step(runner) == "continue"
+    assert policy_step(runner) == "continue"
 
     first, second = runner.pending_nudges
     assert "the generation budget is nearly spent" in first.text
@@ -341,7 +344,7 @@ def test_taking_the_nudges_clears_the_list() -> None:
     assert runner.take_nudges() == []
 
 
-def test_budget_step_leaves_the_kill_to_the_last_words_generation() -> None:
+def test_budget_rule_leaves_the_kill_to_the_last_words_generation() -> None:
     max_steps = 10
     runner = LoopRunner(
         FailingClient(),
@@ -353,8 +356,8 @@ def test_budget_step_leaves_the_kill_to_the_last_words_generation() -> None:
     )
     runner.iterations = max_steps
 
-    snapshot_step(runner)
-    assert budget_step(runner) == "continue"
+    runner.view = observe(runner)
+    assert budget_rule(runner).transition is None
     assert runner.state == Running()
 
 
@@ -383,14 +386,7 @@ def test_run_reaching_soft_threshold_gets_wind_down_nudge_then_answers_normally(
     )
     client = ScriptedClient(turns)
     config = LoopConfig(
-        steps=(
-            stuckness_step,
-            snapshot_step,
-            budget_step,
-            lifecycle_step,
-            generation_step,
-            tool_call_step,
-        ),
+        steps=(policy_step, generation_step, tool_call_step),
         max_steps=max_steps,
     )
 
@@ -419,14 +415,7 @@ def test_run_exhausting_budget_fails_explicitly_and_stays_resumable() -> None:
     turns.append(text_turn("I have nothing to say"))
     client = ScriptedClient(turns)
     config = LoopConfig(
-        steps=(
-            stuckness_step,
-            snapshot_step,
-            budget_step,
-            lifecycle_step,
-            generation_step,
-            tool_call_step,
-        ),
+        steps=(policy_step, generation_step, tool_call_step),
         max_steps=max_steps,
     )
 
@@ -622,14 +611,7 @@ def test_the_root_at_wind_down_with_unfinished_steps_keeps_the_wind_down_wording
         ]
     )
     config = LoopConfig(
-        steps=(
-            stuckness_step,
-            snapshot_step,
-            budget_step,
-            decision_step,
-            generation_step,
-            tool_call_step,
-        ),
+        steps=(policy_step, generation_step, tool_call_step),
         max_steps=max_steps,
     )
 
