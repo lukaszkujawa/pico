@@ -1,7 +1,7 @@
 from pico.core.actions.answer import Answer
 from pico.core.actions.arguments import InvalidActionError, require
 from pico.core.actions.catalog import RUNNER_ACTIONS, register_actions, vocabulary
-from pico.core.actions.context import ActionContext, ActionResult, AnswerOutcome
+from pico.core.actions.context import ActionContext, ActionResult, AnswerOutcome, Outcome
 from pico.core.actions.delegate import MAX_DELEGATE_DEPTH, Delegate
 from pico.core.actions.facts import fact_recall_tool, note_tool
 from pico.core.actions.files import ReadFile, WriteFile
@@ -20,6 +20,7 @@ __all__ = [
     "CompleteStep",
     "Delegate",
     "InvalidActionError",
+    "Outcome",
     "ReadFile",
     "ResultShape",
     "SetPlan",

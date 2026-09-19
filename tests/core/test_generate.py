@@ -30,7 +30,7 @@ from pico.core.loop.generate import (
     Fail,
     Generation,
     Press,
-    Recorded,
+    Verdict,
     generation_step,
     record,
 )
@@ -844,22 +844,22 @@ def test_record_of_a_tool_call_resets_the_actionless_count() -> None:
         text="", thinking="", tool_calls=[ToolCall(id="1", name="echo", arguments={})]
     )
     recorded = record(generation, Running(), IterationView(), _counted(2))
-    assert recorded == Recorded("continue", actionless=0)
+    assert recorded == Verdict("continue", actionless=0)
 
 
 def test_record_of_silence_while_dying_ends_the_run() -> None:
     recorded = record(_silence(), LastWords("spent"), IterationView(), _counted(1))
-    assert recorded == Recorded("done", actionless=1)
+    assert recorded == Verdict("done", actionless=1)
 
 
 def test_record_of_narration_without_a_plan_presses_for_a_decision() -> None:
     recorded = record(_silence(), Running(), IterationView(undecided=True), _counted(2))
-    assert recorded == Recorded("continue", actionless=0, command=Press())
+    assert recorded == Verdict("continue", actionless=0, command=Press())
 
 
 def test_record_counts_actionless_generations_up_to_the_failure() -> None:
     recorded = record(_silence(), Running(), IterationView(), _counted(0))
-    assert recorded == Recorded("continue", actionless=1, command=Emit(NO_ACTION_NUDGE))
+    assert recorded == Verdict("continue", actionless=1, command=Emit(NO_ACTION_NUDGE))
     final = record(_silence(), Running(), IterationView(), _counted(MAX_ACTIONLESS_GENERATIONS - 1))
     assert final.outcome == "done"
     assert final.actionless == MAX_ACTIONLESS_GENERATIONS

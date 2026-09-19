@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import IO, Self
 
 from pico.core.actions.arguments import require
-from pico.core.actions.context import ActionContext, ActionResult, RunnerAction
+from pico.core.actions.context import ActionContext, ActionResult, Outcome, RunnerAction
 from pico.core.events import ToolCallResultDelta
 from pico.core.tools import ToolError
 from pico.llm.types import ToolSpec
@@ -101,8 +101,8 @@ def run_shell(context: ActionContext, arguments: Mapping[str, object]) -> Action
 
     code, output = Shell.from_arguments(arguments).run(on_chunk=on_chunk)
     if code != 0:
-        return f"exit code {code}\n{output}", True
-    return output, False
+        return Outcome(f"exit code {code}\n{output}", is_error=True)
+    return Outcome(output)
 
 
 SHELL_ACTION = RunnerAction(spec=SHELL_SPEC, execute=run_shell)

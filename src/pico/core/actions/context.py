@@ -14,6 +14,12 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class Outcome:
+    result: str
+    is_error: bool = False
+
+
+@dataclass(frozen=True)
 class AnswerOutcome:
     content: str
     result: str
@@ -23,9 +29,9 @@ class AnswerOutcome:
     verify: str | None
 
 
-ActionResult = AnswerOutcome | tuple[str, bool] | None
+ActionResult = AnswerOutcome | Outcome | None
 
-Spawn = Callable[["Delegate"], tuple[str, bool]]
+Spawn = Callable[["Delegate"], Outcome]
 
 
 @dataclass

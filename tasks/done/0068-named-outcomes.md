@@ -10,7 +10,7 @@ In a codebase whose style bans comments, signatures are the documentation — an
 * **Behaviour-preserving.** No message text, event, or ordering changes; tests update mechanically.
 * **This milestone follows 0067.**
 
-## [ ] T001 One outcome type
+## [X] T001 One outcome type
 
 ### Description
 
@@ -23,7 +23,7 @@ Introduce the frozen outcome dataclass and thread it through subruns and dispatc
 * Net line count of `src/pico/core/loop/` is not higher than before the milestone.
 * `make check` passes.
 
-## [ ] T002 Rename Recorded
+## [X] T002 Rename Recorded
 
 ### Description
 

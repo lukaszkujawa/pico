@@ -1,7 +1,7 @@
 from collections.abc import Mapping
 
 from pico.core.actions.arguments import InvalidActionError, require
-from pico.core.actions.context import ActionContext, ActionResult, RunnerAction
+from pico.core.actions.context import ActionContext, ActionResult, Outcome, RunnerAction
 from pico.core.ledger import facts
 from pico.core.search import search
 from pico.core.tools import Tool, ToolError
@@ -91,8 +91,8 @@ def run_search(context: ActionContext, arguments: Mapping[str, object]) -> Actio
             context.cancel,
         )
     except LLMError as error:
-        return f"search failed: {error}", True
-    return output, False
+        return Outcome(f"search failed: {error}", is_error=True)
+    return Outcome(output)
 
 
 SEARCH_ACTION = RunnerAction(spec=SEARCH_SPEC, execute=run_search)

@@ -4,6 +4,7 @@ from pico.core.actions import (
     MAX_DELEGATE_DEPTH,
     Delegate,
     InvalidActionError,
+    Outcome,
     ResultShape,
     register_actions,
 )
@@ -51,19 +52,19 @@ def run_child(
     return child_runner
 
 
-def conclude(child: LoopRunner) -> tuple[str, bool]:
+def conclude(child: LoopRunner) -> Outcome:
     match child.state:
         case Answered(content, None):
-            return content, False
+            return Outcome(content)
         case Answered(content, cause):
-            return f"partial — {cause}:\n{content}", False
+            return Outcome(f"partial — {cause}:\n{content}")
         case Failed(reason):
-            return reason, True
+            return Outcome(reason, is_error=True)
         case _:
-            return f"no answer within {child.config.max_steps} steps", True
+            return Outcome(f"no answer within {child.config.max_steps} steps", is_error=True)
 
 
-def spawn_delegate(runner: LoopRunner, delegate: Delegate) -> tuple[str, bool]:
+def spawn_delegate(runner: LoopRunner, delegate: Delegate) -> Outcome:
     if runner.depth >= MAX_DELEGATE_DEPTH:
         raise InvalidActionError("delegate is not available at this depth")
     prompt = "" if delegate.shape is None else delegate.shape.prompt()
@@ -73,10 +74,10 @@ def spawn_delegate(runner: LoopRunner, delegate: Delegate) -> tuple[str, bool]:
         delegate.question + prompt,
         delegate.shape,
     )
-    result, is_error = conclude(child_runner)
-    if is_error:
-        return f"delegate failed: {result}", True
-    return result, False
+    outcome = conclude(child_runner)
+    if outcome.is_error:
+        return Outcome(f"delegate failed: {outcome.result}", is_error=True)
+    return outcome
 
 
 def root_task(session: Session) -> str:
@@ -116,7 +117,7 @@ def _first_unfinished(current: Plan | None) -> int | None:
     return next((index for index, step in enumerate(current.steps) if not step.done), None)
 
 
-def spawn_step(runner: LoopRunner, current: Plan, index: int) -> tuple[str, bool] | None:
+def spawn_step(runner: LoopRunner, current: Plan, index: int) -> Outcome | None:
     child = run_child(
         runner,
         f"step/{runner.session.next_seq()}",
@@ -124,11 +125,11 @@ def spawn_step(runner: LoopRunner, current: Plan, index: int) -> tuple[str, bool
     )
     if runner.cancel.is_set():
         return None
-    result, is_error = conclude(child)
-    if is_error:
+    outcome = conclude(child)
+    if outcome.is_error:
         text = current.steps[index].text
-        return f'step {index} failed — {result}\nstep was: "{text}"', True
-    return result, False
+        return Outcome(f'step {index} failed — {outcome.result}\nstep was: "{text}"', is_error=True)
+    return outcome
 
 
 def claim_step_attempt(steps: StepState, current: Plan, index: int) -> bool:
@@ -158,18 +159,11 @@ def _run_and_record_step(runner: LoopRunner, current: Plan, index: int) -> StepO
     pane_id = runner.new_id()
     arguments: Mapping[str, object] = {"step": current.steps[index].text}
     runner.bus.publish(ToolCallStarted(id=pane_id, name="step", arguments=arguments))
-    concluded = spawn_step(runner, current, index)
-    if concluded is None:
+    outcome = spawn_step(runner, current, index)
+    if outcome is None:
         return "cancelled"
-    result, is_error = concluded
-    finish_tool_call(
-        runner.session,
-        runner.bus,
-        pane_id,
-        ToolCall(id=pane_id, name="step", arguments=arguments),
-        result,
-        is_error,
-    )
-    if not is_error:
+    call = ToolCall(id=pane_id, name="step", arguments=arguments)
+    finish_tool_call(runner.session, runner.bus, pane_id, call, outcome)
+    if not outcome.is_error:
         runner.session.append(PlanStepCompleted(index=index))
     return "continue"

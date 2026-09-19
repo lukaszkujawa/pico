@@ -4,6 +4,7 @@ from pico.core.actions import (
     ActionResult,
     AnswerOutcome,
     InvalidActionError,
+    Outcome,
 )
 from pico.core.events import AnswerSettled, ToolCallStarted
 from pico.core.loop.record import finish_tool_call
@@ -26,43 +27,40 @@ def _dispatch(
         raise InvalidActionError(f"{call.name} is not available — {active.rejection}")
     action = RUNNER_ACTIONS.get(call.name)
     if action is None:
-        return tools.execute(call), False
+        return Outcome(tools.execute(call))
     return action.execute(context, call.arguments)
 
 
-def _failed(call: ToolCall, message: str) -> AnswerOutcome | tuple[str, bool]:
+def _failed(call: ToolCall, message: str) -> AnswerOutcome | Outcome:
     if call.name != "answer":
-        return message, True
+        return Outcome(message, is_error=True)
     return AnswerOutcome(
         content="", result=message, is_error=True, accepted=False, reason=message, verify=None
     )
 
 
-def _record(
-    context: ActionContext, call: ToolCall, result: AnswerOutcome | tuple[str, bool]
-) -> bool:
-    if isinstance(result, AnswerOutcome):
-        context.session.append(
-            ToolCallRecorded(
-                name=call.name,
-                arguments=call.arguments,
-                result=result.result,
-                is_error=result.is_error,
-            )
-        )
-        context.bus.publish(
-            AnswerSettled(
-                id=context.pane_id,
-                content=result.content,
-                accepted=result.accepted,
-                reason=result.reason,
-                verify=result.verify,
-            )
-        )
+def _record(context: ActionContext, call: ToolCall, result: AnswerOutcome | Outcome) -> bool:
+    if isinstance(result, Outcome):
+        finish_tool_call(context.session, context.bus, context.pane_id, call, result)
         return result.is_error
-    output, is_error = result
-    finish_tool_call(context.session, context.bus, context.pane_id, call, output, is_error)
-    return is_error
+    context.session.append(
+        ToolCallRecorded(
+            name=call.name,
+            arguments=call.arguments,
+            result=result.result,
+            is_error=result.is_error,
+        )
+    )
+    context.bus.publish(
+        AnswerSettled(
+            id=context.pane_id,
+            content=result.content,
+            accepted=result.accepted,
+            reason=result.reason,
+            verify=result.verify,
+        )
+    )
+    return result.is_error
 
 
 def _action_context(runner: LoopRunner, pane_id: str) -> ActionContext:

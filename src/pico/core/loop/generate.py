@@ -14,6 +14,7 @@ from pico.core.events import (
 from pico.core.loop.decision import Crossroads, IterationView
 from pico.core.loop.policy import restriction
 from pico.core.loop.prompt import Prompt, assemble, reconcile
+from pico.core.loop.record import record_assistant_message
 from pico.core.loop.runner import LoopRunner, StepOutcome
 from pico.core.loop.state import GenerationState, LastWords, Nudge, RunState, WindingDown
 from pico.llm.budget import prompt_budget
@@ -25,7 +26,6 @@ from pico.llm.types import (
     ToolCallDelta,
     ToolCallReady,
 )
-from pico.session import AssistantMessageRecorded
 
 MAX_ACTIONLESS_GENERATIONS = 3
 
@@ -61,7 +61,7 @@ Command = Press | Emit | Fail
 
 
 @dataclass(frozen=True)
-class Recorded:
+class Verdict:
     outcome: StepOutcome
     actionless: int
     command: Command | None = None
@@ -129,16 +129,16 @@ def stream(runner: LoopRunner, prompt: Prompt, pressured: bool) -> Generation | 
 
 def record(
     generation: Generation, state: RunState, seen: IterationView, counted: GenerationState
-) -> Recorded:
+) -> Verdict:
     if generation.tool_calls:
-        return Recorded("continue", actionless=0)
+        return Verdict("continue", actionless=0)
     if isinstance(state, LastWords):
-        return Recorded("done", actionless=counted.actionless_generations)
+        return Verdict("done", actionless=counted.actionless_generations)
     if seen.undecided:
-        return Recorded("continue", actionless=0, command=Press())
+        return Verdict("continue", actionless=0, command=Press())
     attempts = counted.actionless_generations + 1
     if attempts >= MAX_ACTIONLESS_GENERATIONS:
-        return Recorded(
+        return Verdict(
             "done",
             actionless=attempts,
             command=Fail(
@@ -146,7 +146,7 @@ def record(
                 "while the plan has unfinished steps"
             ),
         )
-    return Recorded("continue", actionless=attempts, command=Emit(NO_ACTION_NUDGE))
+    return Verdict("continue", actionless=attempts, command=Emit(NO_ACTION_NUDGE))
 
 
 def generation_step(runner: LoopRunner) -> StepOutcome:
@@ -173,22 +173,19 @@ def generation_step(runner: LoopRunner) -> StepOutcome:
     generation = stream(runner, prompt, pressured)
     if generation is None:
         return "cancelled"
-    if generation.text or generation.thinking:
-        runner.session.append(
-            AssistantMessageRecorded(content=generation.text, thinking=generation.thinking)
-        )
+    record_assistant_message(runner.session, generation.text, generation.thinking)
     if generation.text.strip():
         runner.generation.last_narration = generation.text
     if generation.tool_calls:
         runner.pending_tool_calls = generation.tool_calls
-    recorded = record(generation, runner.state, runner.view, runner.generation)
-    runner.generation.actionless_generations = recorded.actionless
-    runner.generation.narration_pressure = isinstance(recorded.command, Press)
-    match recorded.command:
+    verdict = record(generation, runner.state, runner.view, runner.generation)
+    runner.generation.actionless_generations = verdict.actionless
+    runner.generation.narration_pressure = isinstance(verdict.command, Press)
+    match verdict.command:
         case Emit(nudge=nudge):
             runner.emit(Nudge(nudge))
         case Fail(reason=reason):
             runner.fail(reason)
         case Press() | None:
             pass
-    return recorded.outcome
+    return verdict.outcome
