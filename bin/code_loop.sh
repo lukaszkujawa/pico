@@ -7,6 +7,7 @@ TASKS_DIR="$ROOT_DIR/tasks"
 TODO_DIR="$TASKS_DIR/todo"
 STOP_FILE="$ROOT_DIR/.stop_code"
 MAX_STEPS="${MAX_STEPS:-50}"
+CLAUDE_MODEL="${CLAUDE_MODEL:-opus}"
 FORMAT_FILTER="$ROOT_DIR/bin/format_stream.jq"
 WORKTREES_DIR="$ROOT_DIR/agent-worktree"
 MASTER_LOCK="$ROOT_DIR/.master-lock"
@@ -114,11 +115,35 @@ claim_worktree() {
   fi
 }
 
+agent_alive() {
+  tmux has-session -t "claude-pico-$1" 2>/dev/null
+}
+
+reclaim_abandoned() {
+  local branch="$1"
+  local dir="$WORKTREES_DIR/$branch"
+  [[ -d "$dir" ]] || return 0
+  if agent_alive "$branch"; then
+    log_event "skipping $branch: agent still running"
+    return 1
+  fi
+  if [[ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ]]; then
+    log_event "skipping $branch: worktree has uncommitted work at $dir"
+    return 1
+  fi
+  log_event "reclaiming abandoned worktree for $branch"
+  remove_worktree "$dir"
+  branch_exists "$branch" &&
+    git -C "$ROOT_DIR" merge-base --is-ancestor "$branch" master &&
+    git -C "$ROOT_DIR" branch -D "$branch" >/dev/null 2>&1
+  return 0
+}
+
 claim_next_task() {
   local task branch
   while read -r task; do
     branch="$(basename "${task%.md}")"
-    [[ -d "$WORKTREES_DIR/$branch" ]] && continue
+    reclaim_abandoned "$branch" || continue
     with_master_lock ensure_task_committed "$task" "$(basename "$task")" || continue
     if claim_worktree "$branch"; then
       printf '%s\n' "$task"
@@ -159,7 +184,7 @@ write_step_summary() {
         "cost:      $" + (.total_cost_usd // 0 | tostring),
         "turns:     " + (.num_turns // 0 | tostring),
         "session:   " + (.session_id // "-"),
-        "error:     " + (if .is_error then (.subtype // "yes") else "no" end)
+        "error:     " + (if .is_error then ((.result // .subtype // "yes") | tostring) else "no" end)
       ' <<< "$result"
     else
       printf 'cost:      unknown (no result event)\n'
@@ -176,7 +201,7 @@ run_claude_in_tmux() {
   tmux kill-session -t "$session" 2>/dev/null || true
 
   tmux new-session -d -s "$session" -c "$work_dir" -x 220 -y 50 bash -c \
-    "claude -p \"\$(cat '$prompt_file')\" --dangerously-skip-permissions --disallowedTools AskUserQuestion --verbose --output-format stream-json | tee '$step_dir/stream.jsonl' | jq -r -f '$FORMAT_FILTER' | tee '$step_dir/console.log'; echo \${PIPESTATUS[0]} > '$exit_file'; tmux wait-for -S '$done_channel'"
+    "claude -p \"\$(cat '$prompt_file')\" --model '$CLAUDE_MODEL' --dangerously-skip-permissions --disallowedTools AskUserQuestion --verbose --output-format stream-json | tee '$step_dir/stream.jsonl' | jq -r -f '$FORMAT_FILTER' | tee '$step_dir/console.log'; echo \${PIPESTATUS[0]} > '$exit_file'; tmux wait-for -S '$done_channel'"
 
   tmux wait-for "$done_channel"
 
@@ -264,9 +289,19 @@ for ((step = 1; step <= MAX_STEPS; step++)); do
   write_step_summary "$step_dir" "$task_name" "$branch_name" "$claude_exit" "$(( SECONDS - started_at ))"
 
   if (( claude_exit != 0 )); then
+    failure="$(grep -o "You've reached your [^.]*limit" "$step_dir/console.log" 2>/dev/null | tail -n 1)"
     echo
-    echo -e "\033[31mClaude exited with status $claude_exit.${RESET} Worktree left at $worktree_dir for inspection."
-    log_event "step $step  FAILED claude exit=$claude_exit"
+    if [[ -n "$failure" ]]; then
+      echo -e "\033[31m$failure.${RESET} No work was committed; the worktree has been released."
+      log_event "step $step  ABORTED $task_name  usage limit reached"
+      remove_worktree "$worktree_dir"
+      branch_exists "$branch_name" &&
+        git -C "$ROOT_DIR" merge-base --is-ancestor "$branch_name" master &&
+        git -C "$ROOT_DIR" branch -D "$branch_name" >/dev/null 2>&1
+    else
+      echo -e "\033[31mClaude exited with status $claude_exit.${RESET} Worktree left at $worktree_dir for inspection."
+      log_event "step $step  FAILED claude exit=$claude_exit"
+    fi
     exit 1
   fi
 
