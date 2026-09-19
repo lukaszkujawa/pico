@@ -41,6 +41,7 @@ def test_register_actions_populates_all_plain_tool_names() -> None:
     assert names == {
         "read_file",
         "write_file",
+        "edit_file",
         "load_table",
         "sql",
         "note",
@@ -100,6 +101,7 @@ def test_vocabulary_lists_plain_tools_then_runner_actions() -> None:
     assert [spec.name for spec in specs] == [
         "read_file",
         "write_file",
+        "edit_file",
         "load_table",
         "sql",
         "note",

@@ -256,6 +256,7 @@ def test_turn_loop_runs_one_turn_per_queued_message(
     assert {spec.name for spec in client.seen_tools[0]} == {
         "read_file",
         "write_file",
+        "edit_file",
         "shell",
         "load_table",
         "sql",

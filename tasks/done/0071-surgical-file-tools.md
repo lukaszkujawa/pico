@@ -11,7 +11,7 @@ File content still floods the transcript from the read side. The 85-generation r
 * **Tool descriptions steer the choice.** `edit_file`'s description says to use it when the exact current text is known (a file just written or just read) and to delegate the edit when it is not. `read_file`'s description names the slice parameters. The descriptions are how the routing happens; there is no enforcement.
 * **Scope guard.** No change to `write_file` (0070's elision stands), no recursive behaviour in any tool, no retroactive trimming of past results, no line-numbered output.
 
-## [ ] T001 Mechanical edit_file
+## [X] T001 Mechanical edit_file
 
 ### Description
 
@@ -24,7 +24,7 @@ Add `edit_file` to `actions/files.py` in the house closure shape, register it in
 * The tool is registered at every depth alongside `read_file` and `write_file`.
 * `make check` passes.
 
-## [ ] T002 Sliced and capped read_file
+## [X] T002 Sliced and capped read_file
 
 ### Description
 

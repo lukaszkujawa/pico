@@ -2,7 +2,7 @@ from pico.core.actions.answer import ANSWER_ACTION
 from pico.core.actions.context import RunnerAction
 from pico.core.actions.delegate import DELEGATE_ACTION, MAX_DELEGATE_DEPTH
 from pico.core.actions.facts import SEARCH_ACTION, fact_recall_tool, note_tool
-from pico.core.actions.files import read_file_tool, write_file_tool
+from pico.core.actions.files import edit_file_tool, read_file_tool, write_file_tool
 from pico.core.actions.planning import complete_step_tool, set_plan_tool
 from pico.core.actions.scratch import load_table_tool, sql_tool
 from pico.core.actions.shell import SHELL_ACTION
@@ -20,6 +20,7 @@ RUNNER_ACTIONS: dict[str, RunnerAction] = {
 def register_actions(registry: ToolRegistry, session: Session, depth: int = 0) -> None:
     registry.register(read_file_tool())
     registry.register(write_file_tool())
+    registry.register(edit_file_tool())
     scratch = Scratch(session, in_memory=depth > 0)
     registry.register(load_table_tool(scratch))
     registry.register(sql_tool(scratch))

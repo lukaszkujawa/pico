@@ -123,7 +123,7 @@ def test_model_recovers_a_truncated_fact_via_read_fact_and_cites_it() -> None:
         ]
     )
 
-    runner = LoopRunner(client, tools, bus, session, 2000, DEFAULT_LOOP_CONFIG)
+    runner = LoopRunner(client, tools, bus, session, 2500, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
     handle = next(
