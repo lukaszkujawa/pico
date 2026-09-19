@@ -6,8 +6,11 @@ from pico.core.events import (
     BusEvent,
     RunFinished,
 )
+from pico.core.loop.prompt import message_text, specs_text
 from pico.core.loop.runner import LoopRunner
+from pico.core.loop.state import DEFAULT_CHARS_PER_TOKEN
 from pico.core.tools import Tool, ToolError, ToolRegistry
+from pico.llm.budget import estimate_tokens, prompt_budget
 from pico.llm.client import LLMError
 from pico.llm.types import (
     GenerationComplete,
@@ -104,6 +107,33 @@ class RecordingClient(NoModels):
         if self.runner is not None:
             self.seen_ratios.append(self.runner.chars_per_token)
         yield from self._turns.pop(0)
+
+
+def sent_overhead(client: RecordingClient, index: int) -> int:
+    messages = client.seen_messages[index]
+    framing = [
+        message
+        for message in messages
+        if message.role is Role.SYSTEM
+        or (
+            message.role is Role.USER
+            and (
+                message.content.startswith("Your current plan:")
+                or "you've repeated" in message.content
+            )
+        )
+    ]
+    text = specs_text(client.seen_specs[index]) + "".join(
+        message_text(message) for message in framing
+    )
+    return estimate_tokens(text, DEFAULT_CHARS_PER_TOKEN)
+
+
+def context_size_for_budget(budget: int) -> int:
+    size = budget
+    while prompt_budget(size) < budget:
+        size += 1
+    return size
 
 
 def stop_turn() -> list[StreamEvent]:

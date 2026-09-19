@@ -10,7 +10,7 @@ The test tree follows one-module-one-file everywhere except its two largest file
 * **The suite's strength is the invariant.** Coverage stays at or above the configured `fail_under = 94`, the total behaviour covered does not shrink, and no production code changes. If a moved test fails, the move exposed order-dependence — fix the test's isolation, never the source.
 * **Scope guard.** No changes under `src/`, no conftest growth beyond what exists, no reorganising test files outside these two, no new pytest plugins or markers, no renaming of the surviving `test_generate.py` scope beyond the extractions named above.
 
-## [ ] T001 Split the TUI app tests
+## [X] T001 Split the TUI app tests
 
 ### Description
 
@@ -23,7 +23,7 @@ Break `tests/tui/test_app.py` into the six concern files, moving shared helpers 
 * Any rewritten or deleted test is listed in the completion notes with the internals it was pinned to or the test that already covers it.
 * Coverage remains at or above the configured threshold; `make check` passes.
 
-## [ ] T002 Split the generation tests
+## [X] T002 Split the generation tests
 
 ### Description
 
@@ -35,3 +35,10 @@ Break `tests/core/test_generate.py` into the retained `test_generate.py` and new
 * Shared helpers live in `loop_fixtures.py` with no duplication between the files.
 * Any rewritten or deleted test is listed in the completion notes as in T001.
 * Coverage remains at or above the configured threshold; `make check` passes.
+
+## Completion notes
+
+* No test was rewritten or deleted. Every test body moved verbatim; the only textual changes are call-site renames of shared helpers that moved into fixtures modules (`_submit` → `app_fixtures.submit`, `_sent_overhead` → `loop_fixtures.sent_overhead`, `_context_size_for_budget` → `loop_fixtures.context_size_for_budget`) so the shared names are importable under pyright strict.
+* T001: `tests/tui/test_app.py` (93 collected tests) split into `test_panes.py` (19), `test_scrolling.py` (5), `test_input.py` (11), `test_controls.py` (10), `test_activity.py` (26, 28 collected), `test_menu.py` (20). `submit`, `RecordingCancelHandle`, `RecordingSessionHandle`, `FakeSwitch`, and `GatedSwitch` moved to `tests/tui/app_fixtures.py`; single-file helpers (`_stream_overflowing_panes`, `_menu`, `_labels`) stayed local to their concern file.
+* T002: `tests/core/test_generate.py` (43 tests) split into the retained `test_generate.py` (23: streaming, pane ids, cancellation, pressure/wind-down publishing, `record` verdicts and the actionless-narration runs) and `test_generation_prompting.py` (19: sent messages, briefing/plan messages, overhead, chars-per-token ratio through the runner, budget-exceeded, the bounded long run). The pure `test_reconcile_clamps_the_observed_ratio` moved into `tests/core/test_prompt.py`; the overhead helpers moved into `tests/core/loop_fixtures.py`.
+* Suite count and coverage are unchanged: 930 tests pass, coverage 98.25% (threshold 94).

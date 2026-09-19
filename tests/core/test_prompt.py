@@ -4,10 +4,13 @@ from itertools import pairwise
 from pico.core.ledger import facts
 from pico.core.loop.prompt import (
     IMAGE_TOKEN_ESTIMATE,
+    MAX_CHARS_PER_TOKEN,
+    MIN_CHARS_PER_TOKEN,
     compile_context,
     message_text,
     message_tokens,
     recency_window,
+    reconcile,
     render_tool_result,
 )
 from pico.core.loop.state import Degradation
@@ -499,3 +502,9 @@ def test_message_text_ignores_attached_images() -> None:
     with_image = Message(role=Role.TOOL, tool_result=result, images=("/tmp/x.png",))
 
     assert message_text(with_image) == message_text(plain)
+
+
+def test_reconcile_clamps_the_observed_ratio() -> None:
+    assert reconcile(400, 100) == 4.0
+    assert reconcile(100, 1_000) == MIN_CHARS_PER_TOKEN
+    assert reconcile(10_000, 100) == MAX_CHARS_PER_TOKEN
