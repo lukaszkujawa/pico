@@ -177,6 +177,12 @@ class CommandAccepted(Message):
         super().__init__()
 
 
+class CommandCompleted(Message):
+    def __init__(self, text: str) -> None:
+        self.text = text
+        super().__init__()
+
+
 TuiMessage = (
     RunStartedMessage
     | RunFinishedMessage

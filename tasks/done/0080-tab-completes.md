@@ -10,7 +10,7 @@ Type `/q`, watch the menu narrow to a single `quit` row, and the natural next ke
 * **The menu stays open after completing to a command that takes an argument,** so the argument rows appear as they do when Enter accepts `/model`; completing a terminal command like `/quit` hides it.
 * **Scope guard.** No change to Enter, the arrow keys, Escape, or the completion source; no new bindings beyond Tab inside `ChatInput`; no common-prefix completion across multiple rows — Tab acts on the highlighted row only.
 
-## [ ] T001 Tab completes the highlighted row
+## [X] T001 Tab completes the highlighted row
 
 ### Description
 

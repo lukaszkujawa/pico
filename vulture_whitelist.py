@@ -23,6 +23,7 @@ _.on_user_input_submitted
 _.on_text_area_changed
 _.on_command_menu_key
 _.on_command_accepted
+_.on_command_completed
 _.on_unmount
 _.padding
 _.display

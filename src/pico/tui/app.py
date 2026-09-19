@@ -22,6 +22,7 @@ from pico.tui.messages import (
     AssistantPaneCreate,
     AssistantPaneDelta,
     CommandAccepted,
+    CommandCompleted,
     CommandMenuKey,
     ErrorMessage,
     GenerationCompletedMessage,
@@ -99,6 +100,13 @@ class ChatInput(TextArea):
             event.stop()
             event.prevent_default()
             self.post_message(CommandMenuKey(key=event.key))
+            return
+        if event.key == "tab" and menu.display:
+            event.stop()
+            event.prevent_default()
+            completed = self._accept(menu)
+            if completed is not None:
+                self.post_message(CommandCompleted(text=completed))
             return
         if event.key == "enter":
             event.stop()
@@ -204,6 +212,7 @@ class PicoApp(App[None]):
         self._pending_token_text: str = ""
         self._flush_timer: Timer | None = None
         self._menu_models: Options | None = None
+        self._completed_text: str | None = None
         self._models_worker: Worker[None] | None = None
 
     def _session_id(self) -> str:
@@ -468,6 +477,9 @@ class PicoApp(App[None]):
         return completion
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        if event.text_area.text == self._completed_text:
+            return
+        self._completed_text = None
         self._refresh_menu(event.text_area.text)
 
     def _refresh_menu(self, text: str) -> None:
@@ -515,12 +527,24 @@ class PicoApp(App[None]):
     async def on_command_accepted(self, message: CommandAccepted) -> None:
         text_input = self.query_one("#user-input", ChatInput)
         if commands.awaits_argument(message.text):
-            text_input.text = f"{message.text} "
-            text_input.move_cursor(text_input.document.end)
+            self._fill_input(text_input, f"{message.text} ")
             return
         self._hide_menu()
         text_input.clear()
         await self.run_command(message.text)
+
+    def on_command_completed(self, message: CommandCompleted) -> None:
+        text_input = self.query_one("#user-input", ChatInput)
+        if commands.awaits_argument(message.text):
+            self._fill_input(text_input, f"{message.text} ")
+            return
+        self._completed_text = message.text
+        self._fill_input(text_input, message.text)
+        self._hide_menu()
+
+    def _fill_input(self, text_input: "ChatInput", text: str) -> None:
+        text_input.text = text
+        text_input.move_cursor(text_input.document.end)
 
     async def _say(self, message: str) -> None:
         await self._mount_at_bottom(SystemPane(message))

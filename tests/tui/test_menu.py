@@ -352,3 +352,120 @@ async def test_every_registered_command_is_dispatched() -> None:
                 pane for pane in app.query(SystemPane) if "unknown command" in pane.render().plain
             ]
             assert unknown == [], f"/{command.name} is registered but not dispatched"
+
+
+async def test_tab_completes_the_highlighted_command_without_running_it() -> None:
+    app = PicoApp(Bus(), queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        text_input = app.query_one("#user-input", ChatInput)
+        text_input.focus()
+        await pilot.press(*"/q")
+        await settle(pilot, lambda: _labels(app) == ["quit"], "the menu narrows to quit")
+
+        await pilot.press("tab")
+        await settle(pilot, lambda: not _menu(app).display, "the completion lands")
+
+        assert text_input.text == "/quit"
+        assert app.is_running
+        assert app.focused is text_input
+
+        await pilot.press("enter")
+        await settle(pilot, lambda: not app.is_running, "enter then runs the completion")
+
+
+async def test_tab_on_a_command_taking_an_argument_opens_the_argument_stage() -> None:
+    switch = FakeSwitch()
+    app = PicoApp(Bus(), queue.Queue(), model_switch=switch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        text_input = app.query_one("#user-input", ChatInput)
+        text_input.focus()
+        await pilot.press(*"/mo")
+        await settle(pilot, lambda: _labels(app) == ["model"], "the menu narrows to model")
+
+        await pilot.press("tab")
+        await settle(pilot, lambda: text_input.text == "/model ", "the argument stage opens")
+
+        assert text_input.cursor_location == (0, len("/model "))
+        await settle(pilot, lambda: _labels(app) == ["qwen3:8b", "gemma3:27b"], "models listed")
+        assert switch.switched == []
+        assert app.focused is text_input
+
+
+async def test_tab_completes_the_selected_model_argument() -> None:
+    switch = FakeSwitch()
+    app = PicoApp(Bus(), queue.Queue(), model_switch=switch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        text_input = app.query_one("#user-input", ChatInput)
+        text_input.focus()
+        await pilot.press(*"/model gem")
+        await settle(pilot, lambda: _labels(app) == ["gemma3:27b"], "the list narrows")
+
+        await pilot.press("tab")
+        await settle(pilot, lambda: text_input.text == "/model gemma3:27b", "the name completes")
+
+        assert switch.switched == []
+        assert app.focused is text_input
+
+
+async def test_tab_with_the_menu_closed_moves_focus_and_shift_tab_is_untouched() -> None:
+    app = PicoApp(Bus(), queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        text_input = app.query_one("#user-input", ChatInput)
+        text_input.focus()
+        await pilot.press(*"hello")
+        await pilot.pause()
+        assert not _menu(app).display
+
+        await pilot.press("tab")
+        await pilot.pause()
+        assert text_input.text == "hello"
+        assert app.focused is not text_input
+
+        await pilot.press("shift+tab")
+        await pilot.pause()
+        assert app.focused is text_input
+
+
+async def test_tab_on_an_already_complete_command_changes_nothing() -> None:
+    app = PicoApp(Bus(), queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        text_input = app.query_one("#user-input", ChatInput)
+        text_input.focus()
+        await pilot.press(*"/quit")
+        await settle(pilot, lambda: _labels(app) == ["quit"], "the menu narrows to quit")
+
+        await pilot.press("tab")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert text_input.text == "/quit"
+        assert app.focused is text_input
+        assert app.is_running
+
+
+async def test_tab_on_a_menu_with_no_rows_leaves_the_text_and_focus_alone() -> None:
+    switch = FakeSwitch(names=(), error="connection refused")
+    app = PicoApp(Bus(), queue.Queue(), model_switch=switch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        text_input = app.query_one("#user-input", ChatInput)
+        text_input.focus()
+        await pilot.press(*"/model ")
+        await settle(
+            pilot,
+            lambda: "connection refused" in _menu(app).render().plain,
+            "the error row appears",
+        )
+
+        await pilot.press("tab")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert text_input.text == "/model "
+        assert app.focused is text_input
+        assert switch.switched == []
