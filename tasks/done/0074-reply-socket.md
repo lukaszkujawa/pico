@@ -16,7 +16,7 @@ reply=$(cat ./sock/0.out)
 * **Only accepted, complete answers count as answered.** `AnswerSettled` fires for rejected and intermediate answers too; the writer records an answer only for `accepted and complete`, so the emitted line is the turn's final answer, never a rejection mid-verification.
 * **Scope guard.** No change to the input path, the loop, the event types, or the TUI. No request/response correlation ids, no multiplexing, no non-FIFO transport. The reply FIFO exists only when `--sock` is set.
 
-## [ ] T001 Reply FIFO writer
+## [X] T001 Reply FIFO writer
 
 ### Description
 
@@ -31,7 +31,7 @@ Add `write_fifo(path, bus, shutdown)` to `app.py`, subscribing to the bus and wr
 * When `--sock` is not set, no reply FIFO is created and behaviour is unchanged.
 * `make check` passes.
 
-## [ ] T002 Document the reply channel
+## [X] T002 Document the reply channel
 
 ### Description
 

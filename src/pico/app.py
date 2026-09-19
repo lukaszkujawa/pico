@@ -1,4 +1,5 @@
 import itertools
+import json
 import os
 import queue
 import select
@@ -8,6 +9,7 @@ from collections.abc import Callable
 from pico.config import Config, ConfigError
 from pico.core.actions import register_actions
 from pico.core.bus import Bus
+from pico.core.events import AnswerSettled, RunCancelled, RunFinished, RunStarted
 from pico.core.loop import DEFAULT_LOOP_CONFIG, LoopRunner
 from pico.core.tools import ToolRegistry
 from pico.debug.log import LoggingLLMClient, RunLog
@@ -177,6 +179,40 @@ def read_fifo(path: str, submit: Callable[[str], None], shutdown: threading.Even
         os.close(fd)
 
 
+def _write_reply(path: str, answer: str | None, cause: str | None) -> None:
+    if answer is not None:
+        record: dict[str, str | None] = {"status": "answered", "content": answer, "reason": None}
+    else:
+        record = {"status": "stopped", "content": None, "reason": cause or "no answer"}
+    fd = os.open(path, os.O_WRONLY)
+    try:
+        os.write(fd, (json.dumps(record) + "\n").encode())
+    except BrokenPipeError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def write_fifo(path: str, bus: Bus, shutdown: threading.Event) -> None:
+    answer: str | None = None
+    for event in bus.subscribe():
+        if shutdown.is_set():
+            return
+        match event:
+            case RunStarted():
+                answer = None
+            case AnswerSettled(content=content, accepted=True, complete=True):
+                answer = content
+            case RunFinished(error=error):
+                _write_reply(path, answer, error)
+                answer = None
+            case RunCancelled():
+                _write_reply(path, answer, "cancelled")
+                answer = None
+            case _:
+                pass
+
+
 def _consume_bus_to_log(bus: Bus, run_log: RunLog) -> None:
     for event in bus.subscribe():
         run_log.log(repr(event))
@@ -192,6 +228,11 @@ def run_pico(
     client = build_llm_client(config)
     if sock is not None:
         _create_fifo(sock)
+        try:
+            _create_fifo(sock + ".out")
+        except ConfigError:
+            os.unlink(sock)
+            raise
     bus = Bus()
     conn = connect(config.session_path)
     session_handle = SessionHandle(Session(conn, session_id or new_session_id()))
@@ -237,6 +278,7 @@ def run_pico(
     )
 
     reader_thread: threading.Thread | None = None
+    writer_thread: threading.Thread | None = None
     if sock is not None:
 
         def submit(text: str) -> None:
@@ -246,13 +288,23 @@ def run_pico(
             target=read_fifo, args=(sock, submit, shutdown), daemon=True
         )
         reader_thread.start()
+        writer_thread = threading.Thread(
+            target=write_fifo, args=(sock + ".out", bus, shutdown), daemon=True
+        )
+        writer_thread.start()
 
     try:
         app.run()
     finally:
         shutdown.set()
+        bus.close()
         core_thread.join(timeout=1)
         if reader_thread is not None:
             reader_thread.join(timeout=1)
+        if writer_thread is not None and sock is not None:
+            drain = os.open(sock + ".out", os.O_RDONLY | os.O_NONBLOCK)
+            writer_thread.join(timeout=1)
+            os.close(drain)
         if sock is not None:
             os.unlink(sock)
+            os.unlink(sock + ".out")

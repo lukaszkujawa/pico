@@ -1,3 +1,4 @@
+import json
 import os
 import queue
 import stat
@@ -17,11 +18,12 @@ from pico.app import (
     build_llm_client,
     read_fifo,
     run_pico,
+    write_fifo,
 )
 from pico.app import ModelSwitch as ModelSwitchImpl
 from pico.config import Config, ConfigError
 from pico.core.bus import Bus
-from pico.core.events import RunCancelled, RunFinished, RunStarted
+from pico.core.events import AnswerSettled, RunCancelled, RunFinished, RunStarted
 from pico.core.loop import DEFAULT_LOOP_CONFIG
 from pico.core.loop.prompt import SYSTEM_PROMPT
 from pico.debug.log import LoggingLLMClient, RunLog
@@ -511,6 +513,114 @@ def test_read_fifo_delivers_lines_in_order_across_writers_and_skips_blanks(
     shutdown.set()
     reader.join(timeout=5)
     assert not reader.is_alive()
+
+
+def _start_reply_writer(path: Path) -> tuple[Bus, threading.Thread]:
+    os.mkfifo(path)
+    bus = Bus()
+    writer = threading.Thread(
+        target=write_fifo, args=(str(path), bus, threading.Event()), daemon=True
+    )
+    writer.start()
+    return bus, writer
+
+
+def _tail_replies(path: str, lines: list[str], count: int) -> None:
+    def tail() -> None:
+        for _ in range(count):
+            with open(path) as reply:
+                lines.extend(line.rstrip("\n") for line in reply)
+
+    threading.Thread(target=tail, daemon=True).start()
+
+
+def _finish_reply_writer(bus: Bus, writer: threading.Thread) -> None:
+    bus.close()
+    writer.join(timeout=5)
+    assert not writer.is_alive()
+
+
+def test_write_fifo_emits_one_answered_record_with_newlines_preserved(tmp_path: Path) -> None:
+    bus, writer = _start_reply_writer(tmp_path / "reply.out")
+    lines: list[str] = []
+    _tail_replies(str(tmp_path / "reply.out"), lines, 1)
+
+    bus.publish(RunStarted())
+    bus.publish(AnswerSettled(id="1", content="line one\nline two", accepted=True))
+    bus.publish(RunFinished())
+    wait_until(lambda: len(lines) == 1, "the reply record arrives")
+
+    assert json.loads(lines[0]) == {
+        "status": "answered",
+        "content": "line one\nline two",
+        "reason": None,
+    }
+    _finish_reply_writer(bus, writer)
+
+
+@pytest.mark.parametrize(
+    ("turn_end", "reason"),
+    [
+        (RunFinished(error="run stopped: the budget is spent"), "run stopped: the budget is spent"),
+        (RunFinished(), "no answer"),
+        (RunCancelled(), "cancelled"),
+    ],
+)
+def test_write_fifo_emits_a_stopped_record_when_no_answer_is_accepted(
+    tmp_path: Path, turn_end: RunFinished | RunCancelled, reason: str
+) -> None:
+    bus, writer = _start_reply_writer(tmp_path / "reply.out")
+    lines: list[str] = []
+    _tail_replies(str(tmp_path / "reply.out"), lines, 1)
+
+    bus.publish(RunStarted())
+    bus.publish(AnswerSettled(id="1", content="rejected", accepted=False, reason="needs work"))
+    bus.publish(AnswerSettled(id="2", content="partial", accepted=True, complete=False))
+    bus.publish(turn_end)
+    wait_until(lambda: len(lines) == 1, "the reply record arrives")
+
+    assert json.loads(lines[0]) == {"status": "stopped", "content": None, "reason": reason}
+    _finish_reply_writer(bus, writer)
+
+
+def test_write_fifo_does_not_carry_an_answer_into_the_next_turn(tmp_path: Path) -> None:
+    bus, writer = _start_reply_writer(tmp_path / "reply.out")
+    lines: list[str] = []
+    _tail_replies(str(tmp_path / "reply.out"), lines, 2)
+
+    bus.publish(RunStarted())
+    bus.publish(AnswerSettled(id="1", content="first", accepted=True))
+    bus.publish(RunFinished())
+    bus.publish(RunStarted())
+    bus.publish(RunFinished(error="boom"))
+    wait_until(lambda: len(lines) == 2, "both reply records arrive")
+
+    assert json.loads(lines[0]) == {"status": "answered", "content": "first", "reason": None}
+    assert json.loads(lines[1]) == {"status": "stopped", "content": None, "reason": "boom"}
+    _finish_reply_writer(bus, writer)
+
+
+def test_run_pico_writes_one_reply_per_turn_to_the_out_fifo(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_named_clients(monkeypatch)
+    spy = _spy_on_app_init(monkeypatch)
+    sock = str(tmp_path / "pico.sock")
+    lines: list[str] = []
+
+    def driving_run(self: PicoApp) -> None:
+        assert stat.S_ISFIFO(os.stat(sock + ".out").st_mode)
+        _tail_replies(sock + ".out", lines, 1)
+        spy.queues[0].put("hello")
+        wait_until(lambda: len(lines) == 1, "the reply record arrives")
+
+    monkeypatch.setattr(PicoApp, "run", driving_run)
+
+    run_pico(_config(tmp_path), sock=sock)
+
+    assert json.loads(lines[0]) == {"status": "answered", "content": "qwen3", "reason": None}
+    assert not Path(sock).exists()
+    assert not Path(sock + ".out").exists()
 
 
 async def test_fifo_line_behaves_like_typed_input(tmp_path: Path) -> None:

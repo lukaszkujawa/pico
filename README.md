@@ -37,6 +37,22 @@ uv run python -m pico
 
 Flags: `--debug` writes per-run logs under `logs/`, `--prompt` submits an initial prompt, `--resume` continues a session (see below), `--sock NAME` accepts prompts written to a FIFO. Inside the TUI, `/model` switches the model for the next run, `/quit` exits, and `ctrl+n` starts a fresh conversation.
 
+`--sock NAME` also creates a reply FIFO at `NAME.out`, so another process can drive Pico and read the answer back:
+
+```
+mkdir -p sock
+uv run python -m pico --sock ./sock/0
+```
+
+Then, from another terminal:
+
+```
+echo "What is 17 * 23?" > ./sock/0
+reply=$(cat ./sock/0.out)
+```
+
+Every turn writes exactly one JSON line to `NAME.out`. A turn that ends with an accepted answer emits `{"status": "answered", "content": <answer>, "reason": null}` — the content is JSON-escaped, so it stays on one line even when the answer spans several. A turn that ends without one — budget spent, max steps, error, or cancel — emits `{"status": "stopped", "content": null, "reason": <cause>}`, so a reader is never left waiting. `jq -r .content` extracts the prose from an answered reply.
+
 ## Sessions
 
 Each launch starts a fresh conversation with a new session id, shown under the logo. Earlier conversations stay in the session database at `SESSION_DB_PATH`.

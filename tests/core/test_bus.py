@@ -25,6 +25,18 @@ def test_multiple_subscribers_each_receive_their_own_copy() -> None:
     assert next(second) == RunStarted()
 
 
+def test_close_ends_iteration_after_earlier_events_are_delivered() -> None:
+    bus = Bus()
+    first = bus.subscribe()
+    second = bus.subscribe()
+
+    bus.publish(RunStarted())
+    bus.close()
+
+    assert list(first) == [RunStarted()]
+    assert list(second) == [RunStarted()]
+
+
 def test_publish_from_one_thread_observed_by_subscriber_on_another() -> None:
     bus = Bus()
     subscriber = bus.subscribe()
