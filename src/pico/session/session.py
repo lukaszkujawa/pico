@@ -7,7 +7,6 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from pico.llm.types import Message, Role, ToolCall, ToolResult
-from pico.session.errors import UnknownEventKindError
 from pico.session.events import (
     AssistantMessageRecorded,
     PlanSet,
@@ -16,6 +15,11 @@ from pico.session.events import (
     ToolCallRecorded,
     UserMessageRecorded,
 )
+
+
+class UnknownEventKindError(Exception):
+    pass
+
 
 _EVENT_KINDS: dict[str, type[SessionEvent]] = {
     "UserMessageRecorded": UserMessageRecorded,

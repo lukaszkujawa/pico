@@ -54,7 +54,7 @@ from pico.core.loop.state import (
     Running,
     WindingDown,
 )
-from pico.core.stuckness import NUDGE_THRESHOLD
+from pico.core.loop.stuckness import NUDGE_THRESHOLD
 from pico.core.tools import ToolRegistry
 from pico.llm.budget import estimate_tokens, prompt_budget
 from pico.llm.types import (

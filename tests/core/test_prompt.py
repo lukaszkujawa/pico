@@ -27,14 +27,9 @@ def _session() -> Session:
     return Session(conn, "s1")
 
 
-def test_render_tool_result_full_returns_content_unchanged() -> None:
-    content = "x" * 500
-    assert render_tool_result(content, fact_id=0, level="full") == content
-
-
-def test_render_tool_result_handle_shortens_long_content() -> None:
+def test_render_tool_result_shortens_long_content() -> None:
     content = "y" * 2000
-    rendered = render_tool_result(content, fact_id=3, level="handle")
+    rendered = render_tool_result(content, fact_id=3)
 
     assert len(rendered) < len(content)
     assert "fact 3" in rendered
@@ -42,16 +37,16 @@ def test_render_tool_result_handle_shortens_long_content() -> None:
     assert str(estimate_tokens(content)) in rendered
 
 
-def test_render_tool_result_handle_short_content_not_padded_beyond_overhead() -> None:
+def test_render_tool_result_short_content_not_padded_beyond_overhead() -> None:
     content = "short"
-    rendered = render_tool_result(content, fact_id=0, level="handle")
+    rendered = render_tool_result(content, fact_id=0)
 
     assert rendered.endswith(content)
     assert len(rendered) < len(content) + 150
 
 
-def test_render_tool_result_handle_names_the_same_id_in_summary_and_hint() -> None:
-    rendered = render_tool_result("y" * 2000, fact_id=12, level="handle")
+def test_render_tool_result_names_the_same_id_in_summary_and_hint() -> None:
+    rendered = render_tool_result("y" * 2000, fact_id=12)
 
     assert "fact 12 truncated" in rendered
     assert "call read_fact(12) for the full content" in rendered
@@ -318,9 +313,7 @@ def test_recency_window_evicts_oldest_units_first_and_keeps_the_task() -> None:
         messages[1],
         Message(
             role=Role.TOOL,
-            tool_result=ToolResult(
-                tool_call_id="0", content=render_tool_result("x" * 2_000, 0, "handle")
-            ),
+            tool_result=ToolResult(tool_call_id="0", content=render_tool_result("x" * 2_000, 0)),
         ),
     ]
     budget = _tokens([messages[0], *demoted_pair, *demoted_pair]) + 1

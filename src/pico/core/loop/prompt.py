@@ -1,12 +1,10 @@
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
 
 from pico.core.actions import MAX_DELEGATE_DEPTH, vocabulary
 from pico.core.ledger import BOOKKEEPING_TOOLS, fact_index, facts, plan, render_call, render_plan
-from pico.core.loop.signals import Restrict
-from pico.core.loop.state import Degradation
+from pico.core.loop.state import Degradation, Restrict
 from pico.core.tools import ToolRegistry
 from pico.llm.budget import estimate_tokens, prompt_budget
 from pico.llm.types import Message, Role, ToolCall, ToolResult, ToolSpec
@@ -187,7 +185,7 @@ def _demote_to_handle(body: list[Message], index: int) -> Message:
         role=Role.TOOL,
         tool_result=ToolResult(
             tool_call_id=result.tool_call_id,
-            content=render_tool_result(result.content, fact_id, "handle", signature),
+            content=render_tool_result(result.content, fact_id, signature),
             is_error=False,
             name=result.name,
         ),
@@ -201,11 +199,7 @@ def _call_arguments(body: list[Message], index: int, tool_call_id: str) -> Mappi
     return {}
 
 
-def render_tool_result(
-    content: str, fact_id: int | None, level: Literal["full", "handle"], signature: str = ""
-) -> str:
-    if level == "full":
-        return content
+def render_tool_result(content: str, fact_id: int | None, signature: str = "") -> str:
     tokens = estimate_tokens(content)
     lead = f"{signature} " if signature else ""
     if fact_id is None:

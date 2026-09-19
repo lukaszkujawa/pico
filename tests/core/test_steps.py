@@ -9,14 +9,14 @@ from pico.core.loop.decision import DECISION_GRACE, MAX_CROSSROADS
 from pico.core.loop.prompt import PLAN_INLINE_HINT, PLAN_ORCHESTRATED_HINT, message_text
 from pico.core.loop.runner import LoopRunner
 from pico.core.loop.state import Answered, Cancelled, Failed, StepState
+from pico.core.loop.stuckness import STUCK_THRESHOLD
 from pico.core.loop.subruns import (
     MAX_STEP_ATTEMPTS,
     claim_step_attempt,
     root_task,
 )
-from pico.core.stuckness import STUCK_THRESHOLD
 from pico.core.tools import ToolRegistry
-from pico.llm.errors import LLMError
+from pico.llm.client import LLMError
 from pico.llm.types import (
     GenerationComplete,
     Message,

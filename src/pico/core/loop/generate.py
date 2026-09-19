@@ -15,8 +15,7 @@ from pico.core.loop.decision import Crossroads, IterationView
 from pico.core.loop.policy import restriction
 from pico.core.loop.prompt import Prompt, assemble, reconcile
 from pico.core.loop.runner import LoopRunner, StepOutcome
-from pico.core.loop.signals import Nudge
-from pico.core.loop.state import GenerationState, LastWords, RunState, WindingDown
+from pico.core.loop.state import GenerationState, LastWords, Nudge, RunState, WindingDown
 from pico.llm.budget import prompt_budget
 from pico.llm.types import (
     GenerationComplete,

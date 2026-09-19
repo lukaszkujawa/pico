@@ -5,7 +5,7 @@ import time
 from collections.abc import Sequence
 from pathlib import Path
 
-from pico.core.errors import ToolError
+from pico.core.tools import ToolError
 from pico.session import Session
 
 MAX_ROWS = 50

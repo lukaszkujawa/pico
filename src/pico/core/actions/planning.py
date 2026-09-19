@@ -3,9 +3,8 @@ from dataclasses import dataclass
 from typing import Self
 
 from pico.core.actions.arguments import require, require_str_list
-from pico.core.errors import ToolError
 from pico.core.ledger import plan, render_plan
-from pico.core.tools import Tool
+from pico.core.tools import Tool, ToolError
 from pico.llm.types import ToolSpec
 from pico.session import PlanSet, PlanStepCompleted, Session
 

@@ -3,7 +3,7 @@ import json
 import httpx
 import pytest
 
-from pico.llm.errors import LLMError
+from pico.llm.client import LLMError
 from pico.llm.openai import OpenAIClient
 from pico.llm.types import (
     GenerationComplete,

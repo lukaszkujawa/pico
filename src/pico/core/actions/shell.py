@@ -11,8 +11,8 @@ from typing import IO, Self
 
 from pico.core.actions.arguments import require
 from pico.core.actions.context import ActionContext, ActionResult, RunnerAction
-from pico.core.errors import ToolError
 from pico.core.events import ToolCallResultDelta
+from pico.core.tools import ToolError
 from pico.llm.types import ToolSpec
 
 

@@ -12,8 +12,7 @@ from pico.core.loop import DEFAULT_LOOP_CONFIG, LoopRunner
 from pico.core.tools import ToolRegistry
 from pico.debug.log import LoggingLLMClient, RunLog
 from pico.llm.anthropic import AnthropicClient
-from pico.llm.client import LLMClient
-from pico.llm.errors import LLMError
+from pico.llm.client import LLMClient, LLMError
 from pico.llm.ollama import OllamaClient
 from pico.llm.openai import OpenAIClient
 from pico.session import Session, UserMessageRecorded, connect, new_session_id

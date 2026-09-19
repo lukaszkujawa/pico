@@ -1,7 +1,6 @@
 import pytest
 
-from pico.core.errors import UnknownToolError
-from pico.core.tools import Tool, ToolRegistry
+from pico.core.tools import Tool, ToolRegistry, UnknownToolError
 from pico.llm.types import ToolCall, ToolSpec
 
 

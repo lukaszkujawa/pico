@@ -18,7 +18,7 @@ from pico.core.loop.state import Cancelled
 from pico.core.loop.subruns import (
     step_orchestration_step,
 )
-from pico.llm.errors import LLMError
+from pico.llm.client import LLMError
 from pico.llm.types import (
     GenerationComplete,
     TextDelta,

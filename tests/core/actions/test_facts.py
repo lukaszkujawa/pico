@@ -10,7 +10,6 @@ from pico.core.actions import (
     register_actions,
 )
 from pico.core.bus import Bus
-from pico.core.errors import ToolError
 from pico.core.events import (
     RunCancelled,
 )
@@ -18,8 +17,8 @@ from pico.core.ledger import facts
 from pico.core.loop import DEFAULT_LOOP_CONFIG
 from pico.core.loop.runner import LoopRunner
 from pico.core.loop.state import Answered, Failed
-from pico.core.tools import ToolRegistry
-from pico.llm.errors import LLMError
+from pico.core.tools import ToolError, ToolRegistry
+from pico.llm.client import LLMError
 from pico.llm.types import (
     GenerationComplete,
     Message,

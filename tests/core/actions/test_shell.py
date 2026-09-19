@@ -11,7 +11,6 @@ from pico.core.actions import (
 )
 from pico.core.actions.shell import _read_timeout  # pyright: ignore[reportPrivateUsage]
 from pico.core.bus import Bus
-from pico.core.errors import ToolError
 from pico.core.events import (
     RunFinished,
     ToolCallFinished,
@@ -19,7 +18,7 @@ from pico.core.events import (
 )
 from pico.core.loop import DEFAULT_LOOP_CONFIG
 from pico.core.loop.runner import LoopRunner
-from pico.core.tools import ToolRegistry
+from pico.core.tools import ToolError, ToolRegistry
 from pico.llm.types import (
     GenerationComplete,
     ToolCall,

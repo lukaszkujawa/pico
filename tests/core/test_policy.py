@@ -32,12 +32,11 @@ from pico.core.loop.policy import (
 )
 from pico.core.loop.prompt import transcript_fullness
 from pico.core.loop.runner import LoopConfig, LoopRunner
-from pico.core.loop.signals import Nudge
-from pico.core.loop.state import Answered, Failed, LastWords, Running, WindingDown
+from pico.core.loop.state import Answered, Failed, LastWords, Nudge, Running, WindingDown
+from pico.core.loop.stuckness import NUDGE_THRESHOLD, STUCK_THRESHOLD
 from pico.core.loop.subruns import (
     child_budget,
 )
-from pico.core.stuckness import NUDGE_THRESHOLD, STUCK_THRESHOLD
 from pico.llm.types import (
     GenerationComplete,
     Role,

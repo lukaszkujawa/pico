@@ -7,7 +7,7 @@ from pico.core.actions import (
     ReadFile,
     WriteFile,
 )
-from pico.core.errors import ToolError
+from pico.core.tools import ToolError
 
 
 def test_read_file_from_arguments() -> None:

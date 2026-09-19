@@ -16,9 +16,16 @@ from pico.core.loop.decision import (
 )
 from pico.core.loop.prompt import transcript_fullness
 from pico.core.loop.runner import LoopRunner, StepOutcome
-from pico.core.loop.signals import Nudge, Restrict
-from pico.core.loop.state import Answered, LastWords, Running, RunState, WindingDown
-from pico.core.stuckness import assess
+from pico.core.loop.state import (
+    Answered,
+    LastWords,
+    Nudge,
+    Restrict,
+    Running,
+    RunState,
+    WindingDown,
+)
+from pico.core.loop.stuckness import assess
 from pico.session import Session
 
 BUDGET_WIND_DOWN_FRACTION = 0.8

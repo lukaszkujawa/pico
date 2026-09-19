@@ -17,7 +17,7 @@ from pico.core.loop import DEFAULT_LOOP_CONFIG
 from pico.core.loop.dispatch import MAX_INVALID_ACTION_ATTEMPTS
 from pico.core.loop.runner import LoopRunner
 from pico.core.loop.state import Failed
-from pico.core.stuckness import STUCK_THRESHOLD
+from pico.core.loop.stuckness import STUCK_THRESHOLD
 from pico.core.tools import Tool, ToolRegistry
 from pico.llm.types import (
     GenerationComplete,

@@ -1,8 +1,15 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
-from pico.core.errors import UnknownToolError
 from pico.llm.types import ToolCall, ToolSpec
+
+
+class UnknownToolError(Exception):
+    pass
+
+
+class ToolError(Exception):
+    pass
 
 
 @dataclass(frozen=True)

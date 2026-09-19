@@ -3,8 +3,7 @@ from dataclasses import dataclass
 from typing import Self
 
 from pico.core.actions.arguments import require
-from pico.core.errors import ToolError
-from pico.core.tools import Tool
+from pico.core.tools import Tool, ToolError
 from pico.llm.types import ToolSpec
 
 READ_FILE_SPEC = ToolSpec(

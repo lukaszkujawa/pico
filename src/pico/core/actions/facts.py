@@ -2,11 +2,10 @@ from collections.abc import Mapping
 
 from pico.core.actions.arguments import InvalidActionError, require
 from pico.core.actions.context import ActionContext, ActionResult, RunnerAction
-from pico.core.errors import ToolError
 from pico.core.ledger import facts
 from pico.core.search import search
-from pico.core.tools import Tool
-from pico.llm.errors import LLMError
+from pico.core.tools import Tool, ToolError
+from pico.llm.client import LLMError
 from pico.llm.types import ToolSpec
 from pico.session import Session
 

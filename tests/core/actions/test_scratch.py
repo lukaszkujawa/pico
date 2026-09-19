@@ -7,8 +7,8 @@ from pico.core.actions import (
     load_table_tool,
     sql_tool,
 )
-from pico.core.errors import ToolError
 from pico.core.scratch import MAX_ROWS, Scratch, scratch_path
+from pico.core.tools import ToolError
 from pico.session import (
     Session,
     ToolCallRecorded,

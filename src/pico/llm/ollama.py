@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 
-from pico.llm.errors import LLMError
+from pico.llm.client import LLMError
 from pico.llm.types import (
     GenerationComplete,
     Message,

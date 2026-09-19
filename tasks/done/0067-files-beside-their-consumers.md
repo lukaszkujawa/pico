@@ -11,7 +11,7 @@ Three small placement wrongs and one piece of dead generality. `stuckness.py` si
 * **Mechanical throughout.** No behaviour, text, threshold, or event changes; the diff is moves, import updates, and one parameter deletion. Net line count of `src/pico/core/` decreases.
 * **This milestone follows 0066** (the merge decides where the renderer lives before this deletes its parameter).
 
-## [ ] T001 Moves and folds
+## [X] T001 Moves and folds
 
 ### Description
 
@@ -24,7 +24,7 @@ Move `stuckness.py` into `loop/`; fold `signals.py` into `loop/state.py` and `er
 * `docs/core.md`'s package map reflects the new layout (no core-level `stuckness.py`, no `signals.py`, no `errors.py`).
 * `make check` passes.
 
-## [ ] T002 Drop the dead level
+## [X] T002 Drop the dead level
 
 ### Description
 

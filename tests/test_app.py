@@ -26,7 +26,7 @@ from pico.core.loop import DEFAULT_LOOP_CONFIG
 from pico.core.loop.prompt import SYSTEM_PROMPT
 from pico.debug.log import LoggingLLMClient, RunLog
 from pico.llm.anthropic import AnthropicClient
-from pico.llm.errors import LLMError
+from pico.llm.client import LLMError
 from pico.llm.ollama import OllamaClient
 from pico.llm.openai import OpenAIClient
 from pico.llm.types import (

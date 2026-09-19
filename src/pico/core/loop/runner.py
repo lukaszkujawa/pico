@@ -8,13 +8,14 @@ from pico.core.actions import ResultShape
 from pico.core.bus import Bus
 from pico.core.events import ErrorOccurred, RunCancelled, RunFinished, RunStarted
 from pico.core.loop.decision import DecisionState, IterationView, Quiet
-from pico.core.loop.signals import Nudge, Restrict
 from pico.core.loop.state import (
     Cancelled,
     DispatchState,
     Failed,
     GenerationState,
     LastWords,
+    Nudge,
+    Restrict,
     Running,
     RunState,
     StepState,

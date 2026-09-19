@@ -9,8 +9,7 @@ from pico.core.actions import (
     set_plan_tool,
     vocabulary,
 )
-from pico.core.errors import ToolError
-from pico.core.tools import ToolRegistry
+from pico.core.tools import ToolError, ToolRegistry
 from pico.session import (
     PlanSet,
     PlanStepCompleted,

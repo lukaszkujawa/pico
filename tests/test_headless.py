@@ -1,8 +1,8 @@
 from collections.abc import Iterator
 
-from pico.core.stuckness import STUCK_THRESHOLD
+from pico.core.loop.stuckness import STUCK_THRESHOLD
 from pico.headless import TurnResult, run_turn
-from pico.llm.errors import LLMError
+from pico.llm.client import LLMError
 from pico.llm.types import (
     GenerationComplete,
     Message,

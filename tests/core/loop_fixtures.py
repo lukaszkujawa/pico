@@ -2,14 +2,13 @@ import threading
 from collections.abc import Iterator, Mapping
 
 from pico.core.actions import MAX_DELEGATE_DEPTH, register_actions
-from pico.core.errors import ToolError
 from pico.core.events import (
     BusEvent,
     RunFinished,
 )
 from pico.core.loop.runner import LoopRunner
-from pico.core.tools import Tool, ToolRegistry
-from pico.llm.errors import LLMError
+from pico.core.tools import Tool, ToolError, ToolRegistry
+from pico.llm.client import LLMError
 from pico.llm.types import (
     GenerationComplete,
     Message,

@@ -1,4 +1,4 @@
-from pico.core.stuckness import (
+from pico.core.loop.stuckness import (
     NUDGE_THRESHOLD,
     PLAN_STALL_GENERATIONS,
     STUCK_THRESHOLD,

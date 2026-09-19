@@ -9,7 +9,7 @@ from pico.core.search import (
     SearchCancelled,
     search,
 )
-from pico.llm.errors import LLMError
+from pico.llm.client import LLMError
 from pico.llm.types import GenerationComplete, Message, StreamEvent, TextDelta, ToolSpec
 from pico.session import Session, ToolCallRecorded, connect
 from tests.llm_fakes import NoModels

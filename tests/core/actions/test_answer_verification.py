@@ -2,7 +2,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from pico.core.bus import Bus
-from pico.core.errors import ToolError
 from pico.core.events import (
     AnswerSettled,
     RunFinished,
@@ -10,7 +9,8 @@ from pico.core.events import (
 from pico.core.loop import DEFAULT_LOOP_CONFIG
 from pico.core.loop.runner import LoopRunner
 from pico.core.loop.state import Answered, Failed
-from pico.core.stuckness import STUCK_THRESHOLD
+from pico.core.loop.stuckness import STUCK_THRESHOLD
+from pico.core.tools import ToolError
 from pico.llm.types import (
     GenerationComplete,
     StreamEvent,

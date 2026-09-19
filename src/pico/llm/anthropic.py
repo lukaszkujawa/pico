@@ -6,7 +6,7 @@ from typing import Any, cast
 import httpx
 
 from pico.llm.budget import COMPLETION_RESERVE_CAP, completion_reserve
-from pico.llm.errors import LLMError
+from pico.llm.client import LLMError
 from pico.llm.types import (
     GenerationComplete,
     Message,
