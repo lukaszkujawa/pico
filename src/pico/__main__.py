@@ -1,3 +1,3 @@
-import pico
+from pico.cli import main
 
-pico.main()
+main()

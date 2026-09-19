@@ -8,7 +8,7 @@ Two leftovers from `uv init` still sit in the project's front door. `pyproject.t
 * **The description states what Pico is in one line,** taken from the README's opening: an agentic harness for local and smaller language models. No other metadata changes — version, authors, and readme stay as they are.
 * **Scope guard.** No behaviour changes, no new flags, no restructuring beyond the one module move, no touching `run_pico` or `load_config` themselves. `tach.toml` is adjusted only as far as the moved module requires.
 
-## [ ] T001 CLI out of the package init
+## [X] T001 CLI out of the package init
 
 ### Description
 
@@ -21,7 +21,7 @@ Move the CLI into `pico/cli.py`, empty `__init__.py` of application code, and po
 * `[project.scripts]` reads `pico = "pico.cli:main"`.
 * `make check` passes.
 
-## [ ] T002 Real project description
+## [X] T002 Real project description
 
 ### Description
 
