@@ -55,6 +55,22 @@ log_event() {
   printf '%s  [%s]  %s\n' "$(date +%Y-%m-%dT%H:%M:%S)" "$RUN_ID" "$*" >> "$RUNS_LOG"
 }
 
+HERDR_REPORTING=0
+[[ -n "${HERDR_PANE_ID:-}" ]] && command -v herdr >/dev/null 2>&1 && HERDR_REPORTING=1
+
+report_agent() {
+  (( HERDR_REPORTING )) || return 0
+  herdr pane report-agent "$HERDR_PANE_ID" --source code-loop --agent claude \
+    --state "$1" ${2:+--message "$2"} >/dev/null 2>&1 || true
+}
+
+release_agent() {
+  (( HERDR_REPORTING )) || return 0
+  herdr pane release-agent "$HERDR_PANE_ID" --source code-loop --agent claude >/dev/null 2>&1 || true
+}
+
+trap release_agent EXIT
+
 with_master_lock() {
   local waited=0
   until mkdir "$MASTER_LOCK" 2>/dev/null; do
@@ -241,8 +257,10 @@ for ((step = 1; step <= MAX_STEPS; step++)); do
   } > "$step_dir/prompt.md"
 
   started_at=$SECONDS
+  report_agent working "$task_name"
   run_claude_in_tmux "$session" "$worktree_dir" "$step_dir/prompt.md" "$step_dir"
   claude_exit=$?
+  report_agent idle
   write_step_summary "$step_dir" "$task_name" "$branch_name" "$claude_exit" "$(( SECONDS - started_at ))"
 
   if (( claude_exit != 0 )); then
