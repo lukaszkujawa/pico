@@ -1,7 +1,7 @@
 import json
 import sqlite3
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -15,6 +15,8 @@ from pico.session.events import (
     ToolCallRecorded,
     UserMessageRecorded,
 )
+
+ELIDE_CONTENT_CHARS = 500
 
 
 class UnknownEventKindError(Exception):
@@ -40,6 +42,14 @@ def latest_session_id(conn: sqlite3.Connection) -> str | None:
         "ORDER BY created_at DESC, id DESC LIMIT 1"
     ).fetchone()
     return None if row is None else str(row["session_id"])
+
+
+def _rendered_arguments(name: str, arguments: Mapping[str, object]) -> Mapping[str, object]:
+    content = arguments.get("content")
+    if name != "write_file" or not isinstance(content, str) or len(content) <= ELIDE_CONTENT_CHARS:
+        return arguments
+    stub = f"<{len(content)} chars — on disk at {arguments.get('path')}; read_file to recover>"
+    return {**arguments, "content": stub}
 
 
 def _decode(kind: str, payload: str) -> SessionEvent:
@@ -128,7 +138,7 @@ class Session:
             match event:
                 case UserMessageRecorded(content=content):
                     messages.append(Message(role=Role.USER, content=content))
-                case AssistantMessageRecorded(content=content):
+                case AssistantMessageRecorded(content=content) if content:
                     messages.append(Message(role=Role.ASSISTANT, content=content))
                 case ToolCallRecorded(
                     name=name, arguments=arguments, result=result, is_error=is_error
@@ -137,7 +147,13 @@ class Session:
                     messages.append(
                         Message(
                             role=Role.ASSISTANT,
-                            tool_calls=(ToolCall(id=call_id, name=name, arguments=arguments),),
+                            tool_calls=(
+                                ToolCall(
+                                    id=call_id,
+                                    name=name,
+                                    arguments=_rendered_arguments(name, arguments),
+                                ),
+                            ),
                         )
                     )
                     messages.append(
@@ -148,6 +164,6 @@ class Session:
                             ),
                         )
                     )
-                case PlanSet() | PlanStepCompleted():
+                case AssistantMessageRecorded() | PlanSet() | PlanStepCompleted():
                     pass
         return messages

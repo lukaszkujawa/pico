@@ -8,7 +8,13 @@ from pico.session.events import (
     ToolCallRecorded,
     UserMessageRecorded,
 )
-from pico.session.session import Session, UnknownEventKindError, latest_session_id, new_session_id
+from pico.session.session import (
+    ELIDE_CONTENT_CHARS,
+    Session,
+    UnknownEventKindError,
+    latest_session_id,
+    new_session_id,
+)
 from pico.session.store import connect
 
 
@@ -45,18 +51,36 @@ def test_messages_derives_expected_shape() -> None:
     messages = session.messages()
 
     assert messages[0] == Message(role=Role.USER, content="hi")
-    assert messages[1] == Message(role=Role.ASSISTANT, content="")
-    assert messages[2].role == Role.ASSISTANT
-    assert messages[2].tool_calls == (
-        ToolCall(id=messages[2].tool_calls[0].id, name="echo", arguments={"text": "hi"}),
+    assert messages[1].role == Role.ASSISTANT
+    assert messages[1].tool_calls == (
+        ToolCall(id=messages[1].tool_calls[0].id, name="echo", arguments={"text": "hi"}),
     )
-    assert messages[3] == Message(
+    assert messages[2] == Message(
         role=Role.TOOL,
         tool_result=ToolResult(
-            tool_call_id=messages[2].tool_calls[0].id, content="hi", is_error=False, name="echo"
+            tool_call_id=messages[1].tool_calls[0].id, content="hi", is_error=False, name="echo"
         ),
     )
-    assert messages[4] == Message(role=Role.ASSISTANT, content="done")
+    assert messages[3] == Message(role=Role.ASSISTANT, content="done")
+
+
+def test_messages_skips_thinking_only_assistant_events() -> None:
+    conn = connect(":memory:")
+    session = Session(conn, "s1")
+
+    session.append(UserMessageRecorded(content="hi"))
+    session.append(AssistantMessageRecorded(content="", thinking="pondering"))
+    session.append(ToolCallRecorded(name="echo", arguments={}, result="hi", is_error=False))
+    session.append(AssistantMessageRecorded(content="", thinking="more pondering"))
+    session.append(AssistantMessageRecorded(content="done", thinking=""))
+
+    messages = session.messages()
+
+    assert list(session.events())[1] == AssistantMessageRecorded(content="", thinking="pondering")
+    assert not any(
+        m.role is Role.ASSISTANT and not m.content and not m.tool_calls for m in messages
+    )
+    assert [m.content for m in messages if m.role is Role.ASSISTANT and m.content] == ["done"]
 
 
 def test_different_sessions_on_same_connection_are_isolated() -> None:
@@ -179,6 +203,67 @@ def test_child_session_transcript_is_independent_of_parent() -> None:
         UserMessageRecorded(content="b"),
     ]
     assert list(child.events()) == [UserMessageRecorded(content="c")]
+
+
+def test_messages_elides_write_file_content_over_threshold() -> None:
+    conn = connect(":memory:")
+    session = Session(conn, "s1")
+    content = "x" * (ELIDE_CONTENT_CHARS + 1)
+    session.append(
+        ToolCallRecorded(
+            name="write_file",
+            arguments={"path": "/app/gsearch.py", "content": content},
+            result="ok",
+            is_error=False,
+        )
+    )
+
+    call = session.messages()[0].tool_calls[0]
+
+    assert call.arguments == {
+        "path": "/app/gsearch.py",
+        "content": f"<{len(content)} chars — on disk at /app/gsearch.py; read_file to recover>",
+    }
+    event = next(session.events())
+    assert isinstance(event, ToolCallRecorded)
+    assert event.arguments["content"] == content
+
+
+def test_messages_keeps_write_file_content_at_threshold() -> None:
+    conn = connect(":memory:")
+    session = Session(conn, "s1")
+    content = "y" * ELIDE_CONTENT_CHARS
+    session.append(
+        ToolCallRecorded(
+            name="write_file",
+            arguments={"path": "/app/small.py", "content": content},
+            result="ok",
+            is_error=False,
+        )
+    )
+
+    call = session.messages()[0].tool_calls[0]
+
+    assert call.arguments == {"path": "/app/small.py", "content": content}
+
+
+def test_write_file_rendering_is_identical_as_session_grows() -> None:
+    conn = connect(":memory:")
+    session = Session(conn, "s1")
+    session.append(
+        ToolCallRecorded(
+            name="write_file",
+            arguments={"path": "/app/big.py", "content": "z" * (ELIDE_CONTENT_CHARS * 3)},
+            result="ok",
+            is_error=False,
+        )
+    )
+    short = session.messages()[:2]
+
+    session.append(UserMessageRecorded(content="carry on"))
+    session.append(ToolCallRecorded(name="echo", arguments={}, result="hi", is_error=False))
+
+    assert session.messages()[:2] == short
 
 
 def test_plan_events_round_trip_through_append_and_events() -> None:

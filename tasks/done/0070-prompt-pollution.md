@@ -10,7 +10,7 @@ Two kinds of dead weight ride in every prompt, confirmed by measuring the 26-gen
 * **Scope is `write_file.content` only.** Bulky `shell` heredocs show the same disease (a 2.5KB block in the same run) but lack the clean recovery story — the script may exist only in the command. Generalising the elision is out of scope until evidence shows the model copes without seeing its recent commands echoed.
 * **Behaviour-preserving otherwise.** Tool execution sees full arguments (elision happens at replay, after execution); results, facts, events, and thresholds are unchanged.
 
-## [ ] T001 Skip empty assistant messages
+## [X] T001 Skip empty assistant messages
 
 ### Description
 
@@ -22,7 +22,7 @@ Render `AssistantMessageRecorded` into a prompt message only when its content is
 * No message with `role=ASSISTANT`, empty content, and no tool calls is ever produced by `messages()`, covered by a test replaying a mixed session.
 * `make check` passes.
 
-## [ ] T002 Elide write_file content at replay
+## [X] T002 Elide write_file content at replay
 
 ### Description
 
