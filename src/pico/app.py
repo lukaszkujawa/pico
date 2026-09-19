@@ -2,7 +2,6 @@ import itertools
 import json
 import os
 import queue
-import select
 import threading
 from collections.abc import Callable
 
@@ -155,21 +154,29 @@ def _turn_loop(
         cancel_handle.disarm()
 
 
-def _create_fifo(path: str) -> None:
+def _create_mailbox_file(path: str) -> None:
     try:
-        os.mkfifo(path)
+        with open(path, "a"):
+            pass
     except OSError as error:
-        raise ConfigError(f"cannot create FIFO at {path}: {error}") from error
+        raise ConfigError(f"cannot create mailbox file at {path}: {error}") from error
 
 
-def read_fifo(path: str, submit: Callable[[str], None], shutdown: threading.Event) -> None:
-    fd = os.open(path, os.O_RDWR)
+def open_inbox(path: str) -> int:
+    fd = os.open(path, os.O_RDONLY)
+    os.lseek(fd, 0, os.SEEK_END)
+    return fd
+
+
+def read_inbox(fd: int, submit: Callable[[str], None], shutdown: threading.Event) -> None:
     buffer = b""
     try:
         while not shutdown.is_set():
-            if not select.select([fd], [], [], 0.1)[0]:
+            chunk = os.read(fd, 4096)
+            if len(chunk) == 0:
+                shutdown.wait(0.1)
                 continue
-            buffer += os.read(fd, 4096)
+            buffer += chunk
             while b"\n" in buffer:
                 line, _, buffer = buffer.partition(b"\n")
                 text = line.decode()
@@ -184,16 +191,11 @@ def _write_reply(path: str, answer: str | None, cause: str | None) -> None:
         record: dict[str, str | None] = {"status": "answered", "content": answer, "reason": None}
     else:
         record = {"status": "stopped", "content": None, "reason": cause or "no answer"}
-    fd = os.open(path, os.O_WRONLY)
-    try:
-        os.write(fd, (json.dumps(record) + "\n").encode())
-    except BrokenPipeError:
-        pass
-    finally:
-        os.close(fd)
+    with open(path, "a") as outbox:
+        outbox.write(json.dumps(record) + "\n")
 
 
-def write_fifo(path: str, bus: Bus, shutdown: threading.Event) -> None:
+def write_outbox(path: str, bus: Bus, shutdown: threading.Event) -> None:
     answer: str | None = None
     for event in bus.subscribe():
         if shutdown.is_set():
@@ -223,16 +225,12 @@ def run_pico(
     debug: bool = False,
     session_id: str | None = None,
     initial_prompt: str | None = None,
-    sock: str | None = None,
+    mailbox: str | None = None,
 ) -> None:
     client = build_llm_client(config)
-    if sock is not None:
-        _create_fifo(sock)
-        try:
-            _create_fifo(sock + ".out")
-        except ConfigError:
-            os.unlink(sock)
-            raise
+    if mailbox is not None:
+        _create_mailbox_file(mailbox)
+        _create_mailbox_file(mailbox + ".out")
     bus = Bus()
     conn = connect(config.session_path)
     session_handle = SessionHandle(Session(conn, session_id or new_session_id()))
@@ -279,17 +277,17 @@ def run_pico(
 
     reader_thread: threading.Thread | None = None
     writer_thread: threading.Thread | None = None
-    if sock is not None:
+    if mailbox is not None:
 
         def submit(text: str) -> None:
             app.post_message(UserInputSubmitted(text=text))
 
         reader_thread = threading.Thread(
-            target=read_fifo, args=(sock, submit, shutdown), daemon=True
+            target=read_inbox, args=(open_inbox(mailbox), submit, shutdown), daemon=True
         )
         reader_thread.start()
         writer_thread = threading.Thread(
-            target=write_fifo, args=(sock + ".out", bus, shutdown), daemon=True
+            target=write_outbox, args=(mailbox + ".out", bus, shutdown), daemon=True
         )
         writer_thread.start()
 
@@ -301,10 +299,8 @@ def run_pico(
         core_thread.join(timeout=1)
         if reader_thread is not None:
             reader_thread.join(timeout=1)
-        if writer_thread is not None and sock is not None:
-            drain = os.open(sock + ".out", os.O_RDONLY | os.O_NONBLOCK)
+        if writer_thread is not None:
             writer_thread.join(timeout=1)
-            os.close(drain)
-        if sock is not None:
-            os.unlink(sock)
-            os.unlink(sock + ".out")
+        if mailbox is not None:
+            os.unlink(mailbox)
+            os.unlink(mailbox + ".out")

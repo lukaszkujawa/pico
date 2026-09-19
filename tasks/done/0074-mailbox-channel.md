@@ -21,7 +21,7 @@ The flag is renamed `--sock` → `--mailbox` because it now names *this agent's*
 * **Docker shares one host directory read-write into every container.** `bin/run_in_docker.sh` bind-mounts `./sock` (host) at the container mailbox dir and points `--mailbox` at a file inside it. Every container mounting the same host `./sock` sees every mailbox, so agents address each other by name. The tmpfs, the `--name`/`docker exec` forwarder, and the `forward_sock`/`cleanup`-of-forwarder machinery are deleted.
 * **Scope guard.** No request/response correlation ids, no multiplexing beyond one line per turn, no change to the loop, event types, or TUI. No network transport. Files grow unbounded within a run; truncation/rotation is out of scope (a run starts by seeking to end, so growth is harmless).
 
-## [ ] T001 Append-log inbox reader
+## [X] T001 Append-log inbox reader
 
 ### Description
 
@@ -34,7 +34,7 @@ Replace the FIFO input path in `app.py` with a tail-following reader over a plai
 * No FIFO is created anywhere; the inbox is an ordinary file.
 * `make check` passes.
 
-## [ ] T002 Outbox writer
+## [X] T002 Outbox writer
 
 ### Description
 
@@ -47,7 +47,7 @@ Add a bus subscriber in `app.py` that appends one JSON line per turn to the outb
 * Exactly one line is appended per turn; a rejected or intermediate `AnswerSettled` never emits on its own.
 * `make check` passes.
 
-## [ ] T003 Rename `--sock` to `--mailbox`
+## [X] T003 Rename `--sock` to `--mailbox`
 
 ### Description
 
@@ -60,7 +60,7 @@ Rename the CLI argument in `pico/__init__.py` and the `sock` parameter thread th
 * The inbox and outbox files are created under the mailbox path and cleaned up on exit.
 * `make check` passes.
 
-## [ ] T004 Docker shares one mailbox directory
+## [X] T004 Docker shares one mailbox directory
 
 ### Description
 
@@ -74,7 +74,7 @@ Rewrite the mailbox handling in `bin/run_in_docker.sh` to bind-mount the host `.
 * The `run_in_docker.sh` usage text and the `Makefile` `--sock` examples are updated to `--mailbox` with the `>>` append form.
 * `make check` passes.
 
-## [ ] T005 Document the mailbox
+## [X] T005 Document the mailbox
 
 ### Description
 

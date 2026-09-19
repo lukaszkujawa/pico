@@ -35,23 +35,23 @@ Then run the TUI:
 uv run python -m pico
 ```
 
-Flags: `--debug` writes per-run logs under `logs/`, `--prompt` submits an initial prompt, `--resume` continues a session (see below), `--sock NAME` accepts prompts written to a FIFO. Inside the TUI, `/model` switches the model for the next run, `/quit` exits, and `ctrl+n` starts a fresh conversation.
+Flags: `--debug` writes per-run logs under `logs/`, `--prompt` submits an initial prompt, `--resume` continues a session (see below), `--mailbox NAME` gives the agent an addressable mailbox. Inside the TUI, `/model` switches the model for the next run, `/quit` exits, and `ctrl+n` starts a fresh conversation.
 
-`--sock NAME` also creates a reply FIFO at `NAME.out`, so another process can drive Pico and read the answer back:
+`--mailbox NAME` creates two plain append-log files: an inbox at `NAME` and an outbox at `NAME.out`. Another process prompts the agent by appending a line to the inbox and reads its replies from the outbox:
 
 ```
 mkdir -p sock
-uv run python -m pico --sock ./sock/0
+uv run python -m pico --mailbox ./sock/worker
 ```
 
 Then, from another terminal:
 
 ```
-echo "What is 17 * 23?" > ./sock/0
-reply=$(cat ./sock/0.out)
+echo "What is 17 * 23?" >> ./sock/worker
+tail -f ./sock/worker.out
 ```
 
-Every turn writes exactly one JSON line to `NAME.out`. A turn that ends with an accepted answer emits `{"status": "answered", "content": <answer>, "reason": null}` — the content is JSON-escaped, so it stays on one line even when the answer spans several. A turn that ends without one — budget spent, max steps, error, or cancel — emits `{"status": "stopped", "content": null, "reason": <cause>}`, so a reader is never left waiting. `jq -r .content` extracts the prose from an answered reply.
+The inbox is read from the end, so lines already in the file when Pico starts are ignored; each line appended afterwards is submitted as a prompt. Every turn appends exactly one JSON line to the outbox. A turn that ends with an accepted answer emits `{"status": "answered", "content": <answer>, "reason": null}` — the content is JSON-escaped, so it stays on one line even when the answer spans several. A turn that ends without one — budget spent, max steps, error, or cancel — emits `{"status": "stopped", "content": null, "reason": <cause>}`, so a reader is never left waiting. `jq -r .content` extracts the prose from an answered reply. Both files are removed when Pico exits.
 
 ## Sessions
 
@@ -66,12 +66,22 @@ uv run python -m pico --resume <session>  # a specific session id
 
 `make run_in_docker` runs Pico in a container with no local Python or `uv` needed. It builds the image (tagged `pico:local`) and drops you into the same TUI, reading the same `.env`. The session database persists in `.docker_data/` on the host, so previous runs stay resumable by id.
 
-Pass extra flags through `ARGS`. `--sock NAME` lets you drive the running container from another terminal — prompts written to `./sock/NAME` on the host are forwarded into the container and submitted as if typed:
+Pass extra flags through `ARGS`. `--mailbox NAME` bind-mounts the host `./sock` directory into the container and puts the agent's inbox and outbox inside it, so you can drive the running container from another terminal:
 
 ```
-make run_in_docker ARGS="--debug --sock 0"
-echo "What is 17 * 23?" > ./sock/0
+make run_in_docker ARGS="--debug --mailbox worker"
+echo "What is 17 * 23?" >> ./sock/worker
+tail -f ./sock/worker.out
 ```
+
+Every container started this way shares the same host `./sock`, so agents see each other's mailboxes and can address one another by name — a full mesh with no extra plumbing:
+
+```
+make run_in_docker ARGS="--mailbox a"   # terminal 1
+make run_in_docker ARGS="--mailbox b"   # terminal 2
+```
+
+Agent `a` prompts agent `b` by appending to `/run/pico/b` from inside its container (the shared directory is mounted at `/run/pico`) and reads the reply from `/run/pico/b.out`; on the host the same files appear as `./sock/b` and `./sock/b.out`.
 
 To reclaim space, `docker rmi pico:local` or `docker image prune`.
 

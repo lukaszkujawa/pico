@@ -45,9 +45,11 @@ run:
 # Example
 # make run_in_docker ARGS="--debug --ctx 16000 --prompt 'Fetch code from https://github.com/lukaszkujawa/pico and review it. Install tools if you need any, you are root.'"
 #
-# --sock NAME accepts prompts on ./sock/NAME while the container runs:
-# make run_in_docker ARGS="--debug --sock 0"
-# echo "What is 17 * 23?" > ./sock/0
+# --mailbox NAME accepts prompts appended to ./sock/NAME while the container runs
+# and replies on ./sock/NAME.out:
+# make run_in_docker ARGS="--debug --mailbox worker"
+# echo "What is 17 * 23?" >> ./sock/worker
+# tail -f ./sock/worker.out
 run_in_docker:
 	bin/run_in_docker.sh $(ARGS)
 

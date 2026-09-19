@@ -1,7 +1,5 @@
 import json
-import os
 import queue
-import stat
 import threading
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -16,9 +14,10 @@ from pico.app import (
     SessionHandle,
     UnsupportedVendorError,
     build_llm_client,
-    read_fifo,
+    open_inbox,
+    read_inbox,
     run_pico,
-    write_fifo,
+    write_outbox,
 )
 from pico.app import ModelSwitch as ModelSwitchImpl
 from pico.config import Config, ConfigError
@@ -492,23 +491,46 @@ def test_session_handle_start_new_switches_to_an_empty_session(tmp_path: Path) -
     assert len(original.messages()) == 1
 
 
-def test_read_fifo_delivers_lines_in_order_across_writers_and_skips_blanks(
+def test_read_inbox_delivers_appended_lines_in_order_and_skips_blanks_and_backlog(
     tmp_path: Path,
 ) -> None:
-    path = tmp_path / "pico.sock"
-    os.mkfifo(path)
+    path = tmp_path / "worker"
+    path.write_text("stale backlog\n")
     shutdown = threading.Event()
     lines: list[str] = []
-    reader = threading.Thread(target=read_fifo, args=(str(path), lines.append, shutdown))
+    reader = threading.Thread(
+        target=read_inbox, args=(open_inbox(str(path)), lines.append, shutdown)
+    )
     reader.start()
 
-    with open(path, "w") as writer:
+    with open(path, "a") as writer:
         writer.write("first\nsecond\n")
     wait_until(lambda: lines == ["first", "second"], "both lines are delivered")
 
-    with open(path, "w") as writer:
+    with open(path, "a") as writer:
         writer.write("   \n\nthird\n")
-    wait_until(lambda: lines == ["first", "second", "third"], "the post-EOF line is delivered")
+    wait_until(lambda: lines == ["first", "second", "third"], "the later append is delivered")
+
+    shutdown.set()
+    reader.join(timeout=5)
+    assert not reader.is_alive()
+
+
+def test_read_inbox_holds_a_partial_line_until_its_newline_arrives(tmp_path: Path) -> None:
+    path = tmp_path / "worker"
+    path.touch()
+    shutdown = threading.Event()
+    lines: list[str] = []
+    reader = threading.Thread(
+        target=read_inbox, args=(open_inbox(str(path)), lines.append, shutdown)
+    )
+    reader.start()
+
+    with open(path, "a") as writer:
+        writer.write("partial")
+    with open(path, "a") as writer:
+        writer.write(" line\n")
+    wait_until(lambda: lines == ["partial line"], "the completed line is delivered")
 
     shutdown.set()
     reader.join(timeout=5)
@@ -516,22 +538,18 @@ def test_read_fifo_delivers_lines_in_order_across_writers_and_skips_blanks(
 
 
 def _start_reply_writer(path: Path) -> tuple[Bus, threading.Thread]:
-    os.mkfifo(path)
     bus = Bus()
     writer = threading.Thread(
-        target=write_fifo, args=(str(path), bus, threading.Event()), daemon=True
+        target=write_outbox, args=(str(path), bus, threading.Event()), daemon=True
     )
     writer.start()
     return bus, writer
 
 
-def _tail_replies(path: str, lines: list[str], count: int) -> None:
-    def tail() -> None:
-        for _ in range(count):
-            with open(path) as reply:
-                lines.extend(line.rstrip("\n") for line in reply)
-
-    threading.Thread(target=tail, daemon=True).start()
+def _replies(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    return path.read_text().splitlines()
 
 
 def _finish_reply_writer(bus: Bus, writer: threading.Thread) -> None:
@@ -540,17 +558,16 @@ def _finish_reply_writer(bus: Bus, writer: threading.Thread) -> None:
     assert not writer.is_alive()
 
 
-def test_write_fifo_emits_one_answered_record_with_newlines_preserved(tmp_path: Path) -> None:
-    bus, writer = _start_reply_writer(tmp_path / "reply.out")
-    lines: list[str] = []
-    _tail_replies(str(tmp_path / "reply.out"), lines, 1)
+def test_write_outbox_emits_one_answered_record_with_newlines_preserved(tmp_path: Path) -> None:
+    outbox = tmp_path / "reply.out"
+    bus, writer = _start_reply_writer(outbox)
 
     bus.publish(RunStarted())
     bus.publish(AnswerSettled(id="1", content="line one\nline two", accepted=True))
     bus.publish(RunFinished())
-    wait_until(lambda: len(lines) == 1, "the reply record arrives")
+    wait_until(lambda: len(_replies(outbox)) == 1, "the reply record arrives")
 
-    assert json.loads(lines[0]) == {
+    assert json.loads(_replies(outbox)[0]) == {
         "status": "answered",
         "content": "line one\nline two",
         "reason": None,
@@ -566,66 +583,70 @@ def test_write_fifo_emits_one_answered_record_with_newlines_preserved(tmp_path: 
         (RunCancelled(), "cancelled"),
     ],
 )
-def test_write_fifo_emits_a_stopped_record_when_no_answer_is_accepted(
+def test_write_outbox_emits_a_stopped_record_when_no_answer_is_accepted(
     tmp_path: Path, turn_end: RunFinished | RunCancelled, reason: str
 ) -> None:
-    bus, writer = _start_reply_writer(tmp_path / "reply.out")
-    lines: list[str] = []
-    _tail_replies(str(tmp_path / "reply.out"), lines, 1)
+    outbox = tmp_path / "reply.out"
+    bus, writer = _start_reply_writer(outbox)
 
     bus.publish(RunStarted())
     bus.publish(AnswerSettled(id="1", content="rejected", accepted=False, reason="needs work"))
     bus.publish(AnswerSettled(id="2", content="partial", accepted=True, complete=False))
     bus.publish(turn_end)
-    wait_until(lambda: len(lines) == 1, "the reply record arrives")
+    wait_until(lambda: len(_replies(outbox)) == 1, "the reply record arrives")
 
-    assert json.loads(lines[0]) == {"status": "stopped", "content": None, "reason": reason}
+    assert json.loads(_replies(outbox)[0]) == {
+        "status": "stopped",
+        "content": None,
+        "reason": reason,
+    }
     _finish_reply_writer(bus, writer)
 
 
-def test_write_fifo_does_not_carry_an_answer_into_the_next_turn(tmp_path: Path) -> None:
-    bus, writer = _start_reply_writer(tmp_path / "reply.out")
-    lines: list[str] = []
-    _tail_replies(str(tmp_path / "reply.out"), lines, 2)
+def test_write_outbox_does_not_carry_an_answer_into_the_next_turn(tmp_path: Path) -> None:
+    outbox = tmp_path / "reply.out"
+    bus, writer = _start_reply_writer(outbox)
 
     bus.publish(RunStarted())
     bus.publish(AnswerSettled(id="1", content="first", accepted=True))
     bus.publish(RunFinished())
     bus.publish(RunStarted())
     bus.publish(RunFinished(error="boom"))
-    wait_until(lambda: len(lines) == 2, "both reply records arrive")
+    wait_until(lambda: len(_replies(outbox)) == 2, "both reply records arrive")
 
+    lines = _replies(outbox)
     assert json.loads(lines[0]) == {"status": "answered", "content": "first", "reason": None}
     assert json.loads(lines[1]) == {"status": "stopped", "content": None, "reason": "boom"}
     _finish_reply_writer(bus, writer)
 
 
-def test_run_pico_writes_one_reply_per_turn_to_the_out_fifo(
+def test_run_pico_writes_one_reply_per_turn_to_the_outbox(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _patch_named_clients(monkeypatch)
     spy = _spy_on_app_init(monkeypatch)
-    sock = str(tmp_path / "pico.sock")
+    mailbox = str(tmp_path / "worker")
+    outbox = tmp_path / "worker.out"
     lines: list[str] = []
 
     def driving_run(self: PicoApp) -> None:
-        assert stat.S_ISFIFO(os.stat(sock + ".out").st_mode)
-        _tail_replies(sock + ".out", lines, 1)
+        assert outbox.is_file()
         spy.queues[0].put("hello")
-        wait_until(lambda: len(lines) == 1, "the reply record arrives")
+        wait_until(lambda: len(_replies(outbox)) == 1, "the reply record arrives")
+        lines.extend(_replies(outbox))
 
     monkeypatch.setattr(PicoApp, "run", driving_run)
 
-    run_pico(_config(tmp_path), sock=sock)
+    run_pico(_config(tmp_path), mailbox=mailbox)
 
     assert json.loads(lines[0]) == {"status": "answered", "content": "qwen3", "reason": None}
-    assert not Path(sock).exists()
-    assert not Path(sock + ".out").exists()
+    assert not Path(mailbox).exists()
+    assert not outbox.exists()
 
 
-async def test_fifo_line_behaves_like_typed_input(tmp_path: Path) -> None:
-    path = tmp_path / "pico.sock"
-    os.mkfifo(path)
+async def test_inbox_line_behaves_like_typed_input(tmp_path: Path) -> None:
+    path = tmp_path / "worker"
+    path.touch()
     input_queue: queue.Queue[str] = queue.Queue()
     app = PicoApp(Bus(), input_queue)
     shutdown = threading.Event()
@@ -633,11 +654,13 @@ async def test_fifo_line_behaves_like_typed_input(tmp_path: Path) -> None:
     def submit(text: str) -> None:
         app.post_message(UserInputSubmitted(text=text))
 
-    reader = threading.Thread(target=read_fifo, args=(str(path), submit, shutdown), daemon=True)
+    reader = threading.Thread(
+        target=read_inbox, args=(open_inbox(str(path)), submit, shutdown), daemon=True
+    )
     try:
         async with app.run_test() as pilot:
             reader.start()
-            with open(path, "w") as writer:
+            with open(path, "a") as writer:
                 writer.write("hello\nworld\n")
             await settle(pilot, lambda: len(app.query(UserPane)) == 2, "both user panes appear")
             panes = list(app.query(UserPane))
@@ -651,11 +674,11 @@ async def test_fifo_line_behaves_like_typed_input(tmp_path: Path) -> None:
     assert not reader.is_alive()
 
 
-async def test_fifo_line_starting_with_a_slash_is_a_prompt_not_a_command(
+async def test_inbox_line_starting_with_a_slash_is_a_prompt_not_a_command(
     tmp_path: Path,
 ) -> None:
-    path = tmp_path / "pico.sock"
-    os.mkfifo(path)
+    path = tmp_path / "worker"
+    path.touch()
     input_queue: queue.Queue[str] = queue.Queue()
     app = PicoApp(Bus(), input_queue)
     shutdown = threading.Event()
@@ -663,11 +686,13 @@ async def test_fifo_line_starting_with_a_slash_is_a_prompt_not_a_command(
     def submit(text: str) -> None:
         app.post_message(UserInputSubmitted(text=text))
 
-    reader = threading.Thread(target=read_fifo, args=(str(path), submit, shutdown), daemon=True)
+    reader = threading.Thread(
+        target=read_inbox, args=(open_inbox(str(path)), submit, shutdown), daemon=True
+    )
     try:
         async with app.run_test() as pilot:
             reader.start()
-            with open(path, "w") as writer:
+            with open(path, "a") as writer:
                 writer.write("/work/scheduler.py\n")
             await settle(pilot, lambda: len(app.query(UserPane)) == 1, "the user pane appears")
             assert not app.query(SystemPane)
@@ -678,14 +703,15 @@ async def test_fifo_line_starting_with_a_slash_is_a_prompt_not_a_command(
     assert not reader.is_alive()
 
 
-def test_run_pico_wires_the_fifo_to_the_app_and_cleans_up(
+def test_run_pico_wires_the_inbox_to_the_app_and_cleans_up(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     release = threading.Event()
     release.set()
     _patch_ollama_client(monkeypatch, release)
 
-    sock = str(tmp_path / "pico.sock")
+    mailbox = str(tmp_path / "worker")
+    Path(mailbox).write_text("stale backlog\n")
     submitted: list[str] = []
 
     def capturing_post_message(self: PicoApp, message: TextualMessage) -> bool:
@@ -701,29 +727,27 @@ def test_run_pico_wires_the_fifo_to_the_app_and_cleans_up(
         threads.append(self)
 
     def driving_run(self: PicoApp) -> None:
-        assert stat.S_ISFIFO(os.stat(sock).st_mode)
-        with open(sock, "w") as writer:
-            writer.write("hello from fifo\n")
-        wait_until(lambda: submitted == ["hello from fifo"], "the line reaches the app")
+        assert Path(mailbox).is_file()
+        with open(mailbox, "a") as writer:
+            writer.write("hello from inbox\n")
+        wait_until(lambda: submitted == ["hello from inbox"], "the line reaches the app")
 
     monkeypatch.setattr(PicoApp, "post_message", capturing_post_message)
     monkeypatch.setattr(threading.Thread, "__init__", tracking_init)
     monkeypatch.setattr(PicoApp, "run", driving_run)
 
-    run_pico(_config(tmp_path), sock=sock)
+    run_pico(_config(tmp_path), mailbox=mailbox)
 
-    assert submitted == ["hello from fifo"]
-    assert not Path(sock).exists()
+    assert submitted == ["hello from inbox"]
+    assert not Path(mailbox).exists()
     for thread in threads:
         thread.join(timeout=5)
         assert not thread.is_alive()
 
 
-def test_run_pico_fails_before_starting_threads_when_sock_path_exists(
+def test_run_pico_fails_before_starting_threads_when_mailbox_dir_is_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    sock = tmp_path / "pico.sock"
-    sock.write_text("not a fifo")
     started: list[bool] = []
 
     def tracking_start(self: threading.Thread) -> None:
@@ -731,14 +755,13 @@ def test_run_pico_fails_before_starting_threads_when_sock_path_exists(
 
     monkeypatch.setattr(threading.Thread, "start", tracking_start)
 
-    with pytest.raises(ConfigError, match="cannot create FIFO"):
-        run_pico(_config(tmp_path), sock=str(sock))
+    with pytest.raises(ConfigError, match="cannot create mailbox file"):
+        run_pico(_config(tmp_path), mailbox=str(tmp_path / "missing" / "worker"))
 
     assert started == []
-    assert sock.read_text() == "not a fifo"
 
 
-def test_run_pico_without_sock_creates_no_fifo(
+def test_run_pico_without_mailbox_creates_no_mailbox_files(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     release = threading.Event()
@@ -752,7 +775,7 @@ def test_run_pico_without_sock_creates_no_fifo(
 
     run_pico(_config(tmp_path))
 
-    assert not any(stat.S_ISFIFO(entry.stat().st_mode) for entry in tmp_path.iterdir())
+    assert all(entry.name.startswith("session.db") for entry in tmp_path.iterdir())
 
 
 def test_run_pico_hands_the_configured_context_size_to_the_tui(

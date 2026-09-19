@@ -21,13 +21,13 @@ def main() -> None:
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--resume", nargs="?", const=RESUME_LATEST, default=None)
     parser.add_argument("--prompt", default=None)
-    parser.add_argument("--sock", default=None)
+    parser.add_argument("--mailbox", default=None)
     args = parser.parse_args()
 
     debug: bool = args.debug
     resume: str | None = args.resume
     prompt: str | None = args.prompt
-    sock: str | None = args.sock
+    mailbox: str | None = args.mailbox
 
     try:
         config = load_config()
@@ -36,7 +36,7 @@ def main() -> None:
             debug=debug,
             session_id=_resolve_session_id(config, resume),
             initial_prompt=prompt,
-            sock=sock,
+            mailbox=mailbox,
         )
     except ConfigError as error:
         print(f"pico: {error}", file=sys.stderr)
