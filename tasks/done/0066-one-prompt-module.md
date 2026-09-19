@@ -10,7 +10,7 @@
 * **Pure relocation.** No prompt content, budget math, degradation behaviour, or message order changes. Tests move with their subjects; assertions change only in import paths.
 * **`docs/core.md` follows.** The package map loses `context.py` and shows prompt compilation as one box inside the loop.
 
-## [ ] T001 Merge and rehome
+## [X] T001 Merge and rehome
 
 ### Description
 
@@ -24,7 +24,7 @@ Merge `context.py` into `loop/prompt.py` entry-point-first; move `fact_index` to
 * No import cycles (`make check` passes, which includes the linter's cycle detection if any; otherwise demonstrated by clean imports).
 * `make check` passes.
 
-## [ ] T002 The map matches the territory
+## [X] T002 The map matches the territory
 
 ### Description
 

@@ -2,8 +2,8 @@ import re
 import threading
 from collections.abc import Callable, Iterator
 
-from pico.core.context import fact_index, prompt_budget
-from pico.core.ledger import Fact, facts, render_call
+from pico.core.ledger import Fact, fact_index, facts, render_call
+from pico.llm.budget import prompt_budget
 from pico.llm.client import LLMClient
 from pico.llm.types import Message, Role, TextDelta
 from pico.session import Session

@@ -1,8 +1,12 @@
 from dataclasses import dataclass, field
 
-from pico.core.context import Degradation
-
 DEFAULT_CHARS_PER_TOKEN = 4.0
+
+
+@dataclass
+class Degradation:
+    demoted: set[int] = field(default_factory=set[int])
+    cut: int = 0
 
 
 @dataclass(frozen=True)

@@ -3,14 +3,10 @@ from collections.abc import Iterator
 
 from pico.core.actions import MAX_DELEGATE_DEPTH, register_actions
 from pico.core.bus import Bus
-from pico.core.context import (
-    PLAN_INLINE_HINT,
-    PLAN_ORCHESTRATED_HINT,
-    message_text,
-)
 from pico.core.ledger import Plan, PlanStep, facts
 from pico.core.loop import DEFAULT_LOOP_CONFIG
 from pico.core.loop.decision import DECISION_GRACE, MAX_CROSSROADS
+from pico.core.loop.prompt import PLAN_INLINE_HINT, PLAN_ORCHESTRATED_HINT, message_text
 from pico.core.loop.runner import LoopRunner
 from pico.core.loop.state import Answered, Cancelled, Failed, StepState
 from pico.core.loop.subruns import (

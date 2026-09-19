@@ -21,9 +21,9 @@ from pico.app import (
 from pico.app import ModelSwitch as ModelSwitchImpl
 from pico.config import Config, ConfigError
 from pico.core.bus import Bus
-from pico.core.context import SYSTEM_PROMPT
 from pico.core.events import RunCancelled, RunFinished, RunStarted
 from pico.core.loop import DEFAULT_LOOP_CONFIG
+from pico.core.loop.prompt import SYSTEM_PROMPT
 from pico.debug.log import LoggingLLMClient, RunLog
 from pico.llm.anthropic import AnthropicClient
 from pico.llm.errors import LLMError

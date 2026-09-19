@@ -1,11 +1,6 @@
 from pathlib import Path
 
-from pico.core.context import (
-    compile_context,
-    estimate_tokens,
-    message_text,
-    prompt_budget,
-)
+from pico.core.loop.prompt import compile_context, message_text
 from pico.evals.tasks import (
     AUTHORITATIVE_MARK,
     BROKEN_MODULE,
@@ -28,6 +23,7 @@ from pico.evals.tasks import (
     TALLY_FILES,
     EvalTask,
 )
+from pico.llm.budget import estimate_tokens, prompt_budget
 from pico.session import Session, ToolCallRecorded, UserMessageRecorded, connect
 
 

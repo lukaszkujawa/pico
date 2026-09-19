@@ -3,13 +3,6 @@ from collections.abc import Iterator
 
 from pico.core.actions import MAX_DELEGATE_DEPTH, register_actions, vocabulary
 from pico.core.bus import Bus
-from pico.core.context import (
-    SYSTEM_PROMPT,
-    compile_context,
-    estimate_tokens,
-    message_text,
-    prompt_budget,
-)
 from pico.core.events import (
     AssistantTextDelta,
     AssistantTextFinished,
@@ -42,7 +35,15 @@ from pico.core.loop.generate import (
     record,
 )
 from pico.core.loop.policy import policy_step
-from pico.core.loop.prompt import MAX_CHARS_PER_TOKEN, MIN_CHARS_PER_TOKEN, reconcile, specs_text
+from pico.core.loop.prompt import (
+    MAX_CHARS_PER_TOKEN,
+    MIN_CHARS_PER_TOKEN,
+    SYSTEM_PROMPT,
+    compile_context,
+    message_text,
+    reconcile,
+    specs_text,
+)
 from pico.core.loop.runner import LoopConfig, LoopRunner
 from pico.core.loop.state import (
     DEFAULT_CHARS_PER_TOKEN,
@@ -55,6 +56,7 @@ from pico.core.loop.state import (
 )
 from pico.core.stuckness import NUDGE_THRESHOLD
 from pico.core.tools import ToolRegistry
+from pico.llm.budget import estimate_tokens, prompt_budget
 from pico.llm.types import (
     GenerationComplete,
     Message,

@@ -1,19 +1,16 @@
 import random
 from itertools import pairwise
 
-from pico.core.context import (
-    Degradation,
+from pico.core.ledger import facts
+from pico.core.loop.prompt import (
     compile_context,
-    estimate_tokens,
-    fact_index,
     message_text,
     message_tokens,
-    prompt_budget,
     recency_window,
     render_tool_result,
 )
-from pico.core.ledger import Fact, facts
-from pico.llm.budget import COMPLETION_RESERVE_CAP, COMPLETION_RESERVE_FRACTION
+from pico.core.loop.state import Degradation
+from pico.llm.budget import estimate_tokens, prompt_budget
 from pico.llm.types import Message, Role, ToolCall, ToolResult
 from pico.session import (
     AssistantMessageRecorded,
@@ -28,20 +25,6 @@ from pico.session import (
 def _session() -> Session:
     conn = connect(":memory:")
     return Session(conn, "s1")
-
-
-def test_estimate_tokens_empty_string_is_zero() -> None:
-    assert estimate_tokens("") == 0
-
-
-def test_estimate_tokens_short_string_matches_formula() -> None:
-    text = "abcdefgh"
-    assert estimate_tokens(text) == max(1, len(text) // 4)
-
-
-def test_estimate_tokens_is_monotonic_on_prefixes() -> None:
-    text = "a" * 1000
-    assert estimate_tokens(text) >= estimate_tokens(text[:500])
 
 
 def test_render_tool_result_full_returns_content_unchanged() -> None:
@@ -74,52 +57,11 @@ def test_render_tool_result_handle_names_the_same_id_in_summary_and_hint() -> No
     assert "call read_fact(12) for the full content" in rendered
 
 
-def test_prompt_budget_reserves_completion_fraction() -> None:
-    assert prompt_budget(1000) == int(1000 * (1 - COMPLETION_RESERVE_FRACTION))
-
-
 def test_tool_call_arguments_no_longer_cost_zero() -> None:
     call = ToolCall(id="1", name="write_file", arguments={"content": "z" * 10_000})
     message = Message(role=Role.ASSISTANT, tool_calls=(call,))
 
     assert estimate_tokens(message_text(message)) > 2_000
-
-
-def test_prompt_budget_small_context_uses_fraction() -> None:
-    assert prompt_budget(8192) == int(8192 * (1 - COMPLETION_RESERVE_FRACTION))
-
-
-def test_prompt_budget_large_context_caps_the_reserve() -> None:
-    assert prompt_budget(65536) == 65536 - COMPLETION_RESERVE_CAP
-
-
-def test_prompt_budget_is_continuous_across_the_crossover() -> None:
-    crossover = int(COMPLETION_RESERVE_CAP / COMPLETION_RESERVE_FRACTION)
-    budgets = [prompt_budget(size) for size in range(crossover - 4, crossover + 5)]
-
-    assert budgets == sorted(budgets)
-    assert all(later - earlier <= 1 for earlier, later in pairwise(budgets))
-
-
-def test_prompt_budget_never_reserves_more_than_the_cap() -> None:
-    for size in (1_000, 8_192, 16_384, 32_768, 131_072):
-        assert size - prompt_budget(size) <= COMPLETION_RESERVE_CAP
-
-
-def test_estimate_tokens_default_ratio_matches_floor_division() -> None:
-    for text in ("", "a", "abcdefgh", "x" * 4_001):
-        assert estimate_tokens(text) == (0 if not text else max(1, len(text) // 4))
-
-
-def test_estimate_tokens_honours_a_denser_ratio() -> None:
-    text = "x" * 300
-
-    assert estimate_tokens(text, 3.0) == 100
-    assert estimate_tokens(text, 3.0) > estimate_tokens(text, 4.0)
-
-
-def test_estimate_tokens_keeps_the_minimum_of_one() -> None:
-    assert estimate_tokens("ab", 6.0) == 1
 
 
 def test_message_text_includes_tool_call_names_and_arguments() -> None:
@@ -143,144 +85,6 @@ def test_message_text_of_tool_message_is_its_result_content() -> None:
 
 def _tokens(messages: list[Message]) -> int:
     return sum(estimate_tokens(message_text(message)) for message in messages)
-
-
-def _fact(
-    fact_id: int, content: str, source: str = "shell", arguments: dict[str, object] | None = None
-) -> Fact:
-    return Fact(id=fact_id, content=content, source=source, arguments=arguments or {})
-
-
-def test_fact_index_lists_every_fact_with_id_and_signature() -> None:
-    index = fact_index(
-        [
-            _fact(1, "alpha", "shell", {"command": "ls"}),
-            _fact(4, "beta", "read_file", {"path": "a.py"}),
-        ]
-    )
-    lines = index.splitlines()
-
-    assert lines[0] == "[1] shell(ls): alpha"
-    assert lines[1] == "[4] read_file(a.py): beta"
-
-
-def test_fact_index_distinguishes_facts_by_signature_within_the_line_head() -> None:
-    index = fact_index(
-        [
-            _fact(1, "same preview", "read_file", {"path": "src/pico/core/loop.py"}),
-            _fact(2, "same preview", "read_file", {"path": "src/pico/core/context.py"}),
-        ]
-    )
-    first, second = index.splitlines()[:2]
-
-    assert first[:40] != second[:40]
-
-
-def test_fact_index_shell_signature_shows_the_leading_part_of_the_command() -> None:
-    index = fact_index(
-        [_fact(1, "output", "shell", {"command": "grep -rn TODO src/pico/core/loop.py"})]
-    )
-
-    assert "grep -rn TODO" in index.splitlines()[0]
-
-
-def test_fact_index_collapses_multiline_content_to_a_bounded_preview() -> None:
-    content = "first line\nsecond line\n" + "x" * 500
-    index = fact_index([_fact(2, content)])
-    line = index.splitlines()[0]
-
-    assert "\n" not in line
-    assert "first line second line" in line
-    assert len(line) < 95
-
-
-def test_fact_index_line_stays_within_the_bound_for_a_wide_signature() -> None:
-    command = "cd /tmp/pico2 && uv run pytest tests/core/test_loop.py | tail -20"
-    index = fact_index([_fact(12345, "x" * 500, "shell", {"command": command})])
-    line = index.splitlines()[0]
-
-    assert len(line) <= 90
-    assert "\n" not in line
-    assert "tail -20" in line
-
-
-def test_fact_index_caps_at_the_most_recent_facts_with_overflow_line() -> None:
-    all_facts = [
-        _fact(fact_id, f"content {fact_id}", arguments={"command": str(fact_id)})
-        for fact_id in range(30)
-    ]
-    lines = fact_index(all_facts).splitlines()
-
-    listed_ids = [int(line[1 : line.index("]")]) for line in lines if line.startswith("[")]
-    assert listed_ids == list(range(10, 30))
-    assert "+10 earlier facts" in lines
-
-
-def test_fact_index_keeps_only_the_newest_fact_per_producing_call() -> None:
-    args: dict[str, object] = {"path": "loop.py"}
-    lines = fact_index(
-        [
-            _fact(1, "old", "read_file", args),
-            _fact(2, "older", "read_file", args),
-            _fact(3, "newest", "read_file", args),
-        ]
-    ).splitlines()
-
-    assert lines[0] == "[3] read_file(loop.py): newest"
-    assert not any(line.startswith("[1]") or line.startswith("[2]") for line in lines)
-
-
-def test_facts_deduped_from_the_index_remain_recoverable_by_id() -> None:
-    session = _session()
-    for index in range(3):
-        session.append(
-            ToolCallRecorded(
-                name="read_file",
-                arguments={"path": "loop.py"},
-                result=f"body {index}",
-                is_error=False,
-            )
-        )
-    all_facts = facts(session)
-    index = fact_index(all_facts)
-
-    assert [fact.id for fact in all_facts] == [1, 2, 3]
-    assert "[3]" in index
-    assert "[1]" not in index and "[2]" not in index
-
-
-def test_fact_index_never_merges_distinct_calls() -> None:
-    lines = fact_index(
-        [
-            _fact(1, "a", "read_file", {"path": "loop.py"}),
-            _fact(2, "b", "read_file", {"path": "context.py"}),
-            _fact(3, "c", "shell", {"command": "loop.py"}),
-        ]
-    ).splitlines()
-
-    listed_ids = [int(line[1 : line.index("]")]) for line in lines if line.startswith("[")]
-    assert listed_ids == [1, 2, 3]
-
-
-def test_fact_index_overflow_counts_only_facts_hidden_by_the_cut() -> None:
-    duplicates = [_fact(fact_id, "dup", "read_file", {"path": "loop.py"}) for fact_id in range(10)]
-    distinct = [
-        _fact(100 + index, "content", "shell", {"command": str(index)}) for index in range(25)
-    ]
-    lines = fact_index([*duplicates, *distinct]).splitlines()
-
-    listed = [line for line in lines if line.startswith("[")]
-    assert len(listed) == 20
-    assert "+6 earlier facts" in lines
-    assert len(lines) == 22
-
-
-def test_fact_index_of_no_facts_is_empty() -> None:
-    assert fact_index([]) == ""
-
-
-def test_fact_index_includes_the_recovery_hint_whenever_facts_are_listed() -> None:
-    assert "read_fact(" in fact_index([_fact(7, "something")])
 
 
 def _tool_pair(fact_id: int, result: str) -> list[Message]:

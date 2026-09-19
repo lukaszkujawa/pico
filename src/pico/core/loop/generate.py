@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 
-from pico.core.context import prompt_budget
 from pico.core.events import (
     AssistantTextDelta,
     AssistantTextFinished,
@@ -18,6 +17,7 @@ from pico.core.loop.prompt import Prompt, assemble, reconcile
 from pico.core.loop.runner import LoopRunner, StepOutcome
 from pico.core.loop.signals import Nudge
 from pico.core.loop.state import GenerationState, LastWords, RunState, WindingDown
+from pico.llm.budget import prompt_budget
 from pico.llm.types import (
     GenerationComplete,
     TextDelta,

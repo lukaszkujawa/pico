@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pico.core.ledger import Fact, Plan, PlanStep, facts, plan, render_call
+from pico.core.ledger import Fact, Plan, PlanStep, fact_index, facts, plan, render_call
 from pico.session import (
     AssistantMessageRecorded,
     PlanSet,
@@ -222,3 +222,141 @@ def test_fact_ids_are_stable_across_reopening_the_store(tmp_path: Path) -> None:
 
     assert facts(reopened)[: len(before)] == before
     assert [fact.id for fact in facts(reopened)] == [1, 2]
+
+
+def _fact(
+    fact_id: int, content: str, source: str = "shell", arguments: dict[str, object] | None = None
+) -> Fact:
+    return Fact(id=fact_id, content=content, source=source, arguments=arguments or {})
+
+
+def test_fact_index_lists_every_fact_with_id_and_signature() -> None:
+    index = fact_index(
+        [
+            _fact(1, "alpha", "shell", {"command": "ls"}),
+            _fact(4, "beta", "read_file", {"path": "a.py"}),
+        ]
+    )
+    lines = index.splitlines()
+
+    assert lines[0] == "[1] shell(ls): alpha"
+    assert lines[1] == "[4] read_file(a.py): beta"
+
+
+def test_fact_index_distinguishes_facts_by_signature_within_the_line_head() -> None:
+    index = fact_index(
+        [
+            _fact(1, "same preview", "read_file", {"path": "src/pico/core/loop.py"}),
+            _fact(2, "same preview", "read_file", {"path": "src/pico/core/prompt.py"}),
+        ]
+    )
+    first, second = index.splitlines()[:2]
+
+    assert first[:40] != second[:40]
+
+
+def test_fact_index_shell_signature_shows_the_leading_part_of_the_command() -> None:
+    index = fact_index(
+        [_fact(1, "output", "shell", {"command": "grep -rn TODO src/pico/core/loop.py"})]
+    )
+
+    assert "grep -rn TODO" in index.splitlines()[0]
+
+
+def test_fact_index_collapses_multiline_content_to_a_bounded_preview() -> None:
+    content = "first line\nsecond line\n" + "x" * 500
+    index = fact_index([_fact(2, content)])
+    line = index.splitlines()[0]
+
+    assert "\n" not in line
+    assert "first line second line" in line
+    assert len(line) < 95
+
+
+def test_fact_index_line_stays_within_the_bound_for_a_wide_signature() -> None:
+    command = "cd /tmp/pico2 && uv run pytest tests/core/test_loop.py | tail -20"
+    index = fact_index([_fact(12345, "x" * 500, "shell", {"command": command})])
+    line = index.splitlines()[0]
+
+    assert len(line) <= 90
+    assert "\n" not in line
+    assert "tail -20" in line
+
+
+def test_fact_index_caps_at_the_most_recent_facts_with_overflow_line() -> None:
+    all_facts = [
+        _fact(fact_id, f"content {fact_id}", arguments={"command": str(fact_id)})
+        for fact_id in range(30)
+    ]
+    lines = fact_index(all_facts).splitlines()
+
+    listed_ids = [int(line[1 : line.index("]")]) for line in lines if line.startswith("[")]
+    assert listed_ids == list(range(10, 30))
+    assert "+10 earlier facts" in lines
+
+
+def test_fact_index_keeps_only_the_newest_fact_per_producing_call() -> None:
+    args: dict[str, object] = {"path": "loop.py"}
+    lines = fact_index(
+        [
+            _fact(1, "old", "read_file", args),
+            _fact(2, "older", "read_file", args),
+            _fact(3, "newest", "read_file", args),
+        ]
+    ).splitlines()
+
+    assert lines[0] == "[3] read_file(loop.py): newest"
+    assert not any(line.startswith("[1]") or line.startswith("[2]") for line in lines)
+
+
+def test_facts_deduped_from_the_index_remain_recoverable_by_id() -> None:
+    session = _session()
+    for index in range(3):
+        session.append(
+            ToolCallRecorded(
+                name="read_file",
+                arguments={"path": "loop.py"},
+                result=f"body {index}",
+                is_error=False,
+            )
+        )
+    all_facts = facts(session)
+    index = fact_index(all_facts)
+
+    assert [fact.id for fact in all_facts] == [1, 2, 3]
+    assert "[3]" in index
+    assert "[1]" not in index and "[2]" not in index
+
+
+def test_fact_index_never_merges_distinct_calls() -> None:
+    lines = fact_index(
+        [
+            _fact(1, "a", "read_file", {"path": "loop.py"}),
+            _fact(2, "b", "read_file", {"path": "prompt.py"}),
+            _fact(3, "c", "shell", {"command": "loop.py"}),
+        ]
+    ).splitlines()
+
+    listed_ids = [int(line[1 : line.index("]")]) for line in lines if line.startswith("[")]
+    assert listed_ids == [1, 2, 3]
+
+
+def test_fact_index_overflow_counts_only_facts_hidden_by_the_cut() -> None:
+    duplicates = [_fact(fact_id, "dup", "read_file", {"path": "loop.py"}) for fact_id in range(10)]
+    distinct = [
+        _fact(100 + index, "content", "shell", {"command": str(index)}) for index in range(25)
+    ]
+    lines = fact_index([*duplicates, *distinct]).splitlines()
+
+    listed = [line for line in lines if line.startswith("[")]
+    assert len(listed) == 20
+    assert "+6 earlier facts" in lines
+    assert len(lines) == 22
+
+
+def test_fact_index_of_no_facts_is_empty() -> None:
+    assert fact_index([]) == ""
+
+
+def test_fact_index_includes_the_recovery_hint_whenever_facts_are_listed() -> None:
+    assert "read_fact(" in fact_index([_fact(7, "something")])

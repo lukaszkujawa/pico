@@ -1,6 +1,5 @@
 from dataclasses import dataclass, replace
 
-from pico.core.context import transcript_fullness
 from pico.core.events import AnswerSettled, ToolCallStarted
 from pico.core.ledger import plan
 from pico.core.loop.decision import (
@@ -15,6 +14,7 @@ from pico.core.loop.decision import (
     IterationView,
     advance,
 )
+from pico.core.loop.prompt import transcript_fullness
 from pico.core.loop.runner import LoopRunner, StepOutcome
 from pico.core.loop.signals import Nudge, Restrict
 from pico.core.loop.state import Answered, LastWords, Running, RunState, WindingDown

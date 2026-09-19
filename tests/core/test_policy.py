@@ -1,6 +1,5 @@
 from pico.core.actions import MAX_DELEGATE_DEPTH
 from pico.core.bus import Bus
-from pico.core.context import transcript_fullness
 from pico.core.events import (
     AnswerSettled,
     ErrorOccurred,
@@ -31,6 +30,7 @@ from pico.core.loop.policy import (
     restriction,
     undecided,
 )
+from pico.core.loop.prompt import transcript_fullness
 from pico.core.loop.runner import LoopConfig, LoopRunner
 from pico.core.loop.signals import Nudge
 from pico.core.loop.state import Answered, Failed, LastWords, Running, WindingDown

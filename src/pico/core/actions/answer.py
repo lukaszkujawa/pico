@@ -5,8 +5,7 @@ from typing import Self
 from pico.core.actions.arguments import InvalidActionError, require, require_int_list
 from pico.core.actions.context import ActionContext, ActionResult, AnswerOutcome, RunnerAction
 from pico.core.actions.shell import Shell
-from pico.core.context import fact_index
-from pico.core.ledger import Fact, facts
+from pico.core.ledger import Fact, fact_index, facts
 from pico.llm.types import ToolSpec
 
 INLINE_CITATION_INDEX_MAX = 20

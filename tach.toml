@@ -23,7 +23,7 @@ depends_on = ["pico.llm"]
 
 [[modules]]
 path = "pico.tui"
-depends_on = ["pico.core"]
+depends_on = ["pico.core", "pico.llm"]
 
 [[modules]]
 path = "pico.evals"

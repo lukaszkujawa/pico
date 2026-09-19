@@ -28,6 +28,10 @@ generation_step
 tool_call_step                                    (act on the world)
 ```
 
+Prompt compilation is one module, `loop/prompt.py`: `assemble` builds the
+whole prompt — system preamble, recency window, briefing, and token budgets —
+and everything it calls lives below it in the same file.
+
 ## Policy rules
 
 The policy phase runs three rules of one shape: each reads the runner and

@@ -1,4 +1,5 @@
 from pico.llm.anthropic import AnthropicClient
+from pico.llm.budget import estimate_tokens
 from pico.llm.client import LLMClient
 from pico.llm.errors import LLMError
 from pico.llm.ollama import OllamaClient
@@ -32,4 +33,5 @@ __all__ = [
     "ToolCallReady",
     "ToolResult",
     "ToolSpec",
+    "estimate_tokens",
 ]

@@ -9,7 +9,7 @@ from textual.reactive import reactive
 from textual.timer import Timer
 from textual.widgets import Static
 
-from pico.core.context import estimate_tokens
+from pico.llm import estimate_tokens
 from pico.tui.commands import Completion, Row
 from pico.tui.theme import PICO_THEME, Theme
 

@@ -1,3 +1,4 @@
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -12,6 +13,8 @@ BOOKKEEPING_TOOLS = frozenset({"read_fact", "search_facts", "set_plan", "complet
 
 _SIGNATURE_CHARS = 60
 _ELLIPSIS = "…"
+_INDEX_FACTS = 20
+_INDEX_LINE_CHARS = 90
 
 
 @dataclass(frozen=True)
@@ -44,6 +47,37 @@ def render_call(name: str, arguments: Mapping[str, object]) -> str:
     args = ", ".join(str(value) for value in arguments.values())
     call = f"{name}({args})" if args else f"{name}()"
     return _elide_middle(call, _SIGNATURE_CHARS)
+
+
+def _fact_preview(content: str, limit: int) -> str:
+    return " ".join(content.split())[:limit]
+
+
+def _index_line(fact: Fact) -> str:
+    signature = render_call(fact.source, fact.arguments)
+    prefix = f"[{fact.id}] {signature}: "
+    preview = _fact_preview(fact.content, max(0, _INDEX_LINE_CHARS - len(prefix)))
+    return f"{prefix}{preview}"
+
+
+def _newest_per_call(all_facts: list[Fact]) -> list[Fact]:
+    newest: dict[str, Fact] = {}
+    for fact in all_facts:
+        newest[f"{fact.source}{json.dumps(fact.arguments, sort_keys=True)}"] = fact
+    return list(newest.values())
+
+
+def fact_index(all_facts: list[Fact]) -> str:
+    if not all_facts:
+        return ""
+    distinct = _newest_per_call(all_facts)
+    shown = distinct[-_INDEX_FACTS:]
+    overflow = len(distinct) - len(shown)
+    lines = [_index_line(fact) for fact in shown]
+    if overflow:
+        lines.append(f"+{overflow} earlier facts")
+    lines.append("Call read_fact(id) to recover any fact in full.")
+    return "\n".join(lines)
 
 
 @dataclass(frozen=True)
