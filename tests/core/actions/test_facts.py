@@ -9,11 +9,12 @@ from pico.core.actions import (
     note_tool,
     register_actions,
 )
+from pico.core.actions.shell import Shell
 from pico.core.bus import Bus
 from pico.core.events import (
     RunCancelled,
 )
-from pico.core.ledger import facts
+from pico.core.ledger import fact_index, facts
 from pico.core.loop import DEFAULT_LOOP_CONFIG
 from pico.core.loop.runner import LoopRunner
 from pico.core.loop.state import Answered, Failed
@@ -94,6 +95,93 @@ def test_note_records_its_content_as_the_result() -> None:
 def test_note_empty_content_raises_invalid_action_error() -> None:
     with pytest.raises(InvalidActionError, match="must not be empty"):
         note_tool().execute({"content": "   "})
+
+
+def test_note_with_passing_check_stamps_the_content() -> None:
+    result = note_tool().execute({"content": "grep accepts -c", "check": "true"})
+
+    assert result == "✓ grep accepts -c"
+
+
+def test_note_with_failing_check_names_the_exit_code_and_output() -> None:
+    with pytest.raises(ToolError, match="exited with code 3") as excinfo:
+        note_tool().execute({"content": "claim", "check": "echo proof missing; exit 3"})
+
+    assert "proof missing" in str(excinfo.value)
+    assert "Fix the claim or the check" in str(excinfo.value)
+
+
+def test_note_check_output_is_truncated_in_the_rejection() -> None:
+    with pytest.raises(ToolError) as excinfo:
+        note_tool().execute({"content": "claim", "check": "yes | head -c 1000; exit 1"})
+
+    assert len(str(excinfo.value)) < 400
+
+
+def test_note_check_timeout_rejects_the_note(monkeypatch: pytest.MonkeyPatch) -> None:
+    def timed_out(self: Shell, timeout: float = 30) -> tuple[int, str]:
+        raise ToolError(f"command timed out after {timeout}s: {self.command}")
+
+    monkeypatch.setattr(Shell, "run", timed_out)
+
+    with pytest.raises(ToolError, match="note rejected — check failed: command timed out"):
+        note_tool().execute({"content": "claim", "check": "sleep 60"})
+
+
+def test_note_description_steers_environment_claims_to_a_check() -> None:
+    description = note_tool().spec.description
+
+    assert "check" in description
+    assert "✓" in description
+
+
+def test_note_non_string_check_raises_invalid_action_error() -> None:
+    with pytest.raises(InvalidActionError, match="must be a str"):
+        note_tool().execute({"content": "claim", "check": 5})
+
+
+def test_verified_fact_shows_the_check_mark_in_the_index() -> None:
+    session = make_session()
+    tools = ToolRegistry()
+    register_actions(tools, session)
+    call = ToolCall(id="1", name="note", arguments={"content": "server answers", "check": "true"})
+
+    result = tools.execute(call)
+    session.append(
+        ToolCallRecorded(name="note", arguments=call.arguments, result=result, is_error=False)
+    )
+
+    assert "✓ server answers" in fact_index(facts(session))
+
+
+def test_note_with_failing_check_is_recorded_as_error_and_not_a_fact() -> None:
+    session = make_session()
+    session.append(UserMessageRecorded(content="hi"))
+    tools = ToolRegistry()
+    register_actions(tools, session)
+    arguments = {"content": "extensions load headless", "check": "exit 7"}
+    client = ScriptedClient(
+        [
+            [
+                ToolCallReady(tool_call=ToolCall(id="1", name="note", arguments=arguments)),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            [TextDelta(text="done"), GenerationComplete(finish_reason="stop")],
+        ]
+    )
+
+    runner = LoopRunner(client, tools, Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    recorded = next(
+        event
+        for event in session.events()
+        if isinstance(event, ToolCallRecorded) and event.name == "note"
+    )
+    assert recorded.is_error is True
+    assert "code 7" in recorded.result
+    assert facts(session) == []
+    assert runner.dispatch.invalid_action_attempts == 0
 
 
 def test_model_recovers_a_truncated_fact_via_read_fact_and_cites_it() -> None:

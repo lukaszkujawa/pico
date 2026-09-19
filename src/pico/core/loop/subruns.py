@@ -107,7 +107,9 @@ def compose_handoff(session: Session, current: Plan, index: int) -> str:
     sections.append(
         f"Your step is step {index}: {current.steps[index].text}\n"
         "Do only this step, then answer with its result. Your answer is all that survives "
-        "your context, so state the findings the later steps need, not just that you are done."
+        "your context, so state the findings the later steps need, not just that you are done. "
+        "Before answering, note each finding the next step will build on with a check that "
+        "proves it."
     )
     return "\n\n".join(sections)
 

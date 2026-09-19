@@ -13,6 +13,7 @@ from pico.core.loop.stuckness import STUCK_THRESHOLD
 from pico.core.loop.subruns import (
     MAX_STEP_ATTEMPTS,
     claim_step_attempt,
+    compose_handoff,
     root_task,
 )
 from pico.core.tools import ToolRegistry
@@ -133,6 +134,16 @@ def test_second_step_prompt_carries_the_first_steps_result_and_plan_progress() -
     assert "[x] 0. count the files" in second
     assert "[ ] 1. name the largest" in second
     assert "there are 12 files" in second
+
+
+def test_handoff_asks_for_checked_notes_before_answering() -> None:
+    session = make_session()
+    session.append(UserMessageRecorded(content="survey the repository"))
+    current = Plan(steps=(PlanStep(text="count the files", done=False),))
+
+    handoff = compose_handoff(session, current, 0)
+
+    assert "note each finding the next step will build on with a check" in handoff
 
 
 def test_accepted_child_answer_settles_the_step_without_complete_step() -> None:

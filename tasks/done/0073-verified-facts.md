@@ -11,7 +11,7 @@ Facts and step answers are the only memory that survives compaction, and nothing
 * **Descriptions do the steering, as in 0071.** `note`'s description says: when the content claims something about the environment (a command works, a file exists, a server answers), attach a `check` that proves it. The step handoff instruction in `subruns.py` gains one sentence: findings the next step will build on should be noted with a check before answering. No enforcement.
 * **Scope guard.** No verification of `answer` content, no critic pass, no fact schema field, no re-running of checks after recording, no changes to `read_fact`/`search_facts`.
 
-## [ ] T001 Checked notes
+## [X] T001 Checked notes
 
 ### Description
 
@@ -25,7 +25,7 @@ Add the optional `check` parameter to the `note` action in `actions/facts.py`, e
 * The ✓ prefix appears in the fact index line for a verified fact with no changes to `ledger.py` rendering.
 * `make check` passes.
 
-## [ ] T002 Steering
+## [X] T002 Steering
 
 ### Description
 
