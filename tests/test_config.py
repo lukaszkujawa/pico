@@ -14,6 +14,7 @@ REQUIRED_VARS = {
 }
 
 ENV_KEYS = [
+    "LLM_TEMPERATURE",
     "LLM_VENDOR",
     "LLM_BASE_URL",
     "LLM_MODEL",
@@ -77,4 +78,23 @@ def test_non_integer_context_size_raises_config_error(monkeypatch: pytest.Monkey
     _set_env(monkeypatch, LLM_CONTEXT_SIZE="not-a-number")
 
     with pytest.raises(ConfigError, match="LLM_CONTEXT_SIZE"):
+        load_config()
+
+
+def test_temperature_defaults_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_env(monkeypatch)
+
+    assert load_config().temperature is None
+
+
+def test_temperature_is_parsed_as_float(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_env(monkeypatch, LLM_TEMPERATURE="0.2")
+
+    assert load_config().temperature == 0.2
+
+
+def test_non_numeric_temperature_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_env(monkeypatch, LLM_TEMPERATURE="warm")
+
+    with pytest.raises(ConfigError, match="LLM_TEMPERATURE"):
         load_config()

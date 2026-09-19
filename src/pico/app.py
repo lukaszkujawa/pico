@@ -117,6 +117,7 @@ def build_llm_client(config: Config, model: str | None = None) -> LLMClient:
         base_url=config.base_url,
         api_key=config.api_key,
         context_size=config.context_size,
+        temperature=config.temperature,
     )
 
 

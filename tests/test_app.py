@@ -65,7 +65,14 @@ class SlowClient(NoModels):
 
 
 def _patch_ollama_client(monkeypatch: pytest.MonkeyPatch, release: threading.Event) -> None:
-    def factory(*, model: str, base_url: str, api_key: str | None, context_size: int) -> SlowClient:
+    def factory(
+        *,
+        model: str,
+        base_url: str,
+        api_key: str | None,
+        context_size: int,
+        temperature: float | None,
+    ) -> SlowClient:
         return SlowClient(release)
 
     monkeypatch.setattr(app_module, "OllamaClient", factory)
@@ -212,7 +219,12 @@ def test_turn_loop_runs_one_turn_per_queued_message(
     client = RecordingClient()
 
     def factory(
-        *, model: str, base_url: str, api_key: str | None, context_size: int
+        *,
+        model: str,
+        base_url: str,
+        api_key: str | None,
+        context_size: int,
+        temperature: float | None,
     ) -> RecordingClient:
         return client
 
@@ -296,7 +308,12 @@ def test_turn_persists_to_session_file_on_disk(
     client = RecordingClient()
 
     def factory(
-        *, model: str, base_url: str, api_key: str | None, context_size: int
+        *,
+        model: str,
+        base_url: str,
+        api_key: str | None,
+        context_size: int,
+        temperature: float | None,
     ) -> RecordingClient:
         return client
 
@@ -331,7 +348,12 @@ def test_debug_true_writes_run_log(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     client = RecordingClient()
 
     def factory(
-        *, model: str, base_url: str, api_key: str | None, context_size: int
+        *,
+        model: str,
+        base_url: str,
+        api_key: str | None,
+        context_size: int,
+        temperature: float | None,
     ) -> RecordingClient:
         return client
 
@@ -364,7 +386,12 @@ def test_debug_false_creates_no_logs_dir(monkeypatch: pytest.MonkeyPatch, tmp_pa
     client = RecordingClient()
 
     def factory(
-        *, model: str, base_url: str, api_key: str | None, context_size: int
+        *,
+        model: str,
+        base_url: str,
+        api_key: str | None,
+        context_size: int,
+        temperature: float | None,
     ) -> RecordingClient:
         return client
 
@@ -390,7 +417,12 @@ def _run_one_turn(monkeypatch: pytest.MonkeyPatch, config: Config, session_id: s
     client = RecordingClient()
 
     def factory(
-        *, model: str, base_url: str, api_key: str | None, context_size: int
+        *,
+        model: str,
+        base_url: str,
+        api_key: str | None,
+        context_size: int,
+        temperature: float | None,
     ) -> RecordingClient:
         return client
 
@@ -651,7 +683,12 @@ def _patch_named_clients(monkeypatch: pytest.MonkeyPatch) -> dict[str, NamedClie
     built: dict[str, NamedClient] = {}
 
     def factory(
-        *, model: str, base_url: str, api_key: str | None, context_size: int
+        *,
+        model: str,
+        base_url: str,
+        api_key: str | None,
+        context_size: int,
+        temperature: float | None,
     ) -> NamedClient:
         built[model] = NamedClient(model)
         return built[model]

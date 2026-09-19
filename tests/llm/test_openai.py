@@ -364,3 +364,33 @@ def test_models_connection_failure_raises_llm_error() -> None:
 
     with pytest.raises(LLMError, match="refused"):
         client.models()
+
+
+def test_temperature_is_sent_when_configured() -> None:
+    captured: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return _sse_response([_delta_chunk({}, finish_reason="stop")])
+
+    client = OpenAIClient(
+        model="gpt", base_url="http://api", transport=httpx.MockTransport(handle), temperature=0.2
+    )
+    list(client.stream([Message(role=Role.USER, content="hi")], []))
+
+    payload = json.loads(captured[0].content)
+    assert payload["temperature"] == 0.2
+
+
+def test_temperature_is_omitted_by_default() -> None:
+    captured: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return _sse_response([_delta_chunk({}, finish_reason="stop")])
+
+    client = OpenAIClient(model="gpt", base_url="http://api", transport=httpx.MockTransport(handle))
+    list(client.stream([Message(role=Role.USER, content="hi")], []))
+
+    payload = json.loads(captured[0].content)
+    assert "temperature" not in payload

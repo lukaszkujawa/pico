@@ -322,3 +322,17 @@ def test_models_connection_failure_raises_llm_error() -> None:
 
     with pytest.raises(LLMError, match="refused"):
         client.models()
+
+
+def test_temperature_is_sent_in_options() -> None:
+    captured: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return _ndjson_response([{"done": True, "done_reason": "stop"}])
+
+    client = OllamaClient(model="qwen3", transport=httpx.MockTransport(handle), temperature=0.2)
+    list(client.stream([Message(role=Role.USER, content="hi")], []))
+
+    payload = json.loads(captured[0].content)
+    assert payload["options"] == {"temperature": 0.2}

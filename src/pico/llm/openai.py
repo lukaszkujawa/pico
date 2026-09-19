@@ -70,12 +70,14 @@ class OpenAIClient:
         api_key: str | None = None,
         transport: httpx.BaseTransport | None = None,
         context_size: int | None = None,
+        temperature: float | None = None,
     ) -> None:
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._transport = transport
         self._context_size = context_size
+        self._temperature = temperature
         self._fallback_call_ids = itertools.count()
 
     def models(self) -> list[str]:
@@ -101,6 +103,8 @@ class OpenAIClient:
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        if self._temperature is not None:
+            payload["temperature"] = self._temperature
         if tools:
             payload["tools"] = [_tool_spec_to_payload(tool) for tool in tools]
 

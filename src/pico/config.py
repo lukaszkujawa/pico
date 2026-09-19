@@ -16,6 +16,7 @@ class Config:
     api_key: str | None
     context_size: int
     session_path: str
+    temperature: float | None = None
 
 
 def _require(name: str) -> str:
@@ -44,6 +45,16 @@ def load_config() -> Config:
 
     session_path = _require("SESSION_DB_PATH")
 
+    temperature_raw = os.environ.get("LLM_TEMPERATURE") or None
+    temperature = None
+    if temperature_raw is not None:
+        try:
+            temperature = float(temperature_raw)
+        except ValueError as error:
+            raise ConfigError(
+                f"LLM_TEMPERATURE must be a number, got: {temperature_raw!r}"
+            ) from error
+
     return Config(
         vendor=vendor,
         base_url=base_url,
@@ -51,4 +62,5 @@ def load_config() -> Config:
         api_key=api_key,
         context_size=context_size,
         session_path=session_path,
+        temperature=temperature,
     )

@@ -1,4 +1,4 @@
-.PHONY: lint format typecheck deadcode arch test build check code code_attach run run_in_docker evals stop_code
+.PHONY: lint format typecheck deadcode arch test build check code code_attach run run_in_docker evals stop_code wipe_logs
 
 lint:
 	uv run ruff check .
@@ -56,3 +56,6 @@ evals:
 
 stop_code:
 	touch .stop_code
+
+wipe_logs:
+	rm -rf logs logs-code

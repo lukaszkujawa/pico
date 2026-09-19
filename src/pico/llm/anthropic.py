@@ -94,11 +94,13 @@ class AnthropicClient:
         api_key: str | None = None,
         transport: httpx.BaseTransport | None = None,
         context_size: int | None = None,
+        temperature: float | None = None,
     ) -> None:
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._transport = transport
+        self._temperature = temperature
         self._max_tokens = (
             completion_reserve(context_size) if context_size else COMPLETION_RESERVE_CAP
         )
@@ -130,6 +132,8 @@ class AnthropicClient:
             "messages": _messages_to_payload(rest),
             "stream": True,
         }
+        if self._temperature is not None:
+            payload["temperature"] = self._temperature
         if system:
             payload["system"] = system
         if tools:
