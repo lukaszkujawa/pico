@@ -635,7 +635,7 @@ class SystemPane(Static):
 
 class ErrorPane(Static):
     def __init__(self, message: str, theme: Theme = PICO_THEME) -> None:
-        super().__init__(id="error-pane")
+        super().__init__(id=None)
         self._theme = theme
         self._message = message
         self.styles.border = ("heavy", theme.tool_call_border)

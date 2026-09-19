@@ -21,6 +21,7 @@ from pico.core.events import (
 from pico.llm.types import ToolCall
 from pico.tui.app import PicoApp
 from pico.tui.widgets import (
+    ERROR_GLYPH,
     SUCCESS_GLYPH,
     AnswerPane,
     AssistantPane,
@@ -475,6 +476,27 @@ async def test_run_finished_with_error_and_no_error_occurred_shows_error() -> No
 
         await settle(pilot, lambda: len(app.query(ErrorPane)) == 1, "the error pane mounts")
         assert "boom" in app.query_one(ErrorPane).render().plain
+
+
+async def test_errors_in_consecutive_runs_mount_separate_panes() -> None:
+    bus = Bus()
+    app = PicoApp(bus, queue.Queue())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        bus.publish(RunStarted())
+        bus.publish(ErrorOccurred(message="first boom"))
+        await settle(pilot, lambda: len(app.query(ErrorPane)) == 1, "the first error pane mounts")
+        bus.publish(RunFinished(error="first boom"))
+
+        bus.publish(RunStarted())
+        bus.publish(ErrorOccurred(message="second boom"))
+        await settle(pilot, lambda: len(app.query(ErrorPane)) == 2, "the second error pane mounts")
+
+        assert [pane.render().plain for pane in app.query(ErrorPane)] == [
+            f"{ERROR_GLYPH} first boom",
+            f"{ERROR_GLYPH} second boom",
+        ]
 
 
 async def test_run_finished_without_error_shows_no_error_pane() -> None:
