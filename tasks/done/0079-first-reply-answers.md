@@ -11,7 +11,7 @@ Say "Hi Pico" and the runtime turns a greeting into a two-generation ordeal. The
 * **A thinking-only or empty first generation is not an answer.** Adoption requires non-empty text; a first generation with only thinking, or nothing, follows today's actionless path.
 * **Scope guard.** No change to the answer action, the stuckness or budget rules, `undecided`, child budgets, or the TUI. No attempt to classify conversational versus task intent beyond the first-generation rule.
 
-## [ ] T001 Adopt the first text-only generation as the answer
+## [X] T001 Adopt the first text-only generation as the answer
 
 ### Description
 
@@ -25,7 +25,7 @@ End a depth-0 run whose first generation is text-only, with no plan set, by sett
 * A thinking-only first generation follows the existing actionless path.
 * `make check` passes.
 
-## [ ] T002 Nudge without narration
+## [X] T002 Nudge without narration
 
 ### Description
 

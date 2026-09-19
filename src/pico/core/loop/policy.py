@@ -123,12 +123,17 @@ def decision_rule(runner: LoopRunner) -> Verdict:
             return Verdict(decision=decision)
 
 
-def _publish_degraded_answer(runner: LoopRunner, narration: str) -> None:
+def settle(runner: LoopRunner, content: str, complete: bool) -> None:
     pane_id = runner.new_id()
     runner.bus.publish(ToolCallStarted(id=pane_id, name="answer", arguments={}))
     runner.bus.publish(
         AnswerSettled(
-            id=pane_id, content=narration, accepted=True, reason=None, verify=None, complete=False
+            id=pane_id,
+            content=content,
+            accepted=True,
+            reason=None,
+            verify=None,
+            complete=complete,
         )
     )
 
@@ -144,7 +149,7 @@ def apply_verdict(runner: LoopRunner, verdict: Verdict) -> StepOutcome:
         runner.decision = verdict.decision
     if verdict.degraded is None:
         return "continue"
-    _publish_degraded_answer(runner, verdict.degraded)
+    settle(runner, verdict.degraded, complete=False)
     return "done"
 
 

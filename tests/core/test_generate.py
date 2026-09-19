@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from pico.core.actions import MAX_DELEGATE_DEPTH, register_actions
 from pico.core.bus import Bus
 from pico.core.events import (
+    AnswerSettled,
     AssistantTextDelta,
     AssistantTextFinished,
     AssistantTextStarted,
@@ -47,7 +48,6 @@ from pico.core.tools import ToolRegistry
 from pico.llm.types import (
     GenerationComplete,
     Role,
-    StreamEvent,
     TextDelta,
     ThinkingDelta,
     ToolCall,
@@ -56,6 +56,8 @@ from pico.llm.types import (
 )
 from pico.session import (
     AssistantMessageRecorded,
+    PlanSet,
+    PlanStepCompleted,
     ToolCallRecorded,
     UserMessageRecorded,
 )
@@ -66,6 +68,7 @@ from tests.core.loop_fixtures import (
     answer_turn,
     drain_until_run_finished,
     echo_registry,
+    echo_turn,
     make_session,
     set_plan_turn,
     text_turn,
@@ -83,28 +86,30 @@ def test_plain_text_run() -> None:
                 TextDelta(text="hello "),
                 TextDelta(text="world"),
                 GenerationComplete(finish_reason="stop"),
-            ],
-            answer_turn("hello world"),
+            ]
         ]
     )
 
     runner = LoopRunner(client, echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
-    events = [next(subscriber) for _ in range(6)]
-    assert events == [
+    assert drain_until_run_finished(subscriber) == [
         RunStarted(),
         AssistantTextStarted(id="0"),
         AssistantTextDelta(id="0", text="hello "),
         AssistantTextDelta(id="0", text="world"),
         GenerationCompleted(iteration=1),
         AssistantTextFinished(id="0"),
+        ToolCallStarted(id="1", name="answer", arguments={}),
+        AnswerSettled(id="1", content="hello world", accepted=True, complete=True),
+        RunFinished(),
     ]
     assert runner.state == Answered("hello world")
-    assert list(session.events())[:2] == [
+    assert list(session.events()) == [
         UserMessageRecorded(content="hi"),
         AssistantMessageRecorded(content="hello world", thinking=""),
     ]
+    assert runner.iterations == 1
 
 
 def test_thinking_then_text_published_in_order_with_shared_ids_across_two_turns() -> None:
@@ -121,13 +126,11 @@ def test_thinking_then_text_published_in_order_with_shared_ids_across_two_turns(
                 TextDelta(text="world"),
                 GenerationComplete(finish_reason="stop"),
             ],
-            answer_turn(),
             [
                 ThinkingDelta(text="second thought"),
                 TextDelta(text="second answer"),
                 GenerationComplete(finish_reason="stop"),
             ],
-            answer_turn(),
         ]
     )
 
@@ -151,7 +154,7 @@ def test_thinking_then_text_published_in_order_with_shared_ids_across_two_turns(
     runner.state = Running()
     runner.execute()
 
-    second_events = [next(subscriber) for _ in range(12)]
+    second_events = [next(subscriber) for _ in range(11)]
     started_ids_second = [
         event.id
         for event in second_events
@@ -520,11 +523,7 @@ def test_generation_turns_a_wind_down_into_last_words_in_the_same_iteration() ->
 def test_generation_owns_the_narration_pressure_flag() -> None:
     session = make_session()
     session.append(UserMessageRecorded(content="hi"))
-    echo_turn: list[StreamEvent] = [
-        ToolCallReady(tool_call=ToolCall(id="1", name="echo", arguments={"text": "hi"})),
-        GenerationComplete(finish_reason="tool_calls"),
-    ]
-    client = ScriptedClient([text_turn("musing"), echo_turn])
+    client = ScriptedClient([text_turn("musing"), echo_turn()])
     runner = LoopRunner(
         client, echo_registry(), Bus(), session, 128_000, LoopConfig(steps=(generation_step,))
     )
@@ -549,24 +548,26 @@ def test_record_of_a_tool_call_resets_the_actionless_count() -> None:
     generation = Generation(
         text="", thinking="", tool_calls=[ToolCall(id="1", name="echo", arguments={})]
     )
-    recorded = record(generation, Running(), IterationView(), _counted(2))
+    recorded = record(generation, Running(), IterationView(), _counted(2), opening=True)
     assert recorded == Verdict("continue", actionless=0)
 
 
 def test_record_of_silence_while_dying_ends_the_run() -> None:
-    recorded = record(_silence(), LastWords("spent"), IterationView(), _counted(1))
+    recorded = record(_silence(), LastWords("spent"), IterationView(), _counted(1), opening=True)
     assert recorded == Verdict("done", actionless=1)
 
 
 def test_record_of_narration_without_a_plan_presses_for_a_decision() -> None:
-    recorded = record(_silence(), Running(), IterationView(undecided=True), _counted(2))
+    recorded = record(_silence(), Running(), IterationView(undecided=True), _counted(2), False)
     assert recorded == Verdict("continue", actionless=0, command=Press())
 
 
 def test_record_counts_actionless_generations_up_to_the_failure() -> None:
-    recorded = record(_silence(), Running(), IterationView(), _counted(0))
+    recorded = record(_silence(), Running(), IterationView(), _counted(0), False)
     assert recorded == Verdict("continue", actionless=1, command=Emit(NO_ACTION_NUDGE))
-    final = record(_silence(), Running(), IterationView(), _counted(MAX_ACTIONLESS_GENERATIONS - 1))
+    final = record(
+        _silence(), Running(), IterationView(), _counted(MAX_ACTIONLESS_GENERATIONS - 1), False
+    )
     assert final.outcome == "done"
     assert final.actionless == MAX_ACTIONLESS_GENERATIONS
     assert isinstance(final.command, Fail)
@@ -576,18 +577,99 @@ def test_record_counts_actionless_generations_up_to_the_failure() -> None:
 def test_narration_without_a_plan_demands_a_decision_instead_of_ending_the_run() -> None:
     session = make_session()
     session.append(UserMessageRecorded(content="hi"))
-    client = ScriptedClient([text_turn("just chatting"), answer_turn("here it is")])
+    client = ScriptedClient(
+        [echo_turn("hi"), text_turn("just chatting"), answer_turn("here it is")]
+    )
 
     runner = LoopRunner(client, echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
     runner.execute()
 
     assert runner.state == Answered("here it is")
-    demand = client.seen_messages[1][-1]
+    demand = client.seen_messages[2][-1]
     assert demand.role is Role.USER
     assert demand.content.startswith("decision required")
     assert "set_plan" in demand.content
     assert "answer" in demand.content
-    assert "why" in demand.content
+    assert "why" not in demand.content
+
+
+def test_first_text_only_generation_is_adopted_as_the_answer() -> None:
+    bus = Bus()
+    subscriber = bus.subscribe()
+    session = make_session()
+    session.append(UserMessageRecorded(content="Hi Pico"))
+    client = ScriptedClient([text_turn("Hi! What can I do for you?")])
+
+    runner = LoopRunner(client, echo_registry(), bus, session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    assert runner.state == Answered("Hi! What can I do for you?")
+    assert runner.iterations == 1
+    settled = [
+        event for event in drain_until_run_finished(subscriber) if isinstance(event, AnswerSettled)
+    ]
+    assert settled == [
+        AnswerSettled(id="1", content="Hi! What can I do for you?", accepted=True, complete=True)
+    ]
+
+
+def test_first_generation_with_a_tool_call_is_not_adopted() -> None:
+    session = make_session()
+    session.append(UserMessageRecorded(content="hi"))
+    client = ScriptedClient([echo_turn(), answer_turn("done")])
+
+    runner = LoopRunner(client, echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    assert runner.state == Answered("done")
+    assert runner.iterations == 2
+
+
+def test_first_text_only_generation_with_a_plan_already_set_is_not_adopted() -> None:
+    session = make_session()
+    session.append(UserMessageRecorded(content="hi"))
+    session.append(PlanSet(steps=("review the code",)))
+    session.append(PlanStepCompleted(index=0))
+    client = ScriptedClient([text_turn("let me think"), answer_turn("reviewed")])
+
+    runner = LoopRunner(client, echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    assert runner.state == Answered("reviewed")
+    assert client.seen_messages[1][-1].content.startswith("decision required")
+
+
+def test_a_childs_first_text_only_generation_is_pressed_not_adopted() -> None:
+    session = make_session()
+    session.append(UserMessageRecorded(content="count the files"))
+    client = ScriptedClient([text_turn("just chatting"), answer_turn("42")])
+
+    runner = LoopRunner(
+        client, echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG, depth=1
+    )
+    runner.execute()
+
+    assert runner.state == Answered("42")
+    demand = client.seen_messages[1][-1]
+    assert demand.content.startswith("decision required")
+
+
+def test_a_thinking_only_first_generation_is_not_adopted() -> None:
+    session = make_session()
+    session.append(UserMessageRecorded(content="hi"))
+    client = ScriptedClient(
+        [
+            [ThinkingDelta(text="pondering"), GenerationComplete(finish_reason="stop")],
+            answer_turn("settled"),
+        ]
+    )
+
+    runner = LoopRunner(client, echo_registry(), Bus(), session, 128_000, DEFAULT_LOOP_CONFIG)
+    runner.execute()
+
+    assert runner.state == Answered("settled")
+    demand = client.seen_messages[1][-1]
+    assert demand.content.startswith("decision required")
 
 
 def test_narration_with_unfinished_plan_is_nudged_and_run_continues() -> None:

@@ -76,19 +76,40 @@ def test_turn_ending_in_answer_returns_it_with_counts() -> None:
 
 
 def test_turn_that_only_narrates_yields_its_last_narration_marked_unverified() -> None:
-    client = ScriptedClient([[TextDelta(text=f"thinking {index}")] for index in range(12)])
+    client = ScriptedClient(
+        [
+            [
+                ToolCallReady(
+                    tool_call=ToolCall(id="1", name="shell", arguments={"command": "echo hi"})
+                ),
+                GenerationComplete(finish_reason="tool_calls"),
+            ],
+            *[[TextDelta(text=f"thinking {index}")] for index in range(12)],
+        ]
+    )
 
     result = run_turn(client, _session(), 128_000, "do it")
 
     assert result == TurnResult(
         answer="thinking 5",
-        iterations=7,
-        tool_calls=1,
+        iterations=8,
+        tool_calls=2,
         prompt_tokens=0,
         completion_tokens=0,
         duration_seconds=result.duration_seconds,
         error=None,
     )
+
+
+def test_turn_answered_by_the_first_reply_ends_after_one_generation() -> None:
+    client = ScriptedClient([[TextDelta(text="hi there")]])
+
+    result = run_turn(client, _session(), 128_000, "hi")
+
+    assert result.answer == "hi there"
+    assert result.iterations == 1
+    assert result.tool_calls == 1
+    assert result.error is None
 
 
 def test_turn_ending_by_stuckness_yields_no_answer() -> None:

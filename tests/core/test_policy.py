@@ -56,6 +56,7 @@ from tests.core.loop_fixtures import (
     decision_session,
     drain_until_run_finished,
     echo_registry,
+    echo_turn,
     make_session,
     note_turn,
     repeat_turns,
@@ -416,12 +417,7 @@ def test_run_exhausting_budget_fails_explicitly_and_stays_resumable() -> None:
     assert last_event == RunFinished(error=expected)
 
     session.append(UserMessageRecorded(content="continue please"))
-    followup_client = ScriptedClient(
-        [
-            [TextDelta(text="picking up"), GenerationComplete(finish_reason="stop")],
-            answer_turn("picked up"),
-        ]
-    )
+    followup_client = ScriptedClient([echo_turn(), answer_turn("picked up")])
     followup_runner = LoopRunner(followup_client, echo_registry(), Bus(), session, 128_000, config)
     followup_runner.execute()
 
@@ -431,7 +427,7 @@ def test_run_exhausting_budget_fails_explicitly_and_stays_resumable() -> None:
         for event in session.events()
         if isinstance(event, ToolCallRecorded) and event.name == "echo"
     ]
-    assert len(echoes) == max_steps
+    assert len(echoes) == max_steps + 1
 
 
 def test_budget_exhaustion_forces_a_final_answer_that_becomes_the_result() -> None:
@@ -549,7 +545,7 @@ def test_transcript_past_the_structural_bound_demands_a_decision_once() -> None:
     demands = decision_demands(client)
     assert len(demands) == 1
     assert CONTEXT_PRESSURE_CAUSE in demands[0]
-    assert "set_plan" in demands[0] and "answer" in demands[0] and "why" in demands[0]
+    assert "set_plan" in demands[0] and "answer" in demands[0] and "why" not in demands[0]
 
 
 def test_a_node_with_an_active_plan_never_sees_the_demand() -> None:
@@ -660,6 +656,7 @@ def test_a_plan_set_at_the_crossroads_flows_into_step_orchestration() -> None:
     session, registry = decision_session()
     client = ScriptedClient(
         [
+            echo_turn(),
             *[text_turn(f"musing {index}") for index in range(DECISION_GRACE + 1)],
             set_plan_turn(["count the files"]),
             answer_turn("counted"),

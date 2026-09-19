@@ -11,12 +11,20 @@ from pico.core.events import (
     GenerationCompleted,
     ToolCallArgumentsDelta,
 )
+from pico.core.ledger import plan
 from pico.core.loop.decision import Crossroads, IterationView
-from pico.core.loop.policy import restriction
+from pico.core.loop.policy import restriction, settle
 from pico.core.loop.prompt import Prompt, assemble, reconcile
 from pico.core.loop.record import record_assistant_message
 from pico.core.loop.runner import LoopRunner, StepOutcome
-from pico.core.loop.state import GenerationState, LastWords, Nudge, RunState, WindingDown
+from pico.core.loop.state import (
+    Answered,
+    GenerationState,
+    LastWords,
+    Nudge,
+    RunState,
+    WindingDown,
+)
 from pico.llm.budget import prompt_budget
 from pico.llm.types import (
     GenerationComplete,
@@ -57,7 +65,12 @@ class Fail:
     reason: str
 
 
-Command = Press | Emit | Fail
+@dataclass(frozen=True)
+class Adopt:
+    content: str
+
+
+Command = Press | Emit | Fail | Adopt
 
 
 @dataclass(frozen=True)
@@ -128,12 +141,18 @@ def stream(runner: LoopRunner, prompt: Prompt, pressured: bool) -> Generation | 
 
 
 def record(
-    generation: Generation, state: RunState, seen: IterationView, counted: GenerationState
+    generation: Generation,
+    state: RunState,
+    seen: IterationView,
+    counted: GenerationState,
+    opening: bool,
 ) -> Verdict:
     if generation.tool_calls:
         return Verdict("continue", actionless=0)
     if isinstance(state, LastWords):
         return Verdict("done", actionless=counted.actionless_generations)
+    if opening and generation.text.strip():
+        return Verdict("done", actionless=0, command=Adopt(generation.text))
     if seen.undecided:
         return Verdict("continue", actionless=0, command=Press())
     attempts = counted.actionless_generations + 1
@@ -147,6 +166,10 @@ def record(
             ),
         )
     return Verdict("continue", actionless=attempts, command=Emit(NO_ACTION_NUDGE))
+
+
+def opening(runner: LoopRunner) -> bool:
+    return runner.depth == 0 and runner.iterations == 1 and plan(runner.session) is None
 
 
 def generation_step(runner: LoopRunner) -> StepOutcome:
@@ -178,7 +201,7 @@ def generation_step(runner: LoopRunner) -> StepOutcome:
         runner.generation.last_narration = generation.text
     if generation.tool_calls:
         runner.pending_tool_calls = generation.tool_calls
-    verdict = record(generation, runner.state, runner.view, runner.generation)
+    verdict = record(generation, runner.state, runner.view, runner.generation, opening(runner))
     runner.generation.actionless_generations = verdict.actionless
     runner.generation.narration_pressure = isinstance(verdict.command, Press)
     match verdict.command:
@@ -186,6 +209,9 @@ def generation_step(runner: LoopRunner) -> StepOutcome:
             runner.emit(Nudge(nudge))
         case Fail(reason=reason):
             runner.fail(reason)
+        case Adopt(content=content):
+            runner.state = Answered(content)
+            settle(runner, content, complete=True)
         case Press() | None:
             pass
     return verdict.outcome

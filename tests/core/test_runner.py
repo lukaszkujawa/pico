@@ -255,7 +255,7 @@ def test_shared_id_source_keeps_ids_unique_across_separate_runners() -> None:
         for event in all_events
         if isinstance(event, AssistantThinkingStarted | AssistantTextStarted)
     ]
-    assert started_ids == ["0", "1", "2", "3"]
+    assert started_ids == ["0", "1", "3", "4"]
     assert len(set(started_ids)) == len(started_ids)
 
 

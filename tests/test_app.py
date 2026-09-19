@@ -202,13 +202,8 @@ class RecordingClient(NoModels):
     def __init__(self) -> None:
         self.seen_messages: list[list[Message]] = []
         self.seen_tools: list[list[ToolSpec]] = []
-        self.spoken = False
 
     def stream(self, messages: list[Message], tools: list[ToolSpec]) -> Iterator[StreamEvent]:
-        if self.spoken:
-            self.spoken = False
-            raise LLMError("connection lost")
-        self.spoken = True
         self.seen_messages.append(list(messages))
         self.seen_tools.append(list(tools))
         yield TextDelta(text="hi")

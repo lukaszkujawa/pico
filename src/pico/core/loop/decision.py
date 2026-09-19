@@ -5,7 +5,7 @@ MAX_CROSSROADS = 2
 
 DECISION_NUDGE = (
     "decision required — {cause}. either set_plan to hand the remaining work to fresh "
-    "agents, or finish with answer. say which one and why, then do it."
+    "agents, or finish with answer. call one of them now, without explaining the choice."
 )
 
 NARRATION_PRESSURE = "you wrote text but took no action, and you have no plan running"

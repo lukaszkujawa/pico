@@ -187,6 +187,13 @@ def set_plan_turn(steps: list[str]) -> list[StreamEvent]:
     ]
 
 
+def echo_turn(text: str = "hi") -> list[StreamEvent]:
+    return [
+        ToolCallReady(tool_call=ToolCall(id="e1", name="echo", arguments={"text": text})),
+        GenerationComplete(finish_reason="tool_calls"),
+    ]
+
+
 def text_turn(text: str) -> list[StreamEvent]:
     return [TextDelta(text=text), GenerationComplete(finish_reason="stop")]
 
