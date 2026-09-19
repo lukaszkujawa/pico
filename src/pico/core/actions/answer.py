@@ -2,7 +2,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Self
 
-from pico.core.actions.arguments import InvalidActionError, require, require_int_list
+from pico.core.actions.arguments import InvalidActionError, require, require_list
 from pico.core.actions.context import ActionContext, ActionResult, AnswerOutcome, RunnerAction
 from pico.core.actions.shell import Shell
 from pico.core.ledger import Fact, fact_index, facts
@@ -47,7 +47,7 @@ class Answer:
     @classmethod
     def from_arguments(cls, arguments: Mapping[str, object]) -> Self:
         content = require(arguments, "content", str)
-        citations = require_int_list(arguments, "citations")
+        citations = require_list(arguments, "citations", int)
         verify = None if arguments.get("verify") is None else require(arguments, "verify", str)
         if verify is not None and not verify.strip():
             raise InvalidActionError("field 'verify' must not be empty")

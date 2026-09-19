@@ -1,8 +1,6 @@
 from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import Self
 
-from pico.core.actions.arguments import require, require_str_list
+from pico.core.actions.arguments import InvalidActionError, require, require_list
 from pico.core.ledger import plan, render_plan
 from pico.core.tools import Tool, ToolError
 from pico.llm.types import ToolSpec
@@ -29,20 +27,12 @@ SET_PLAN_SPEC = ToolSpec(
 )
 
 
-@dataclass(frozen=True)
-class SetPlan:
-    steps: tuple[str, ...]
-
-    @classmethod
-    def from_arguments(cls, arguments: Mapping[str, object]) -> Self:
-        steps = require_str_list(arguments, "steps")
-        return cls(steps=steps)
-
-
 def set_plan_tool(session: Session) -> Tool:
     def execute(arguments: Mapping[str, object]) -> str:
-        action = SetPlan.from_arguments(arguments)
-        session.append(PlanSet(steps=action.steps))
+        steps = require_list(arguments, "steps", str)
+        if not steps:
+            raise InvalidActionError("field 'steps' must not be empty")
+        session.append(PlanSet(steps=steps))
         current = plan(session)
         assert current is not None
         return f"plan set:\n{render_plan(current)}"
@@ -61,31 +51,21 @@ COMPLETE_STEP_SPEC = ToolSpec(
 )
 
 
-@dataclass(frozen=True)
-class CompleteStep:
-    index: int
-
-    @classmethod
-    def from_arguments(cls, arguments: Mapping[str, object]) -> Self:
-        index = require(arguments, "index", int)
-        return cls(index=index)
-
-
 def complete_step_tool(session: Session) -> Tool:
     def execute(arguments: Mapping[str, object]) -> str:
-        action = CompleteStep.from_arguments(arguments)
+        index = require(arguments, "index", int)
         current = plan(session)
         if current is None:
             raise ToolError("no plan set; call set_plan first")
-        if not 0 <= action.index < len(current.steps):
+        if not 0 <= index < len(current.steps):
             raise ToolError(
-                f"no plan step at index {action.index}; the plan has {len(current.steps)} step(s)"
+                f"no plan step at index {index}; the plan has {len(current.steps)} step(s)"
             )
-        if current.steps[action.index].done:
-            raise ToolError(f"plan step {action.index} is already done")
-        session.append(PlanStepCompleted(index=action.index))
+        if current.steps[index].done:
+            raise ToolError(f"plan step {index} is already done")
+        session.append(PlanStepCompleted(index=index))
         updated = plan(session)
         assert updated is not None
-        return f"step {action.index} done:\n{render_plan(updated)}"
+        return f"step {index} done:\n{render_plan(updated)}"
 
     return Tool(spec=COMPLETE_STEP_SPEC, execute=execute)

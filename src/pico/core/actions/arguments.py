@@ -19,39 +19,23 @@ def require[T](arguments: Mapping[str, object], field: str, expected: type[T]) -
     return value
 
 
-def require_str_list(arguments: Mapping[str, object], field: str) -> tuple[str, ...]:
+_ELEMENT_NAMES: Mapping[type[object], str] = {str: "strings", int: "integers"}
+
+
+def require_list[T](arguments: Mapping[str, object], field: str, element: type[T]) -> tuple[T, ...]:
     if field not in arguments:
         raise InvalidActionError(f"missing required field {field!r}")
     value = arguments[field]
     if not isinstance(value, list):
         raise InvalidActionError(f"field {field!r} must be a list, got {type(value).__name__}")
-    raw = cast(list[object], value)
-    elements: list[str] = []
-    for element in raw:
-        if not isinstance(element, str):
+    elements: list[T] = []
+    for item in cast(list[object], value):
+        if not isinstance(item, element):
             raise InvalidActionError(
-                f"field {field!r} must be a list of strings, got {type(element).__name__} element"
+                f"field {field!r} must be a list of {_ELEMENT_NAMES[element]}, "
+                f"got {type(item).__name__} element"
             )
-        elements.append(element)
-    if not elements:
-        raise InvalidActionError(f"field {field!r} must not be empty")
-    return tuple(elements)
-
-
-def require_int_list(arguments: Mapping[str, object], field: str) -> tuple[int, ...]:
-    if field not in arguments:
-        raise InvalidActionError(f"missing required field {field!r}")
-    value = arguments[field]
-    if not isinstance(value, list):
-        raise InvalidActionError(f"field {field!r} must be a list, got {type(value).__name__}")
-    raw = cast(list[object], value)
-    elements: list[int] = []
-    for element in raw:
-        if not isinstance(element, int):
-            raise InvalidActionError(
-                f"field {field!r} must be a list of integers, got {type(element).__name__} element"
-            )
-        elements.append(element)
+        elements.append(item)
     return tuple(elements)
 
 

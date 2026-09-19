@@ -10,7 +10,7 @@ Four action dataclasses exist for one statement each. `ReadFile` and `WriteFile`
 * **The empty-check moves to its owner.** `require_list` does not reject empty lists; `set_plan_tool` raises `InvalidActionError("field 'steps' must not be empty")` itself, where a reader of the plan rules looks for it. `citations` keeps accepting the empty list, as today.
 * **Pure deletion.** No tool spec, description, error message, or result text changes; net line count of `src/pico/core/actions/` decreases by roughly seventy lines. Tests update mechanically (imports and any direct dataclass construction).
 
-## [ ] T001 Inline the one-statement dataclasses
+## [X] T001 Inline the one-statement dataclasses
 
 ### Description
 
@@ -22,7 +22,7 @@ Rewrite the four tool factories in files.py and planning.py as single closures; 
 * Tool result strings and error messages are byte-identical to before, shown by existing tests passing with import-level updates only.
 * `make check` passes.
 
-## [ ] T002 One list parser
+## [X] T002 One list parser
 
 ### Description
 

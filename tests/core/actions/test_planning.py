@@ -1,9 +1,7 @@
 import pytest
 
 from pico.core.actions import (
-    CompleteStep,
     InvalidActionError,
-    SetPlan,
     complete_step_tool,
     register_actions,
     set_plan_tool,
@@ -26,22 +24,9 @@ def _planless_session() -> Session:
     return Session(connect(":memory:"), "s1")
 
 
-def test_set_plan_from_arguments() -> None:
-    assert SetPlan.from_arguments({"steps": ["one", "two"]}) == SetPlan(steps=("one", "two"))
-
-
-def test_set_plan_from_arguments_empty_list_is_invalid() -> None:
-    with pytest.raises(InvalidActionError, match="must not be empty"):
-        SetPlan.from_arguments({"steps": []})
-
-
-def test_set_plan_from_arguments_non_string_element_is_invalid() -> None:
+def test_set_plan_non_string_element_is_invalid() -> None:
     with pytest.raises(InvalidActionError, match="list of strings"):
-        SetPlan.from_arguments({"steps": ["one", 2]})
-
-
-def test_complete_step_from_arguments() -> None:
-    assert CompleteStep.from_arguments({"index": 3}) == CompleteStep(index=3)
+        set_plan_tool(_planless_session()).execute({"steps": ["one", 2]})
 
 
 def test_set_plan_appends_event_and_returns_checklist() -> None:

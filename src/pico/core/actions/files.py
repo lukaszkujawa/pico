@@ -1,6 +1,4 @@
 from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import Self
 
 from pico.core.actions.arguments import require
 from pico.core.tools import Tool, ToolError
@@ -17,26 +15,14 @@ READ_FILE_SPEC = ToolSpec(
 )
 
 
-@dataclass(frozen=True)
-class ReadFile:
-    path: str
-
-    @classmethod
-    def from_arguments(cls, arguments: Mapping[str, object]) -> Self:
-        path = require(arguments, "path", str)
-        return cls(path=path)
-
-    def execute(self) -> str:
-        try:
-            with open(self.path, encoding="utf-8") as handle:
-                return handle.read()
-        except OSError as error:
-            raise ToolError(f"could not read {self.path}: {error}") from error
-
-
 def read_file_tool() -> Tool:
     def execute(arguments: Mapping[str, object]) -> str:
-        return ReadFile.from_arguments(arguments).execute()
+        path = require(arguments, "path", str)
+        try:
+            with open(path, encoding="utf-8") as handle:
+                return handle.read()
+        except OSError as error:
+            raise ToolError(f"could not read {path}: {error}") from error
 
     return Tool(spec=READ_FILE_SPEC, execute=execute)
 
@@ -55,28 +41,15 @@ WRITE_FILE_SPEC = ToolSpec(
 )
 
 
-@dataclass(frozen=True)
-class WriteFile:
-    path: str
-    content: str
-
-    @classmethod
-    def from_arguments(cls, arguments: Mapping[str, object]) -> Self:
-        path = require(arguments, "path", str)
-        content = require(arguments, "content", str)
-        return cls(path=path, content=content)
-
-    def execute(self) -> str:
-        try:
-            with open(self.path, "w", encoding="utf-8") as handle:
-                handle.write(self.content)
-        except OSError as error:
-            raise ToolError(f"could not write {self.path}: {error}") from error
-        return f"wrote {len(self.content)} bytes to {self.path}"
-
-
 def write_file_tool() -> Tool:
     def execute(arguments: Mapping[str, object]) -> str:
-        return WriteFile.from_arguments(arguments).execute()
+        path = require(arguments, "path", str)
+        content = require(arguments, "content", str)
+        try:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(content)
+        except OSError as error:
+            raise ToolError(f"could not write {path}: {error}") from error
+        return f"wrote {len(content)} bytes to {path}"
 
     return Tool(spec=WRITE_FILE_SPEC, execute=execute)
